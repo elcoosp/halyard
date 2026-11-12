@@ -1,0 +1,5 @@
+---
+source: crates/halyard-core/tests/plan_hash.rs
+expression: canonical_json(&value)
+---
+{"base_branch":"main","edits":[{"file":"crates/core/Cargo.toml","patches":[{"end":128,"start":123,"text":"0.5.0"}]}],"head":"9f2ca67","order":["core"],"plan_hash":"blake3:deadbeef","releases":[{"bump":"minor","ecosystem":"cargo","from":"0.4.1","package":"core","reasons":[{"breaking":false,"kind":"feat","oid":"ab12cd34","type":"commit"}],"tag":"core-v0.5.0","to":"0.5.0"}],"schema":"halyard-plan/v1","skipped":[]}
