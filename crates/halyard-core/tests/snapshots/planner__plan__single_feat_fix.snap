@@ -1,0 +1,5 @@
+---
+source: crates/halyard-core/tests/planner.rs
+expression: plan_json(&plan)
+---
+{"base_branch":"main","edits":[{"file":"Cargo.toml","patches":[{"end":45,"start":40,"text":"0.1.1"}]}],"head":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","order":["app"],"plan_hash":"blake3:657fb8a540f2b86431a3c22130f983de140edc8f44287d2ae33a54a625910376","releases":[{"bump":"patch","changelog":{"entry_md":"## 0.1.1\n\n### Features\n\n- grow surface (#13)\n\n### Bug Fixes\n\n- mend edge (#12)\n","file":"CHANGELOG.md"},"ecosystem":"cargo","from":"0.1.0","package":"app","publish":{"enabled":false,"registry":"crates.io"},"reasons":[{"breaking":false,"kind":"fix","oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1","type":"commit"},{"breaking":false,"kind":"feat","oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2","type":"commit"}],"tag":"v0.1.1","to":"0.1.1"}],"schema":"halyard-plan/v1","skipped":[]}
