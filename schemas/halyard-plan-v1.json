@@ -314,7 +314,7 @@
   },
   "$id": "https://halyard.dev/schemas/halyard-plan-v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A complete, serializable release plan (§5.8).\n\nThe plan is hashable (blake3 over its canonical JSON) and embedded in the\nRelease PR body so later runs can verify it and `release`/`publish` can\ntrust it (invariant I8). Producing the hash is the planner's job\n(`M1.9`); these types carry it as [`Plan::plan_hash`].",
+  "description": "A complete, serializable release plan (§5.8).\n\nThe plan is hashable (blake3 over its canonical JSON) and embedded in the\nRelease PR body so later runs can verify it and `release`/`publish` can\ntrust it (invariant I8). Producing the hash is [`crate::canonical::plan_hash`]'s\njob; these types carry it as [`Plan::plan_hash`].",
   "properties": {
     "base_branch": {
       "description": "Branch the plan was computed against (e.g. `main`).",
