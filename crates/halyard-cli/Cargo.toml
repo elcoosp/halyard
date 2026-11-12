@@ -1,0 +1,35 @@
+[package]
+name = "halyard-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The `halyard` command line (M1.10): plan, explain, status, graph, doctor, schema, completions"
+
+[[bin]]
+name = "halyard"
+path = "src/main.rs"
+
+[dependencies]
+halyard-changelog = { workspace = true }
+halyard-config = { workspace = true }
+halyard-core = { workspace = true }
+halyard-discover = { workspace = true }
+halyard-edit = { workspace = true }
+halyard-git = { workspace = true }
+halyard-version = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = { workspace = true }
+
+[dev-dependencies]
+halyard-test-support = { workspace = true }
+insta = { workspace = true }
+
+[lints]
+workspace = true
