@@ -70,12 +70,37 @@ const RULES: &[LayerRule] = &[
     LayerRule {
         name: "halyard-test-support",
         workspace: &["halyard-core"],
-        external: Some(&["tempfile", "criterion"]),
+        // `serde_json` parses `cargo metadata` ground truth for the M1.5
+        // differential comparator; test-support only.
+        external: Some(&["tempfile", "criterion", "serde_json"]),
     },
     LayerRule {
         name: "halyard-version",
         workspace: &["halyard-core"],
         external: Some(&["semver"]),
+    },
+    // M1.5 (§6.3): adapters carry no workspace deps beyond core; the
+    // parser toolchain crates (toml_edit, semver) are the sanctioned
+    // external set, mirroring core's own allowances.
+    LayerRule {
+        name: "halyard-eco-cargo",
+        workspace: &["halyard-core"],
+        external: Some(&["semver", "toml_edit"]),
+    },
+    // M1.6 (§6.4): the JSON/YAML scanners are dependency-free — only the
+    // shared semver grammar rides along.
+    LayerRule {
+        name: "halyard-eco-npm",
+        workspace: &["halyard-core"],
+        external: Some(&["semver"]),
+    },
+    // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
+    // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
+    // parallel parse uses scoped std threads until budgets demand more.
+    LayerRule {
+        name: "halyard-discover",
+        workspace: &["halyard-core", "halyard-eco-cargo", "halyard-eco-npm"],
+        external: Some(&["ignore"]),
     },
     LayerRule {
         name: "xtask",
@@ -218,6 +243,9 @@ mod tests {
             "halyard-core",
             "halyard-config",
             "halyard-conventional",
+            "halyard-discover",
+            "halyard-eco-cargo",
+            "halyard-eco-npm",
             "halyard-edit",
             "halyard-test-support",
             "halyard-version",
