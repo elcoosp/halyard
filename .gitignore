@@ -19,3 +19,7 @@ Cargo.lock.bak
 *.profdata
 /flamegraph*
 docs/prompt.md
+
+# cargo-fuzz artifacts
+/fuzz/target
+fuzz/Cargo.lock
