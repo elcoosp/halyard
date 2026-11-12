@@ -1,0 +1,10 @@
+---
+source: crates/halyard-config/tests/resolve.rs
+expression: resolved.commit_types
+---
+{
+    "docs": Patch,
+    "feat": Minor,
+    "fix": Patch,
+    "perf": Patch,
+}
