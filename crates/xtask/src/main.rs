@@ -14,6 +14,7 @@
 
 mod competitors;
 mod corpus;
+mod discover_diff;
 mod genrepo;
 mod layers;
 mod perf;
@@ -44,6 +45,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "perf-gate" => perf::perf_gate(),
         "size-gate" => size::size_gate(value_after(rest, "--binary")?),
         "corpus" => corpus::corpus(rest),
+        "discover-diff" => discover_diff::discover_diff(rest),
         "gen-repo" => genrepo::gen_repo(rest),
         "bench-competitors" => competitors::bench_competitors(rest),
         "help" | "--help" | "-h" => {
@@ -94,6 +96,9 @@ SUBCOMMANDS:
     size-gate [--binary PATH]         check release binary size budget (§14.1)
     corpus <list|fetch> [--shallow|--full] [--only NAME]
                                       pinned corpus repos (M0.2)
+    discover-diff --corpus cargo|npm [--repo NAME]
+                                      differential discovery vs cargo metadata
+                                      / pnpm m ls on fetched corpus (M1.5/M1.6)
     gen-repo --packages N --commits K --shape SHAPE --seed S --out DIR
                                       deterministic synthetic repo (M0.4)
     bench-competitors [--tool T] [--fixture DIR] [--report]
