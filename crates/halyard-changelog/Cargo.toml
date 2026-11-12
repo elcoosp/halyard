@@ -1,0 +1,18 @@
+[package]
+name = "halyard-changelog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Changelog rendering (M3.5): keep-a-changelog style over a Plan, idempotent Unreleased insertion"
+
+[dependencies]
+halyard-core = { workspace = true }
+minijinja = { version = "2", default-features = false, features = ["builtins"] }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+[lints]
+workspace = true
