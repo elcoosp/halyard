@@ -380,6 +380,7 @@ mod tests {
                 deps: Vec::new(),
                 tag_template: TagTemplate::parse("{name}-v{version}").unwrap(),
                 changelog: None,
+                version_site: None,
                 include: PathFilter::new(Vec::new(), Vec::new()),
                 group: GroupId::new(0),
                 facets: Facets::default(),
@@ -397,6 +398,7 @@ mod tests {
                         file: RelPath::new("Cargo.toml").unwrap(),
                         spans: Vec::new(),
                     },
+                    raw: crate::BString::default(),
                 });
             }
             let id = PkgId::new(index);
