@@ -1,0 +1,120 @@
+# Pinned corpus (M0.2). Each repository is pinned to the commit SHA reported
+# by `git ls-remote <url> HEAD` at authoring time (2026-11-12, UTC).
+#
+# `cargo run -p xtask -- corpus fetch` clones under corpus/clones/<name>/ and
+# verifies HEAD equals the pin. Re-pin deliberately: update a SHA only after
+# checking the affected fixture still serves its purpose, and record it in
+# the PR description.
+version = 1
+pinned_at = "2026-11-12"
+
+# ---- Cargo-only workspaces -------------------------------------------------
+
+[[repo]]
+name = "serde"
+url = "https://github.com/serde-rs/serde"
+sha = "aa7913ad0211fef960df68e7812a6211145a888c"
+ecosystems = ["cargo"]
+category = "cargo-multi-crate"
+
+[[repo]]
+name = "ripgrep"
+url = "https://github.com/BurntSushi/ripgrep"
+sha = "178cc027e283fd965cb72d0a7395b219eada170c"
+ecosystems = ["cargo"]
+category = "cargo-workspace"
+
+[[repo]]
+name = "fd"
+url = "https://github.com/sharkdp/fd"
+sha = "24d90b28d25438af2a8f2e7f7e46d03d6828da94"
+ecosystems = ["cargo"]
+category = "cargo-single-package"
+
+[[repo]]
+name = "bat"
+url = "https://github.com/sharkdp/bat"
+sha = "8cf33bdde9a6e4c11d0f866415b1fc867df0cd40"
+ecosystems = ["cargo"]
+category = "cargo-single-package"
+
+[[repo]]
+name = "tokei"
+url = "https://github.com/XAMPPRocky/tokei"
+sha = "c14f744716272fadeb27a74443cdffa0af35f82f"
+ecosystems = ["cargo"]
+category = "cargo-single-package"
+
+[[repo]]
+name = "tokio"
+url = "https://github.com/tokio-rs/tokio"
+sha = "ab0814fc8c62b3d8be40aad068e2fed6562cfeb0"
+ecosystems = ["cargo"]
+category = "cargo-workspace"
+
+[[repo]]
+name = "rust-analyzer"
+url = "https://github.com/rust-lang/rust-analyzer"
+sha = "8ba7bef996a21ee8157d13f141b0525b092a9872"
+ecosystems = ["cargo"]
+category = "cargo-workspace"
+
+[[repo]]
+name = "cargo"
+url = "https://github.com/rust-lang/cargo"
+sha = "0a2d4c697121839929f080e539d3ccac11e4375d"
+ecosystems = ["cargo"]
+category = "cargo-workspace"
+
+# ---- pnpm/npm monorepos -----------------------------------------------------
+
+[[repo]]
+name = "vite"
+url = "https://github.com/vitejs/vite"
+sha = "3e1a86e6c87a3c18356252c5d69bf9604cb85950"
+ecosystems = ["npm"]
+category = "pnpm-monorepo"
+
+[[repo]]
+name = "pnpm"
+url = "https://github.com/pnpm/pnpm"
+sha = "e08ff1f752a6618494514fd14fa4c5954f6f7642"
+ecosystems = ["npm"]
+category = "pnpm-monorepo"
+
+[[repo]]
+name = "vue"
+url = "https://github.com/vuejs/core"
+sha = "7c8a0f704f6eb762e86bbbcc4af5548e6c7532d2"
+ecosystems = ["npm"]
+category = "pnpm-monorepo"
+
+[[repo]]
+name = "element-plus"
+url = "https://github.com/element-plus/element-plus"
+sha = "a89d2890aba0b6647ca41d95bdcd95b2266bcda6"
+ecosystems = ["npm"]
+category = "pnpm-monorepo"
+
+# ---- Polyglot (Cargo + npm) -------------------------------------------------
+
+[[repo]]
+name = "swc"
+url = "https://github.com/swc-project/swc"
+sha = "1bc54da8fa8c83b4d2e6999f3561dea1a7f8576e"
+ecosystems = ["cargo", "npm"]
+category = "polyglot-napi"
+
+[[repo]]
+name = "biome"
+url = "https://github.com/biomejs/biome"
+sha = "8c43bc0b620e0db4ec841ae20756acedcead9599"
+ecosystems = ["cargo", "npm"]
+category = "polyglot-napi"
+
+[[repo]]
+name = "napi-rs"
+url = "https://github.com/napi-rs/napi-rs"
+sha = "cda88ea649a2e182e0b6f7ec9cb8a6db7758b47d"
+ecosystems = ["cargo", "npm"]
+category = "polyglot-napi"
