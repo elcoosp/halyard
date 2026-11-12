@@ -6,6 +6,9 @@ members = [
     "crates/halyard-core",
     "crates/halyard-config",
     "crates/halyard-conventional",
+    "crates/halyard-discover",
+    "crates/halyard-eco-cargo",
+    "crates/halyard-eco-npm",
     "crates/halyard-edit",
     "crates/halyard-test-support",
     "crates/halyard-version",
@@ -57,6 +60,9 @@ missing_errors_doc = "allow"
 halyard-core = { path = "crates/halyard-core" }
 halyard-config = { path = "crates/halyard-config" }
 halyard-conventional = { path = "crates/halyard-conventional" }
+halyard-discover = { path = "crates/halyard-discover" }
+halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
+halyard-eco-npm = { path = "crates/halyard-eco-npm" }
 halyard-edit = { path = "crates/halyard-edit" }
 halyard-test-support = { path = "crates/halyard-test-support" }
 halyard-version = { path = "crates/halyard-version" }
@@ -64,6 +70,11 @@ halyard-version = { path = "crates/halyard-version" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.9"
+# §6.2: Cargo manifests are parsed with `toml_edit` (spans enabled) so every
+# dependency requirement carries its edit site (§9.1).
+toml_edit = "0.25"
+# §6.2: workspace walking respects .gitignore and prunes build dirs.
+ignore = "0.4"
 tempfile = "3.20"
 schemars = "1.0"
 criterion = "0.7"
