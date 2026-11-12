@@ -1,0 +1,5 @@
+---
+source: crates/halyard-config/tests/loader.rs
+expression: err.to_string()
+---
+[E-CFG-UNKNOWN-KEY] unknown key `releas` in halyard.toml in `package[0]` — did you mean `release`?; valid keys: name, release, include, exclude
