@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 halyard-core = { workspace = true, features = ["schema-gen"] }
 halyard-config = { workspace = true, features = ["schema-gen"] }
+halyard-discover = { workspace = true }
 halyard-test-support = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
