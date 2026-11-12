@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         changelog: None,
         include: PathFilter::new(Vec::new(), Vec::new()),
         group: GroupId::new(0),
+        facets: halyard_core::Facets::default(),
     };
     let core_id = workspace.push_package(core);
 
@@ -66,6 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         changelog: None,
         include: PathFilter::new(Vec::new(), Vec::new()),
         group: GroupId::new(0),
+        facets: halyard_core::Facets::default(),
     };
     let cli_id = workspace.push_package(cli);
 
