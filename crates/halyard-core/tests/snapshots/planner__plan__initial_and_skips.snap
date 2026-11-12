@@ -1,0 +1,5 @@
+---
+source: crates/halyard-core/tests/planner.rs
+expression: plan_json(&plan)
+---
+{"base_branch":"main","edits":[{"file":"crates/fresh/Cargo.toml","patches":[{"end":45,"start":40,"text":"0.1.1"}]}],"head":"ffffffffffffffffffffffffffffffffffffffff","order":["fresh"],"plan_hash":"blake3:5de77f14264e6f67dfc0af4247de33a9bb191c1a1962e2420b516d2a81fbb7f7","releases":[{"bump":"patch","changelog":{"entry_md":"## 0.1.1\n\n### Features\n\n- fresh feature\n","file":"CHANGELOG.md"},"ecosystem":"cargo","from":"0.1.0","package":"fresh","publish":{"enabled":false,"registry":"crates.io"},"reasons":[{"breaking":false,"kind":"feat","oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1","type":"commit"},{"type":"initial_release"}],"tag":"fresh-v0.1.1","to":"0.1.1"}],"schema":"halyard-plan/v1","skipped":[{"package":"quiet","reason":"release_disabled"}]}
