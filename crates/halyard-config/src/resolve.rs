@@ -97,6 +97,69 @@ impl ResolvedConfig {
     pub fn default_values() -> Result<Self, ConfigError> {
         resolve(&[Layer::Defaults])
     }
+
+    /// Maps the resolved configuration onto the planner's pure knob set
+    /// (ADR-0007): the conversion is total and deterministic — every
+    /// planning decision stays a function of the resolved values.
+    pub fn plan_config(&self) -> halyard_core::planner::PlanConfig {
+        let tag_template = match &self.tag_style {
+            // `auto` stays with the planner: single-package `v{version}`,
+            // monorepo `{name}-v{version}` (appendix A.3).
+            TagStyleSetting::Auto => None,
+            TagStyleSetting::Template(t) => Some(t.clone()),
+        };
+        let group_mode = match self.policy {
+            VersionPolicy::Independent => halyard_core::planner::GroupMode::Independent,
+            VersionPolicy::Fixed => halyard_core::planner::GroupMode::Fixed,
+            VersionPolicy::Linked => halyard_core::planner::GroupMode::Linked,
+        };
+        let cascade = match self.cascade {
+            CascadePolicy::Always => halyard_core::planner::CascadeMode::Always,
+            CascadePolicy::WhenUnsatisfied => halyard_core::planner::CascadeMode::WhenUnsatisfied,
+            CascadePolicy::Never => halyard_core::planner::CascadeMode::Never,
+        };
+        let commit_types = self
+            .commit_types
+            .iter()
+            .map(|(kind, level)| (kind.clone(), bump_of(*level)))
+            .collect();
+        // `[[package]] release = false` overrides matched by exact name
+        // (path-glob overrides refine the include filter, not release).
+        let release_disabled = self
+            .packages
+            .iter()
+            .filter(|o| o.release == Some(false))
+            .filter_map(|o| o.name.clone())
+            .collect();
+        halyard_core::planner::PlanConfig {
+            base_branch: self.base_branch.clone(),
+            tag_template,
+            group_mode,
+            pre_major: halyard_core::bump::PreMajorPolicy {
+                breaking: bump_of(self.pre_major_breaking),
+                feat: bump_of(self.pre_major_feat),
+            },
+            cascade,
+            commit_types,
+            upper_bound_policy: halyard_core::rewrite::UpperBoundPolicy::Widen,
+            changelog_hidden_types: self.changelog_hidden_types.iter().cloned().collect(),
+            publish_enabled: self.publish_enabled,
+            publish_cargo_registry: self.publish_cargo_registry.clone(),
+            publish_npm_registry: "npm".to_owned(),
+            release_disabled,
+        }
+    }
+}
+
+/// `BumpLevel` → wire [`Bump`](halyard_core::Bump) (`none` disables a
+/// mapping, which is `Bump::None` in the planner's algebra).
+fn bump_of(level: BumpLevel) -> halyard_core::Bump {
+    match level {
+        BumpLevel::None => halyard_core::Bump::None,
+        BumpLevel::Patch => halyard_core::Bump::Patch,
+        BumpLevel::Minor => halyard_core::Bump::Minor,
+        BumpLevel::Major => halyard_core::Bump::Major,
+    }
 }
 
 /// The built-in `[commits.types]` mapping (§10.1).
