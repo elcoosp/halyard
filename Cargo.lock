@@ -396,6 +396,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "globset"
+version = "0.4.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f98b0d85522dc0a824cfebbc9594ff4a9b289c568bea0370319dfbdf20ccdd2d"
+dependencies = [
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -447,6 +460,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "halyard-discover"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "halyard-eco-cargo",
+ "halyard-eco-npm",
+ "halyard-test-support",
+ "ignore",
+ "insta",
+ "proptest",
+ "tempfile",
+]
+
+[[package]]
+name = "halyard-eco-cargo"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "halyard-test-support",
+ "insta",
+ "proptest",
+ "semver",
+ "toml_edit",
+]
+
+[[package]]
+name = "halyard-eco-npm"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "halyard-test-support",
+ "insta",
+ "proptest",
+ "semver",
+]
+
+[[package]]
 name = "halyard-edit"
 version = "0.0.0"
 dependencies = [
@@ -461,6 +514,8 @@ name = "halyard-test-support"
 version = "0.0.0"
 dependencies = [
  "criterion",
+ "halyard-core",
+ "serde_json",
  "tempfile",
 ]
 
@@ -478,6 +533,22 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "ignore"
+version = "0.4.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "484be5657551d7868d67587df967fb4fcbe9d266a761cc855aaa148fda0b3cc7"
+dependencies = [
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
+]
 
 [[package]]
 name = "indexmap"
@@ -538,6 +609,12 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "log"
+version = "0.4.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "memchr"
@@ -998,6 +1075,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.3+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.5",
 ]
 
@@ -1146,6 +1224,7 @@ version = "0.0.0"
 dependencies = [
  "halyard-config",
  "halyard-core",
+ "halyard-discover",
  "halyard-test-support",
  "serde",
  "serde_json",
