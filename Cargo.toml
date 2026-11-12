@@ -5,7 +5,10 @@ resolver = "3"
 members = [
     "crates/halyard-core",
     "crates/halyard-config",
+    "crates/halyard-conventional",
+    "crates/halyard-edit",
     "crates/halyard-test-support",
+    "crates/halyard-version",
     "crates/xtask",
 ]
 
@@ -53,7 +56,10 @@ missing_errors_doc = "allow"
 [workspace.dependencies]
 halyard-core = { path = "crates/halyard-core" }
 halyard-config = { path = "crates/halyard-config" }
+halyard-conventional = { path = "crates/halyard-conventional" }
+halyard-edit = { path = "crates/halyard-edit" }
 halyard-test-support = { path = "crates/halyard-test-support" }
+halyard-version = { path = "crates/halyard-version" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -65,6 +71,9 @@ semver = "1.0"
 smallvec = "1.15"
 bstr = "1.12"
 blake3 = "1.8"
+winnow = "1"
+proptest = "1.8"
+insta = "1"
 
 [profile.release]
 lto = "fat"
