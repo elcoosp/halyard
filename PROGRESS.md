@@ -8,6 +8,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M0 | done | feat/m0-bootstrap | M0.1, M0.2, M0.4, M0.5, M0.6, M0.7 | — | 2026-11-12; see below for scope notes on M0.3 |
 | M0.3 | partial | feat/m0-bootstrap | harness (`xtask bench-competitors`, tools/claims/README, REPORT.md generated) | measured runs for release-please (needs forge API + token), release-plz & sampo (not installed, argv unobserved) | 2026-11-12; cocogitto 7.0.0 + knope 0.23.2 measured on the `fd` fixture; findings in `docs/research/competitor-cli-surfaces.md` |
 | M1 | not started | — | — | — | depends on M0 done; next session starts at M1.1 (core types, interner, SmallBitset) |
+| M1 slice A (foundation) | partial | feat/m1-foundation | M1.1, M1.2, M1.3, M1.4, M1.8 | M1.5, M1.6 (discovery), M1.7 (graph), M1.9 (planner), M1.10 (CLI) — slice B then slice C, next session; reason: single-session budget, slice A kept green end-to-end instead of half-wiring discovery/planning | 2026-11-12; full inventory + evidence in `.github/pr-body.md` (session log below) |
 
 ## Session log
 
@@ -58,3 +59,69 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   `[workspace.lints.clippy]`; `-W clippy::pedantic` moved off the CLI into
   the lints table so the allow-list is effective), deny `wildcards = warn`
   (workspace-inheritance false positive, commented in deny.toml).
+
+### 2026-11-12 — M1 slice A: foundation (branch `feat/m1-foundation`, base a196b083615702a713984d07c200da5e95654320)
+
+- **Scope.** Slice A of the M1 protocol (M1.1, M1.2, M1.3, M1.4, M1.8) —
+  the self-contained foundation: core model, conventional-commit parser,
+  version algebra, edit engine, config loader. Tree compiles, all gates
+  green, no stubs/`todo!()`/`#[allow]`. M2 not started (per protocol: only
+  after M1 is fully green end-to-end).
+- **M1.1 done.** `halyard-core` gains `id` (PkgId/Sym/Interner), `bitset`
+  (SmallBitset, inline 128 + spill, logical equality), `package`
+  (Ecosystem/RelPath/DepEdge/ReqSpec/ManifestSite/TagTemplate/PathFilter/
+  Group/Workspace), `reason` (Oid/Reason/ReasonChain/VersionResolution),
+  `history` (RelevantCommit/HistoryDigest), `canonical` (canonical JSON +
+  blake3 `plan_hash`). Proptest on the bitset (model = BTreeSet), insta
+  snapshot on the plan's canonical JSON, determinism double-runs.
+  ADR-0005: `serde_json` joins core's runtime graph for the plan hash;
+  `schemars` stays feature-gated.
+- **M1.2 done.** `halyard-conventional`: winnow-based subject grammar +
+  hand-scanned scopes/trailers; spec 1.0.0 examples as goldens; totality
+  proptest (never panics on arbitrary bytes); `(#NNN)` byte-scan extractor
+  (§8.5); `fixup!`/`squash!` detection; insta snapshot of parsed output.
+  Differential vs `conventional-commits-parser` (99.99% over 1M subjects)
+  deferred with the nightly differential lane — needs the npm corpus tool.
+- **M1.3 done.** `halyard-version`: `apply_bump` with Cargo-compatible 0.x
+  policy, `CommitBumpMapping`, prerelease channels (counter derived from
+  existing versions), and the appendix-A.2 rewriter (operator + precision
+  preserving; widen policy; `E-EDIT-UNREWRITABLE` for closed bounds and
+  unparseable reqs). Goldens = every A.2 row + operator/precision variants;
+  proptests: rewritten reqs admit the new version, operator style preserved,
+  bump monotone.
+- **M1.4 done.** `halyard-edit`: `Patch`/`EditSet` (sorted, non-overlapping,
+  validated), `apply` (ascending rewrite; untouched bytes verbatim — I4),
+  `detect_line_endings`, atomic `apply_to_file[_verified]`/`atomic_write`
+  (temp sibling → fsync → rename; Windows `ERROR_ACCESS_DENIED` retry;
+  POSIX mode preservation). Proptests: byte-range definition, batched ==
+  sequential (length-preserving), identity noop; atomic tests cover
+  verify-failure-leaves-file-untouched, CRLF/BOM on disk, mode survival.
+  Criterion benches: bitset ops (core), conventional parse corpus, edit
+  apply (single + 40 files).
+- **M1.8 done.** `halyard-config` loader + resolver: strict unknown-key
+  walk over the frozen v1 key table with Levenshtein did-you-mean (≤ 2,
+  lexicographic tie-break), layered resolution (Defaults < File <
+  PackageMetadata < Env < Cli), documented `HALYARD_*` set
+  (`BASE_BRANCH`/`TAG_STYLE`/`CASCADE`/`POLICY`), `config_hash` = blake3
+  over canonical JSON. Diagnostics snapshot-tested (insta); loader tests
+  deterministic.
+- **Docs.** ADR-0005; 8 new error pages (E-CFG-UNKNOWN-KEY, E-CFG-TAG-STYLE,
+  E-CFG-TOML, E-CFG-ENV, E-EDIT-PATCHES, E-EDIT-VERIFY, E-EDIT-IO,
+  E-EDIT-UNREWRITABLE) + index update; README layout/commands refresh;
+  `schemas/halyard-plan-v1.json` regenerated (description text only — the
+  plan.rs doc pointer to `plan_hash` changed; wire format untouched).
+- **Fuzz.** `fuzz/` cargo-fuzz crate with two targets (`parse_conventional`,
+  `tag_template`); nightly CI lane arms itself via the existing
+  `hashFiles('fuzz/**')` guard. Local short runs recorded in the PR body.
+- **Deferred (explicit).** M1.5/M1.6 (eco adapters + differential vs
+  `cargo metadata` / `pnpm m ls --json`), M1.7 (CSR/topo/SCC + polyglot
+  links), M1.9 (planner + naive gix history provider), M1.10 (CLI
+  skeleton). Suggested next session: slice B (M1.5, M1.6, M1.7) then
+  slice C (M1.9, M1.10) — same protocol, slices per TASK §2.2.
+- **Gates at session end:** fmt ✓, clippy (`-D warnings`, pedantic +
+  restriction via the lints table) ✓, lint-suppression grep ✓ (zero hits),
+  `test --workspace --all-features` ✓ all suites green (≈130 unit/property/
+  snapshot tests; 167 green result lines incl. bench-mode runs),
+  `test --benches` ✓, deny ✓, audit ✓, `check-layers` (7 crates) ✓,
+  `schema-check` ✓, `perf-gate` ✓ (vacuous until M2.6), `size-gate` ✓
+  (vacuous until M1.10), `cargo doc -D warnings` ✓.
