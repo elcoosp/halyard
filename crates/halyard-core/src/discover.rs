@@ -155,6 +155,11 @@ pub struct RawDep {
     pub req: ReqSpec,
     /// Where the requirement text lives (the edit site, §9.1).
     pub site: ManifestSite,
+    /// The requirement text **as written** (sliced from the manifest at
+    /// the site's first span; empty when synthesized). Carried so the
+    /// planner's rewriter preserves the original operator style
+    /// (`0.4` → `0.5`, not `^0.5`; appendix A.2, ADR-0008).
+    pub raw: BString,
     /// True when the manifest **proves** the requirement targets a
     /// workspace member (`workspace = true`, a `workspace:`/`file:`/
     /// `link:`/`catalog:` protocol, or a repo-internal path). Plain
@@ -207,6 +212,11 @@ pub struct RawPackage {
     pub tag_template: Option<TagTemplate>,
     /// Changelog file, when the manifest names one.
     pub changelog: Option<String>,
+    /// Byte site of the package's own version value (see
+    /// [`crate::package::Package::version_site`]): the file plus the span
+    /// of the version text. `None` when the package has no usable version
+    /// or the value is not editable in place.
+    pub version_site: Option<ManifestSite>,
     /// include/exclude globs (currently only via config overrides; the
     /// default filter accepts everything).
     pub include: PathFilter,
