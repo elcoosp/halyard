@@ -10,7 +10,7 @@
 //! plan hash per ADR-0005, and the feature-gated schema-generation
 //! dependencies documented in `docs/adr/0001-schema-gen-deps-in-core.md`).
 //!
-//! Module map (M1.1):
+//! Module map (M1.1 foundation, M1.5–M1.7 discovery):
 //!
 //! * [`id`] — `PkgId`, `Sym` and the interner (§5.1).
 //! * [`bitset`] — `SmallBitset` (§5.7).
@@ -21,22 +21,39 @@
 //! * [`history`] — `RelevantCommit`, `HistoryDigest` (§5.7).
 //! * [`canonical`] — canonical JSON + `plan_hash` (§5.8, I3).
 //! * [`plan`] — the `halyard-plan/v1` wire format (§5.8).
+//! * [`glob`] — member-pattern matcher shared by the adapters (§6.2).
+//! * [`discover`] — the `EcosystemAdapter` seam, `DiscoverCtx`,
+//!   `RawPackage` and `E-DISC-*` errors (§6, §7.3).
+//! * [`graph`] — CSR adjacency, topological order, SCCs, `E-GRAPH-CYCLE`
+//!   with the dev-cycle exemption (§6.6, M1.7).
+//! * [`link`] — polyglot link rules (§6.5, M1.7).
 #![forbid(unsafe_code)]
 
 pub mod bitset;
 pub mod canonical;
+pub mod discover;
+pub mod glob;
+pub mod graph;
 pub mod history;
 pub mod id;
+pub mod link;
 pub mod package;
 pub mod plan;
 pub mod reason;
 
 pub use bitset::SmallBitset;
+pub use bstr::BString;
 pub use canonical::{blake3_hex, canonical_json, plan_hash};
+pub use discover::{
+    DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, Facets, ManifestFormat,
+    RawDep, RawPackage, RawVersionSource,
+};
+pub use graph::{GraphError, WorkspaceGraph};
 pub use history::{
     AuthorRef, BaseRef, CommitIdx, HistoryDigest, ParsedCommit, RelevantCommit, Trailer,
 };
 pub use id::{Interner, PkgId, Sym};
+pub use link::{detect_links, ExplicitLinkSpec, LinkEdge, LinkMode, LinkRule};
 pub use package::{
     DepEdge, DepKind, Ecosystem, Group, GroupId, GroupPolicy, ManifestSite, Package, PathFilter,
     RelPath, ReqSpec, Span, TagTemplate, TagTemplateError, VersionSource, Workspace,
