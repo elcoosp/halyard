@@ -1,1 +1,21 @@
+# Rust build artifacts
+/target
+Cargo.lock.bak
+
+# Per-milestone delivery artifacts (TASK §4: produced by the agent, executed by
+# the human/delivery bot; they must never enter the repository history)
+/ship.toml
+/.github/pr-body.md
+
+# Corpus working clones (pinned sources are re-fetched from corpus/manifest.toml;
+# the clones themselves are reproducible artifacts, not source)
+/corpus/clones/
+
+# Competitor benchmark raw results (REPORT.md is generated from these and committed)
+/bench/competitors/results/
+
+# Generated benchmark/profile artifacts
+*.profraw
+*.profdata
+/flamegraph*
 docs/prompt.md
