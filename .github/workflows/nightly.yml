@@ -1,0 +1,101 @@
+name: Nightly
+
+# M0.1 nightly lanes (§15.1/§6): fuzz, replay/differential corpus runs,
+# real-forge smoke, Miri and mutation testing. Jobs arm themselves as their
+# targets land (guarded by file existence) so this file never needs edits
+# per milestone — a job with no target is skipped by its `if`.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: cargo-fuzz (nightly)
+    runs-on: ubuntu-latest
+    if: hashFiles('fuzz/**') != ''
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+      # Time-boxed per-target run; full-duration runs happen on the weekly
+      # extended schedule (§15.1).
+      - run: cargo fuzz build --all-features
+      - run: |
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time=300
+          done
+
+  miri:
+    name: Miri (halyard-cache)
+    runs-on: ubuntu-latest
+    if: hashFiles('crates/halyard-cache/**') != ''
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +nightly miri test -p halyard-cache
+
+  corpus-replay:
+    name: corpus fetch + replay smoke
+    runs-on: ubuntu-latest
+    if: hashFiles('corpus/manifest.toml') != ''
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # M0.2: fetch smoke on one small pinned repo proves SHA reproducibility.
+      # M2.7 adds the full replay run over all clones.
+      - run: cargo run -p xtask -- corpus fetch --shallow --only fd
+
+  differential:
+    name: differential vs upstream tools
+    runs-on: ubuntu-latest
+    # Differential harness lands with the cargo ecosystem adapter (M3).
+    if: hashFiles('crates/halyard-eco-cargo/**') != ''
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p xtask -- corpus fetch --shallow
+      - run: cargo run -p xtask -- differential --all
+
+  forge-smoke:
+    name: real-forge smoke (opt-in)
+    runs-on: ubuntu-latest
+    if: vars.FORGE_SMOKE_ENABLED == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p halyard-cli -- forge-smoke
+        env:
+          HALYARD_FORGE_TOKEN: ${{ secrets.FORGE_SMOKE_TOKEN }}
+
+  mutation:
+    name: mutation testing (rotating crate)
+    runs-on: ubuntu-latest
+    if: hashFiles('crates/halyard-core/tests/**') != ''
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - run: cargo mutants --in-place --no-shuffle -p halyard-core --timeout 120
