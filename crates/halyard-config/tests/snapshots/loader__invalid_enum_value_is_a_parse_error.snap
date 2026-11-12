@@ -1,0 +1,6 @@
+---
+source: crates/halyard-config/tests/loader.rs
+expression: err.to_string()
+---
+[E-CFG-TOML] cannot load halyard.toml: unknown variant `sometimes`, expected one of `always`, `when-unsatisfied`, `never`
+in `versioning.cascade`
