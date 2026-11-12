@@ -9,18 +9,23 @@ repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+# M1.8 loader: TOML parsing plus canonical-JSON hashing through the pure
+# core (`check-layers` allow-lists both edges).
+toml = { workspace = true }
+serde_json = { workspace = true }
+halyard-core = { workspace = true }
 
 # Schema generation for the checked-in `halyard.toml` JSON schema (`M0.7`);
 # feature-gated like `halyard-core` so default builds stay lean.
 schemars = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
-schema-gen = ["dep:schemars", "dep:serde_json"]
+schema-gen = ["dep:schemars"]
 
 [dev-dependencies]
-toml = { workspace = true }
+insta = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
