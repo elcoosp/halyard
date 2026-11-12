@@ -1,0 +1,5 @@
+---
+source: crates/halyard-core/tests/planner.rs
+expression: plan_json(&plan)
+---
+{"base_branch":"main","edits":[{"file":"Cargo.toml","patches":[{"end":45,"start":40,"text":"2.0.0"}]}],"head":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","order":["app"],"plan_hash":"blake3:4b9ca3ef1f59ed0b00ebd9eac39500b64ad1947ed35fdb61156cc1f75760b743","releases":[{"bump":"major","changelog":{"entry_md":"## 2.0.0\n","file":"CHANGELOG.md"},"ecosystem":"cargo","from":"1.2.0","package":"app","publish":{"enabled":false,"registry":"crates.io"},"reasons":[{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1","type":"release_as","version":"2.0.0"}],"tag":"v2.0.0","to":"2.0.0"}],"schema":"halyard-plan/v1","skipped":[]}
