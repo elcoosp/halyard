@@ -1,0 +1,30 @@
+[package]
+name = "halyard-eco-cargo"
+description = "EcosystemAdapter for Cargo: manifest discovery with toml_edit spans (M1.5)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+halyard-core = { workspace = true }
+# §6.2: span-preserving TOML parsing — the only sanctioned Cargo manifest
+# parser (never `cargo metadata`, invariant I6).
+toml_edit = { workspace = true }
+# Version/requirement grammar (the same crate core uses; §7.2 adapters
+# carry no workspace deps beyond core).
+semver = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+criterion = { workspace = true }
+halyard-test-support = { workspace = true }
+
+[[bench]]
+name = "manifest_parse"
+harness = false
+
+[lints]
+workspace = true
