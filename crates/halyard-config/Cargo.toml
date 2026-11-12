@@ -1,0 +1,26 @@
+[package]
+name = "halyard-config"
+description = "halyard.toml configuration model, layered resolution and JSON schema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+# Schema generation for the checked-in `halyard.toml` JSON schema (`M0.7`);
+# feature-gated like `halyard-core` so default builds stay lean.
+schemars = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = []
+schema-gen = ["dep:schemars", "dep:serde_json"]
+
+[dev-dependencies]
+toml = { workspace = true }
+
+[lints]
+workspace = true
