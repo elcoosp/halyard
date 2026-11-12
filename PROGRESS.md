@@ -9,6 +9,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M0.3 | partial | feat/m0-bootstrap | harness (`xtask bench-competitors`, tools/claims/README, REPORT.md generated) | measured runs for release-please (needs forge API + token), release-plz & sampo (not installed, argv unobserved) | 2026-11-12; cocogitto 7.0.0 + knope 0.23.2 measured on the `fd` fixture; findings in `docs/research/competitor-cli-surfaces.md` |
 | M1 | not started | — | — | — | depends on M0 done; next session starts at M1.1 (core types, interner, SmallBitset) |
 | M1 slice A (foundation) | partial | feat/m1-foundation | M1.1, M1.2, M1.3, M1.4, M1.8 | M1.5, M1.6 (discovery), M1.7 (graph), M1.9 (planner), M1.10 (CLI) — slice B then slice C, next session; reason: single-session budget, slice A kept green end-to-end instead of half-wiring discovery/planning | 2026-11-12; full inventory + evidence in `.github/pr-body.md` (session log below) |
+| M1 slice C (planner+git+cli) | partial | feat/m1-planner-m2-history | M1.9 (planner v1: pure plan(), cascade fixpoint, SCC-safe, reason chains, goldens+proptests green), M2.1 (ref enumeration + tag matcher + base resolution; differential vs `git merge-base` green on 5 fixture repos + scoped/annotated/packed cases), M2.2 (painter walk §8.3; differential vs `git rev-list` green on 10 fixture repos + 60 randomized samples; dhat 12/commit no-graph, 5/commit with commit-graph), M1.10 CLI implemented (8 commands, human/json/gha, doctor, profile) but unverified end-to-end, M3.5 keep-a-changelog renderer implemented with idempotence goldens | full gate battery NOT re-run in-session (context budget exhausted: fmt/clippy/nextest/deny/audit/doc + CLI snapshot tests + 10k-sample git-diff campaign deferred to next session); `docs/errors/` pages for E-PLAN-*/E-GIT-* not yet written; Slice-B latent `RelPath("")` bug found and fixed (package.rs, empty path = repo root) | 2026-11-12; see the slice-C session log below |
 | M1 slice B (discovery) | partial | feat/m1-discovery | M1.5, M1.6, M1.7 (code + tests + benches + examples + docs landed; workspace compiles clean, check-layers ✓ 10 crates, schema-check ✓, discover-diff gate in xtask) | gate battery verification (full `cargo test --workspace` run, clippy pedantic `-D warnings`, deny/audit re-run, fuzz `json_span` execution, corpus fetch + `discover-diff` measured runs) unfinished in-session: fresh sandbox had no Rust toolchain (installed stable 1.99.1 from scratch) and no local clone; `TASK.txt` not present in the clone — protocol reconstructed from `docs/HALYARD_ARCHITECTURE.md` + the session prompt | 2026-11-12; see the slice-B session log below |
 
 ## Session log
@@ -126,3 +127,57 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   `test --benches` ✓, deny ✓, audit ✓, `check-layers` (7 crates) ✓,
   `schema-check` ✓, `perf-gate` ✓ (vacuous until M2.6), `size-gate` ✓
   (vacuous until M1.10), `cargo doc -D warnings` ✓.
+
+### 2026-11-12 — M1 slice C: planner + git engine + CLI (branch `feat/m1-planner-m2-history`, base fcc622d642be8507a5f46295e8fcee273aad88b1)
+
+- **M1.9 (planner v1) implemented.** `halyard-core::planner` — pure
+  `plan(&Snapshot, &PlanConfig) -> Result<Plan, PlanError>` (ADR-0007:
+  `PlanConfig` in core, `ResolvedConfig::plan_config()` maps it). Direct
+  bumps + `Release-As` trailers + group/lockstep normalization + cascade
+  fixpoint (bounded by |V|, monotone) + appendix-A.2 requirement rewrites
+  + edits from the new `version_site`/`raw` discovery fields + changelog
+  previews + plan_hash. Goldens: 5 insta snapshots under
+  `crates/halyard-core/tests/snapshots/`; proptest
+  (`planner_props.rs`, 64 cases) covers version monotonicity, tag
+  round-trip, hash determinism, cycle refusal.
+- **M2.1 + M2.2 (git engine) implemented.** New `crates/halyard-git`
+  (gix 0.90, `default-features = false, features = ["sha1"]`;
+  `max-performance-safe` no longer exists — drift noted). Refs
+  enumeration + tag-template matching + highest-version-reachable base
+  resolution with O(1) generation rejection; painter walk per §8.3 with
+  exact exhaustiveness-based termination, degraded marker, initial bound.
+  Differential: `tests/engine.rs` (9/9 green — bases vs
+  `git merge-base --is-ancestor`, walk vs per-package `git rev-list HEAD
+  ^base_i` union over 10 fixture repos incl. merge/octopus/squash/revert/
+  packed-refs/annotated/side-branch-tag/multi-package/scoped-npm) +
+  `tests/randomized.rs` (60 pseudo-random DAG repos, all matching).
+  dhat audit: 12 blocks/commit (no commit-graph), 5/commit (commit-graph),
+  ceilings pinned in `tests/dhat_walk.rs`; M2.6 owns the drive to ≤ 1.
+  Bench `benches/walk.rs` (1000-commit synthetic), example
+  `examples/walk_history.rs`.
+- **M1.10 (CLI) implemented, NOT verified end-to-end.** New
+  `crates/halyard-cli` (`halyard` binary, `#![forbid(unsafe_code)]`):
+  plan/explain/status/graph/doctor/schema/completions, `--format
+  human|json|gha`, `--color/-C/--config/--offline/--no-cache/--profile`,
+  miette-rendered errors, Chrome-trace profiler. Compiles clean; the
+  insta snapshot battery, `doctor` case snapshots, the profile-trace
+  parse test and the strace purity gate did NOT run in-session.
+- **M3.5 (stretch, partial).** `crates/halyard-changelog`:
+  keep-a-changelog renderer over the Plan, idempotent (re-run replaces
+  only `[Unreleased]`/marker span, byte-identical on re-run), breaking
+  first, hidden types honoured, `E-CHLOG-*` codes. Other styles deferred
+  (M3.5b).
+- **ADRs:** 0007 (PlanConfig in core), 0008 (bump/rewrite algebra
+  canonical home moves to core; halyard-version re-exports unchanged),
+  0009 (halyard-git depends on halyard-conventional — leaf, cycle-free).
+- **Slice-B latent bug fixed:** `RelPath::new("")` rejected the
+  documented repo-root empty path (its own test asserted `is_some`);
+  discovery of root packages was broken on main. Fixed in
+  `crates/halyard-core/src/package.rs`.
+- **Deferred to slice D (next session):** full gate battery
+  (fmt/clippy/test/benches/deny/audit/doc/schema-check/discover-diff),
+  new xtask subcommands (`schema-check-plan`, `git-diff` — planned, not
+  written), CLI snapshot tests + strace gate, `docs/errors/E-PLAN-*` +
+  `E-GIT-*` + `E-CHLOG-*` pages + index update, 10 000-sample
+  `git describe`/rev-list campaign on the corpus, M2.3 tree diff,
+  M2.4 merge policy, M2.5 cache, M2.6 perf pass, M2.7 replay.
