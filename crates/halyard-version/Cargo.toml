@@ -1,0 +1,18 @@
+[package]
+name = "halyard-version"
+description = "Bump algebra, 0.x policy, prerelease channels and requirement rewriting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+halyard-core = { workspace = true }
+semver = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true
