@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+# Crates are added as their milestones land (ADR-0002): the §7.1 layout is
+# reached incrementally so the tree never contains empty scaffolding.
+members = [
+    "crates/halyard-core",
+    "crates/halyard-config",
+    "crates/halyard-test-support",
+    "crates/xtask",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/elcoosp/halyard"
+version = "0.0.0"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_code = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+# Pedantic + restriction enforcement lives HERE, not on the clippy CLI
+# (`-W clippy::pedantic` on the command line would override the allow-listed
+# entries below). The gate remains `cargo clippy --workspace --all-targets
+# --all-features -- -D warnings`.
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# §15.3 restriction set; test allowances are configured in clippy.toml
+# (`allow-*-in-tests`). `indexing_slicing` has no test allowance, so test code
+# uses `.get()`/iterators instead of direct indexing.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+# Pedantic curation (rationale):
+# - must_use_candidate: fires on every read-only getter in DSL/builder APIs;
+#   #[must_use] spam on accessors hides genuinely must-use results (apply it
+#   by hand where it matters, e.g. on plan-contract types).
+# - missing_errors_doc: error behavior is documented by the error type itself
+#   plus docs/errors/E-*.md pages (§15.4), not by per-function `# Errors`
+#   sections that rot as signatures evolve.
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+
+[workspace.dependencies]
+halyard-core = { path = "crates/halyard-core" }
+halyard-config = { path = "crates/halyard-config" }
+halyard-test-support = { path = "crates/halyard-test-support" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+tempfile = "3.20"
+schemars = "1.0"
+criterion = "0.7"
+semver = "1.0"
+smallvec = "1.15"
+bstr = "1.12"
+blake3 = "1.8"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+# §14.2: CLI ships with abort-on-panic. Note this makes `cargo test --release`
+# unsupported by design; gates run the test profile (debug), never release.
+panic = "abort"
