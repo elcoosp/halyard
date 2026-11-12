@@ -1,0 +1,34 @@
+# §1.1 competitor claims (hypotheses to verify by measurement, not assertions).
+# Each row is transcribed from §1.1 of docs/HALYARD_ARCHITECTURE.md. The
+# harness reports these as measured / pending; "verified" or "refuted" status
+# is only assigned once a measured run supports or contradicts the claim.
+
+version = 1
+
+[[claim]]
+tool = "release-please"
+claim = "Node runtime, API-heavy commit/file inspection, slow on big repos, config-heavy for polyglot"
+
+[[claim]]
+tool = "release-please"
+claim = "Living Release PR; merge implies tag + GitHub Release; manifest mode"
+
+[[claim]]
+tool = "release-plz"
+claim = "Cargo-aware cascade, registry-aware diffing, semver-checks integration; shells out to cargo metadata and downloads crate tarballs and rustdoc JSON per crate (minutes)"
+
+[[claim]]
+tool = "knope"
+claim = "Hybrid conventional-commits + change files; composable steps; GitHub API use for PR inspection"
+
+[[claim]]
+tool = "cocogitto"
+claim = "Git trailers, templated changelogs, zero API for enrichment; no living Release PR"
+
+[[claim]]
+tool = "sampo"
+claim = "Polyglot auto-discovery, action outputs, resumable partial-failure recovery; manual change files as primary input"
+
+[[claim]]
+tool = "changesets"
+claim = "Human-written release notes, pre-release mode; JS-only, no commit-derived bumps"
