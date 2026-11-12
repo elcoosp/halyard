@@ -17,7 +17,7 @@ use halyard_core::discover::{
 };
 use halyard_core::package::{DepKind, ManifestSite, RelPath, ReqSpec, Span, TagTemplate};
 
-use crate::{normalize_join, parse_tag_template, span_of, warning};
+use crate::{normalize_join, parse_tag_template, span_of, spans_of, warning};
 
 /// The workspace-level facts the root manifest contributes (§6.3).
 pub(crate) struct WorkspaceFacts {
@@ -52,6 +52,10 @@ pub(crate) struct ManifestDraft {
     pub publishable: bool,
     pub deps: Vec<ParsedDep>,
     pub tag_template: Option<TagTemplate>,
+    /// Byte site of the package's own version value (M1.9): the file plus
+    /// the span of the version text — the root manifest for inherited
+    /// versions (§6.3), the own manifest otherwise.
+    pub version_site: Option<ManifestSite>,
     pub facets: Facets,
     pub warnings: Vec<DiscoveryWarning>,
 }
@@ -391,15 +395,22 @@ pub(crate) fn package_draft(
         .to_owned();
 
     // Version: local string, or `workspace = true` inheritance (§6.3).
+    // The byte site of the value is captured alongside (M1.9): the plan's
+    // own-version patch targets it; inherited versions site into the root
+    // manifest so all inheritors share one edit.
     let version_item = package.get("version");
-    let (version, version_source) = match version_item {
+    let (version, version_source, version_site) = match version_item {
         Some(item) if is_workspace_inherit(item) => match &facts.inherited_version {
-            Some((text, _)) => (
+            Some((text, span)) => (
                 semver::Version::parse(text).ok(),
                 RawVersionSource::WorkspaceInherited {
                     file: "Cargo.toml".to_owned(),
                     key_path: "package.version".to_owned(),
                 },
+                Some(ManifestSite {
+                    file: root_manifest.clone(),
+                    spans: spans_of(*span),
+                }),
             ),
             None => {
                 return Err(DiscoverError::Manifest {
@@ -423,7 +434,11 @@ pub(crate) fn package_draft(
                         ),
                     ));
                 }
-                (parsed, RawVersionSource::Local)
+                let site = ManifestSite {
+                    file: manifest.clone(),
+                    spans: spans_of(item.span().map(span_of)),
+                };
+                (parsed, RawVersionSource::Local, Some(site))
             }
             None => {
                 warnings.push(warning(
@@ -431,7 +446,7 @@ pub(crate) fn package_draft(
                     &name,
                     "no usable `version` in [package]; package treated as unpublished".to_owned(),
                 ));
-                (None, RawVersionSource::Local)
+                (None, RawVersionSource::Local, None)
             }
         },
         None => {
@@ -440,7 +455,7 @@ pub(crate) fn package_draft(
                 &name,
                 "no `version` in [package]; package treated as unpublished".to_owned(),
             ));
-            (None, RawVersionSource::Local)
+            (None, RawVersionSource::Local, None)
         }
     };
 
@@ -540,6 +555,7 @@ pub(crate) fn package_draft(
         publishable,
         deps,
         tag_template,
+        version_site,
         facets: Facets {
             cdylib,
             wasm_bindgen,
