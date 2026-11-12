@@ -238,8 +238,8 @@ fn package_from_doc(
         });
     };
 
-    let version = match doc.get("version").map(|v| &v.value) {
-        Some(json_span::JsonValue::String { decoded, .. }) => {
+    let (version, version_site) = match doc.get("version").map(|v| &v.value) {
+        Some(json_span::JsonValue::String { decoded, inner }) => {
             let parsed = semver::Version::parse(decoded).ok();
             if parsed.is_none() {
                 warnings.push(DiscoveryWarning {
@@ -248,7 +248,11 @@ fn package_from_doc(
                     message: format!("version {decoded:?} is not valid semver"),
                 });
             }
-            parsed
+            let site = ManifestSite {
+                file: manifest.clone(),
+                spans: vec![*inner],
+            };
+            (parsed, Some(site))
         }
         _ => {
             warnings.push(DiscoveryWarning {
@@ -257,7 +261,7 @@ fn package_from_doc(
                 message: "no `version` in package.json; package treated as unpublished"
                     .to_owned(),
             });
-            None
+            (None, None)
         }
     };
 
@@ -301,6 +305,7 @@ fn package_from_doc(
                         file: manifest.clone(),
                         spans: vec![inner],
                     },
+                    raw: halyard_core::BString::from(text),
                     internal,
                 });
             }
@@ -338,6 +343,7 @@ fn package_from_doc(
         deps,
         tag_template: None,
         changelog: None,
+        version_site,
         include: halyard_core::package::PathFilter::new(Vec::new(), Vec::new()),
         facets: Facets {
             cdylib: false,
