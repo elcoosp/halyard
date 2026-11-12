@@ -1,0 +1,27 @@
+[package]
+name = "halyard-core"
+description = "Pure core types, plan contract (halyard-plan/v1) and planner for HALYARD"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+# ADR-0001: schema-generation dependencies. Optional, feature-gated, never part
+# of the runtime graph of dependents; enabled only by `xtask` for the
+# checked-in JSON schemas (`M0.7`).
+schemars = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = []
+schema-gen = ["dep:schemars", "dep:serde_json"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
