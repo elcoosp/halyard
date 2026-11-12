@@ -1,0 +1,32 @@
+[package]
+name = "halyard-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = []
+
+[dependencies]
+libfuzzer-sys = "0.4"
+halyard-conventional = { path = "../crates/halyard-conventional" }
+halyard-core = { path = "../crates/halyard-core" }
+semver = "1"
+
+[[bin]]
+name = "parse_conventional"
+path = "fuzz_targets/parse_conventional.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tag_template"
+path = "fuzz_targets/tag_template.rs"
+test = false
+doc = false
+bench = false
