@@ -279,6 +279,7 @@ mod tests {
             deps: Vec::new(),
             tag_template: TagTemplate::parse("{name}-v{version}").unwrap(),
             changelog: None,
+            version_site: None,
             include: PathFilter::new(Vec::new(), Vec::new()),
             group: GroupId::new(0),
             facets,
@@ -295,6 +296,7 @@ mod tests {
                 file: RelPath::new("package.json").unwrap(),
                 spans: Vec::new(),
             },
+            raw: crate::BString::default(),
         };
         if let Some(pkg) = ws.package_mut(from) {
             pkg.deps.push(dep);
