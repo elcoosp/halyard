@@ -1,0 +1,5 @@
+---
+source: crates/halyard-config/tests/loader.rs
+expression: err.to_string()
+---
+[E-CFG-UNKNOWN-KEY] unknown key `repoz` in halyard.toml (root) — did you mean `repo`?; valid keys: repo, versioning, commits, changelog, publish, forge, package, link
