@@ -1,0 +1,52 @@
+# cargo-deny configuration for HALYARD.
+# Layering rules (§7.2) are enforced separately by `cargo run -p xtask -- check-layers`.
+
+[graph]
+all-features = false
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-unknown-linux-musl" },
+]
+
+[advisories]
+version = 2
+yanked = "warn"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+# `deny` false-positives on `workspace = true` dependency inheritance (cargo-deny
+# reports inherited specs as wildcards). Real version wildcards (`dep = "*"`)
+# stay out by review + `xtask check-layers`; downgraded to `warn`.
+wildcards = "warn"
+highlight = "all"
+deny = []
+# No skips: when a duplicated transitive dependency appears, pin it down.
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
