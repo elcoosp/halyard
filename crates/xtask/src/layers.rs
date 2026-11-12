@@ -3,11 +3,15 @@
 //! Rules (workspace-internal deps, non-dev):
 //!
 //! * `halyard-core` — no workspace deps; external deps limited to `semver`,
-//!   `smallvec`, `bstr`, `blake3`, `serde`, plus the schema-generation
-//!   feature deps `schemars`/`serde_json` (ADR-0001, feature-gated so they
-//!   are absent from the runtime graph).
-//! * `halyard-config` — may depend on `halyard-core`.
-//! * `halyard-test-support` — standalone (may depend on `halyard-core`).
+//!   `smallvec`, `bstr`, `blake3`, `serde`, `serde_json` (runtime, ADR-0005)
+//!   and the feature-gated `schemars` (ADR-0001, absent from the runtime
+//!   graph).
+//! * `halyard-config` — may depend on `halyard-core` (+ `serde`, `toml`,
+//!   `serde_json`).
+//! * `halyard-conventional` — standalone parser (`winnow`, `bstr`).
+//! * `halyard-edit` — depends on `halyard-core` only.
+//! * `halyard-test-support` — may depend on `halyard-core`.
+//! * `halyard-version` — depends on `halyard-core` + `semver`.
 //! * `xtask` / `halyard-cli` — workspace tooling and user shell: may depend
 //!   on any workspace crate.
 //! * No crate may depend on `halyard-cli`.
@@ -40,10 +44,12 @@ const RULES: &[LayerRule] = &[
             "bstr",
             "blake3",
             "serde",
-            // ADR-0001: feature-gated (`schema-gen`) schema-generation deps;
+            // ADR-0005: `serde_json` is part of the core runtime graph
+            // (canonical JSON + plan hash, §5.8/I3).
+            "serde_json",
+            // ADR-0001: `schemars` stays feature-gated (`schema-gen`) and
             // absent from the default/runtime graph.
             "schemars",
-            "serde_json",
         ]),
     },
     LayerRule {
@@ -52,9 +58,24 @@ const RULES: &[LayerRule] = &[
         external: Some(&["serde", "schemars", "serde_json", "toml"]),
     },
     LayerRule {
+        name: "halyard-conventional",
+        workspace: &[],
+        external: Some(&["winnow", "bstr"]),
+    },
+    LayerRule {
+        name: "halyard-edit",
+        workspace: &["halyard-core"],
+        external: Some(&[]),
+    },
+    LayerRule {
         name: "halyard-test-support",
         workspace: &["halyard-core"],
         external: Some(&["tempfile", "criterion"]),
+    },
+    LayerRule {
+        name: "halyard-version",
+        workspace: &["halyard-core"],
+        external: Some(&["semver"]),
     },
     LayerRule {
         name: "xtask",
@@ -125,8 +146,11 @@ pub fn check_layers() -> Result<(), String> {
                     violations.push(format!("{name}: workspace dep {dep_name:?} not allowed"));
                 }
             } else if let Some(allowed) = rule.external {
-                let is_optional = optional && matches!(dep_name, "schemars" | "serde_json");
-                if !allowed.contains(&dep_name) && !is_optional {
+                // ADR-0001 (as amended by ADR-0005): `schemars` is only
+                // tolerated when optional (feature-gated `schema-gen`);
+                // `serde_json` is a sanctioned runtime dep of core.
+                let schemars_optional_ok = optional && dep_name == "schemars";
+                if !allowed.contains(&dep_name) && !schemars_optional_ok {
                     violations.push(format!("{name}: external dep {dep_name:?} not allowed"));
                 }
             }
@@ -193,7 +217,10 @@ mod tests {
         for member in [
             "halyard-core",
             "halyard-config",
+            "halyard-conventional",
+            "halyard-edit",
             "halyard-test-support",
+            "halyard-version",
             "xtask",
         ] {
             assert!(names.contains_key(member), "{member} lacks a layer rule");
