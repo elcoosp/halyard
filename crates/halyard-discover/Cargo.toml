@@ -1,0 +1,29 @@
+[package]
+name = "halyard-discover"
+description = "Topology detection and the discovery orchestrator: manifests -> Workspace (M1.5/M1.6/M1.7)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+halyard-core = { workspace = true }
+halyard-eco-cargo = { workspace = true }
+halyard-eco-npm = { workspace = true }
+# §6.2: repository walk with .gitignore respect and build-dir pruning.
+ignore = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+criterion = { workspace = true }
+halyard-test-support = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "discover_e2e"
+harness = false
+
+[lints]
+workspace = true
