@@ -1,0 +1,5 @@
+# cargo-audit configuration.
+# Any ignore entry must reference the RUSTSEC advisory id and carry a
+# justification comment plus a tracking task; entries are revisited monthly.
+[advisories]
+ignore = []
