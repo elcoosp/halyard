@@ -9,19 +9,34 @@ repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+# ADR-0005: `serde_json` is part of the core runtime graph — canonical JSON
+# and the blake3 plan hash (§5.8, invariant I3) are core functionality, not
+# schema-generation tooling.
+serde_json = { workspace = true }
+# §7.2 sanctioned set: version algebra, interned types, byte strings,
+# hashing.
+semver = { workspace = true }
+smallvec = { workspace = true }
+bstr = { workspace = true }
+blake3 = { workspace = true }
 
-# ADR-0001: schema-generation dependencies. Optional, feature-gated, never part
+# ADR-0001: schema-generation dependency. Optional, feature-gated, never part
 # of the runtime graph of dependents; enabled only by `xtask` for the
 # checked-in JSON schemas (`M0.7`).
 schemars = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [features]
 default = []
-schema-gen = ["dep:schemars", "dep:serde_json"]
+schema-gen = ["dep:schemars"]
 
 [dev-dependencies]
-serde_json = { workspace = true }
+proptest = { workspace = true }
+insta = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "bitset"
+harness = false
 
 [lints]
 workspace = true
