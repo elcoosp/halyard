@@ -1,0 +1,81 @@
+# Competitor tool invocation recipes (M0.3).
+#
+# Every argv below was transcribed from the tool's own `--help` output in this
+# workspace (2026-11-12) — see docs/research/competitor-cli-surfaces.md for
+# the observations. Nothing is guessed: a tool whose surface has not been
+# verified stays out of this file until its entry can be filled from real
+# output.
+version = 1
+
+[[tool]]
+name = "cocogitto"
+binary = "cog"
+version_args = ["--version"]
+# Verified offline: `cog bump --auto --dry-run` parses the repo and prints the
+# planned bump + changelog without writing tags.
+bench_args = ["bump", "--auto", "--dry-run"]
+prepare_files = []
+
+[[tool]]
+name = "knope"
+binary = "knope"
+version_args = ["--version"]
+# Verified offline: `knope release --dry-run` needs a knope.toml; the content
+# below is exactly what `knope --generate` produced for a Cargo.toml project
+# (captured verbatim in the research note).
+bench_args = ["release", "--dry-run"]
+prepare_files = [
+    [
+        "knope.toml",
+        '''
+[package]
+versioned_files = ["Cargo.toml"]
+
+[[workflows]]
+name = "release"
+help_text = "Prepare and create a new release (update changelog, bump version, create release)"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = 'git commit -m "chore: prepare release $version"'
+
+[[workflows.steps]]
+type = "Release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --tags"
+''',
+    ],
+]
+
+[[tool]]
+name = "release-please"
+binary = "release-please"
+version_args = ["--version"]
+# Verified surface (release-pr --help): --dry-run, --local, --local-path,
+# --repo-url all exist. release-pr always talks to the GitHub API (PR state),
+# so this is needs_network; --repo-url is filled from the fixture origin via
+# the {repo-url} token.
+bench_args = [
+    "release-pr",
+    "--dry-run",
+    "--local",
+    "--local-path",
+    "{fixture}",
+    "--repo-url",
+    "{repo-url}",
+]
+needs_network = true
+prepare_files = []
+
+# release-plz and sampo have no entries yet: neither binary was installable in
+# the authoring environment and their argv has not been observed. Fill this
+# file from `--help` output before adding them (VERIFY rule, architecture §0.4).
