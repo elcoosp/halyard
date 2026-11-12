@@ -9,6 +9,10 @@ repository.workspace = true
 
 [dependencies]
 tempfile = { workspace = true }
+# Differential-test comparator: parses `cargo metadata --no-deps` JSON
+# (M1.5). Test-support only; never a runtime dependency.
+serde_json = { workspace = true }
+halyard-core = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
