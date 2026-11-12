@@ -92,6 +92,7 @@ impl EcosystemAdapter for CargoAdapter {
                 parse::package_draft(&doc, &manifest_path, &facts, dir.as_str())?;
             packages.push(build_raw_package(dir, manifest_path, draft));
         }
+        fill_raw_texts(ctx, &mut packages);
         Ok(packages)
     }
 }
@@ -195,14 +196,45 @@ fn build_raw_package(dir: String, manifest: String, draft: ManifestDraft) -> Raw
                 kind: d.kind,
                 req: d.req,
                 site: d.site,
+                // Filled by `fill_raw_texts` once the manifest bytes are
+                // reachable again (the adapter keeps them in the context).
+                raw: halyard_core::BString::default(),
                 internal: d.internal,
             })
             .collect(),
         tag_template: draft.tag_template,
         changelog: None,
+        version_site: draft.version_site,
         include: halyard_core::package::PathFilter::new(Vec::new(), Vec::new()),
         facets: draft.facets,
         warnings: draft.warnings,
+    }
+}
+
+/// Slices the raw requirement text out of the manifest bytes (ADR-0008:
+/// the planner's rewriter needs the text as written, not `VersionReq`'s
+/// normalized `Display`). Empty when the site carries no span or the span
+/// does not round-trip (defensive: discovery-produced spans always do).
+fn slice_site(bytes: &[u8], site: &halyard_core::ManifestSite) -> halyard_core::BString {
+    let Some(span) = site.spans.first() else {
+        return halyard_core::BString::default();
+    };
+    let (start, end) = (span.start as usize, span.end as usize);
+    match bytes.get(start..end) {
+        Some(text) => halyard_core::BString::from(text),
+        None => halyard_core::BString::default(),
+    }
+}
+
+/// Fills every dep row's raw text from the context's manifest bytes.
+fn fill_raw_texts(ctx: &DiscoverCtx, packages: &mut [RawPackage]) {
+    for pkg in packages {
+        for dep in &mut pkg.deps {
+            let bytes = ctx.file(dep.site.file.as_str());
+            if let Some(bytes) = bytes {
+                dep.raw = slice_site(bytes, &dep.site);
+            }
+        }
     }
 }
 
@@ -212,6 +244,11 @@ pub(crate) fn span_of(range: std::ops::Range<usize>) -> Span {
         start: u32::try_from(range.start).unwrap_or(u32::MAX),
         end: u32::try_from(range.end).unwrap_or(u32::MAX),
     }
+}
+
+/// `span_of` for optional ranges (a `None` span yields no sites).
+pub(crate) fn spans_of(span: Option<Span>) -> Vec<Span> {
+    span.into_iter().collect()
 }
 
 /// Warning constructor used by the parser.
