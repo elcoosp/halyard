@@ -13,6 +13,7 @@
 
 pub mod error;
 pub mod fixture;
+pub mod manifest_fixtures;
 pub mod scenarios;
 
 pub use error::{FixtureError, FixtureErrorKind};
