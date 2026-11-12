@@ -1,0 +1,21 @@
+[package]
+name = "halyard-test-support"
+description = "Git fixture builder DSL, mock helpers and golden-test support for HALYARD"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tempfile = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "fixture_build"
+harness = false
+
+[lints]
+workspace = true
