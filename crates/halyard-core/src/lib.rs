@@ -10,7 +10,7 @@
 //! plan hash per ADR-0005, and the feature-gated schema-generation
 //! dependencies documented in `docs/adr/0001-schema-gen-deps-in-core.md`).
 //!
-//! Module map (M1.1 foundation, M1.5–M1.7 discovery):
+//! Module map (M1.1 foundation, M1.5–M1.7 discovery, M1.9 planner):
 //!
 //! * [`id`] — `PkgId`, `Sym` and the interner (§5.1).
 //! * [`bitset`] — `SmallBitset` (§5.7).
@@ -18,9 +18,13 @@
 //!   templates (§5.3/§6.6/A.3).
 //! * [`reason`] — `Oid`, `Reason`, `ReasonChain`, `VersionResolution`
 //!   (§5.5/§5.6).
-//! * [`history`] — `RelevantCommit`, `HistoryDigest` (§5.7).
+//! * [`history`] — `RelevantCommit`, `HistoryDigest`, the
+//!   `HistoryProvider` seam and `ReleaseRefs` (§5.7, §8.2).
 //! * [`canonical`] — canonical JSON + `plan_hash` (§5.8, I3).
 //! * [`plan`] — the `halyard-plan/v1` wire format (§5.8).
+//! * [`bump`] — bump application + commit mapping, canonical (ADR-0008).
+//! * [`rewrite`] — the appendix-A.2 requirement rewriter (ADR-0008).
+//! * [`planner`] — the pure `plan()` (M1.9, §4, A.1; ADR-0007).
 //! * [`glob`] — member-pattern matcher shared by the adapters (§6.2).
 //! * [`discover`] — the `EcosystemAdapter` seam, `DiscoverCtx`,
 //!   `RawPackage` and `E-DISC-*` errors (§6, §7.3).
@@ -30,6 +34,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bitset;
+pub mod bump;
 pub mod canonical;
 pub mod discover;
 pub mod glob;
@@ -39,7 +44,9 @@ pub mod id;
 pub mod link;
 pub mod package;
 pub mod plan;
+pub mod planner;
 pub mod reason;
+pub mod rewrite;
 
 pub use bitset::SmallBitset;
 pub use bstr::BString;
@@ -50,7 +57,8 @@ pub use discover::{
 };
 pub use graph::{GraphError, WorkspaceGraph};
 pub use history::{
-    AuthorRef, BaseRef, CommitIdx, HistoryDigest, ParsedCommit, RelevantCommit, Trailer,
+    AuthorRef, BaseRef, CommitIdx, FixedHistory, HistoryDigest, HistoryProvider, ParsedCommit,
+    ReleaseRefs, RelevantCommit, Trailer,
 };
 pub use id::{Interner, PkgId, Sym};
 pub use link::{detect_links, ExplicitLinkSpec, LinkEdge, LinkMode, LinkRule};
@@ -63,4 +71,9 @@ pub use plan::{
     Bump, PLAN_SCHEMA_V1, Plan, PlanChangelog, PlanEdit, PlanPatch, PlanPublish, PlanReason,
     PlanRelease, PlanSkip,
 };
+pub use planner::{plan, CascadeMode, GroupMode, PlanConfig, PlanError, Snapshot};
 pub use reason::{CascadeWhy, Oid, Reason, ReasonChain, VersionResolution};
+pub use rewrite::{
+    rewrite_requirement, RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy,
+    VersionError,
+};
