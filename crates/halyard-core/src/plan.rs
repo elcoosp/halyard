@@ -17,8 +17,8 @@ pub const PLAN_SCHEMA_V1: &str = "halyard-plan/v1";
 ///
 /// The plan is hashable (blake3 over its canonical JSON) and embedded in the
 /// Release PR body so later runs can verify it and `release`/`publish` can
-/// trust it (invariant I8). Producing the hash is the planner's job
-/// (`M1.9`); these types carry it as [`Plan::plan_hash`].
+/// trust it (invariant I8). Producing the hash is [`crate::canonical::plan_hash`]'s
+/// job; these types carry it as [`Plan::plan_hash`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
 pub struct Plan {
@@ -89,6 +89,24 @@ pub enum Bump {
     Minor,
     /// `x` component bumps.
     Major,
+}
+
+impl Bump {
+    /// The strongest of two bumps (§10.1 precedence: higher level wins).
+    #[must_use]
+    pub const fn max(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Major, _) | (_, Self::Major) => Self::Major,
+            (Self::Minor, _) | (_, Self::Minor) => Self::Minor,
+            (Self::Patch, _) | (_, Self::Patch) => Self::Patch,
+            (Self::None, Self::None) => Self::None,
+        }
+    }
+
+    /// True when this bump does not change the version.
+    pub const fn is_none(self) -> bool {
+        matches!(self, Self::None)
+    }
 }
 
 /// One entry of a reason chain (§5.6), internally tagged by `type`.
