@@ -38,15 +38,19 @@ impl Ecosystem {
 }
 
 /// Repo-relative, forward-slash, UTF-8 path (§5.3): no leading `/`, no
-/// empty components, no `.`/`..` components, no backslashes.
+/// empty components, no `.`/`..` components, no backslashes. The **empty
+/// string** is a valid [`RelPath`]: it names the repository root itself,
+/// which discovery needs for root-level packages (§6.1 single-package
+/// mode / root workspace members).
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RelPath(String);
 
 impl RelPath {
     /// Validates and constructs; `None` when `raw` is not a normalized
-    /// repo-relative path.
+    /// repo-relative path (the empty string names the repo root and is
+    /// valid).
     pub fn new(raw: &str) -> Option<Self> {
-        if raw.is_empty() || raw.starts_with('/') || raw.contains('\\') {
+        if raw.starts_with('/') || raw.contains('\\') {
             return None;
         }
         let bad_component = raw
@@ -64,9 +68,13 @@ impl RelPath {
     }
 
     /// Joins a validated relative suffix (invariant-preserving: both parts
-    /// are already normalized).
+    /// are already normalized). Joining onto the repo root yields the
+    /// suffix unchanged.
     #[must_use]
     pub fn join(&self, suffix: &RelPath) -> RelPath {
+        if self.0.is_empty() {
+            return suffix.clone();
+        }
         RelPath(format!("{}/{}", self.0, suffix.0))
     }
 
@@ -112,8 +120,9 @@ pub enum VersionSource {
     Dynamic,
 }
 
-/// Dependency edge kind (§5.3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Dependency edge kind (§5.3). The derived order is the deterministic
+/// tie-break for CSR neighbor sorting (graph module, M1.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DepKind {
     /// `[dependencies]`.
     Normal,
@@ -166,6 +175,15 @@ pub enum ReqSpec {
     Catalog(Option<BString>),
     /// A path dependency with no version requirement.
     PathOnly,
+    /// Ecosystem-specific requirement text that the semver grammar does
+    /// not cover (ADR-0006): npm ranges like `>=8 <10` or `1.x`,
+    /// `git:`/`http:` URLs. Carried verbatim so discovery never fails on
+    /// a foreign grammar; the version rewriter treats it as
+    /// unrewritable.
+    Other {
+        /// The raw requirement text.
+        raw: BString,
+    },
 }
 
 /// Byte range within a manifest file (§5.3 edit sites, §9.1 patches).
@@ -483,7 +501,8 @@ pub struct Package {
     pub name: Sym,
     /// Ecosystem.
     pub ecosystem: Ecosystem,
-    /// Package root directory, relative to the repo root.
+    /// Package root directory, relative to the repo root (empty = repo
+    /// root, §6.1).
     pub root: RelPath,
     /// Manifest path (e.g. `crates/a/Cargo.toml`).
     pub manifest: RelPath,
@@ -505,6 +524,9 @@ pub struct Package {
     pub include: PathFilter,
     /// Versioning group this package belongs to.
     pub group: GroupId,
+    /// Manifest-proven facts consumed by the §6.5 link rules (additive
+    /// discovery extension of §5.3; see `docs/adr/0006-*`).
+    pub facets: crate::discover::Facets,
 }
 
 /// One dependency edge to a workspace member (§5.3).
@@ -520,15 +542,18 @@ pub struct DepEdge {
     pub site: ManifestSite,
 }
 
-/// The discovered monorepo (§6.6): packages, groups and the shared
-/// interner. Graph fields (CSR in/out adjacency, topo order, SCCs) and the
-/// path trie arrive with M1.7; this type is the discovery contract they
-/// build on.
+/// The discovered monorepo (§6.6): packages, groups, polyglot links and
+/// the shared interner. The CSR adjacency / topological order / SCC views
+/// live in [`crate::graph::WorkspaceGraph`], built from a workspace after
+/// discovery merges it — a view keeps the graph from ever going stale
+/// while packages are still being registered; the path trie (§8.4) is
+/// built by the tree-diff stage (M2.3).
 #[derive(Clone, Debug, Default)]
 pub struct Workspace {
     interner: Interner,
     packages: Vec<Package>,
     groups: Vec<Group>,
+    links: Vec<crate::link::LinkEdge>,
 }
 
 impl Workspace {
@@ -564,6 +589,12 @@ impl Workspace {
     /// Package by id (`None` for a foreign id).
     pub fn package(&self, id: PkgId) -> Option<&Package> {
         self.packages.get(id.to_usize())
+    }
+
+    /// Mutable package access by id (`None` for a foreign id); used by the
+    /// discovery merge to attach resolved dependency edges.
+    pub fn package_mut(&mut self, id: PkgId) -> Option<&mut Package> {
+        self.packages.get_mut(id.to_usize())
     }
 
     /// Adds a group; returns its id.
@@ -602,6 +633,18 @@ impl Workspace {
             .find(|p| self.interner.get(p.name) == Some(name))
             .map(|p| p.id)
     }
+
+    /// Records a polyglot link (§6.5); duplicates are the caller's
+    /// responsibility to avoid (the link detector deduplicates).
+    pub fn push_link(&mut self, link: crate::link::LinkEdge) {
+        self.links.push(link);
+    }
+
+    /// Polyglot links discovered for this workspace, sorted by `(from,
+    /// to)` (deterministic, invariant I3).
+    pub fn links(&self) -> &[crate::link::LinkEdge] {
+        &self.links
+    }
 }
 
 #[cfg(test)]
@@ -612,8 +655,9 @@ mod tests {
     fn rel_path_validation() {
         assert!(RelPath::new("crates/core/Cargo.toml").is_some());
         assert!(RelPath::new("Cargo.toml").is_some());
+        // The empty path names the repository root (§6.1 root packages).
+        assert!(RelPath::new("").is_some());
         assert!(RelPath::new("/abs").is_none());
-        assert!(RelPath::new("").is_none());
         assert!(RelPath::new("a//b").is_none());
         assert!(RelPath::new("a/../b").is_none());
         assert!(RelPath::new("./a").is_none());
@@ -622,6 +666,9 @@ mod tests {
         let file = RelPath::new("Cargo.toml").unwrap();
         assert_eq!(root.join(&file).as_str(), "crates/core/Cargo.toml");
         assert_eq!(root.file_name(), "core");
+        let repo_root = RelPath::new("").unwrap();
+        assert_eq!(repo_root.join(&file).as_str(), "Cargo.toml");
+        assert_eq!(repo_root.file_name(), "");
     }
 
     #[test]
@@ -687,6 +734,7 @@ mod tests {
             changelog: None,
             include: PathFilter::new(Vec::new(), Vec::new()),
             group: GroupId::new(0),
+            facets: crate::discover::Facets::default(),
         };
         let id = ws.push_package(pkg);
         assert_eq!(id, PkgId::new(0));
