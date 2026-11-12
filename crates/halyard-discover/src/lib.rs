@@ -220,6 +220,7 @@ fn register_package(
             .clone()
             .unwrap_or_else(default_tag_template),
         changelog: row.changelog.as_ref().and_then(|c| RelPath::new(c)),
+        version_site: row.version_site.clone(),
         include: PathFilter::new(Vec::new(), Vec::new()),
         group: GroupId::new(0),
         facets: row.facets,
@@ -252,6 +253,7 @@ fn resolve_dep(workspace: &Workspace, ecosystem: Ecosystem, dep: &RawDep) -> Opt
         kind: dep.kind,
         req: dep.req.clone(),
         site: dep.site.clone(),
+        raw: dep.raw.clone(),
     })
 }
 
