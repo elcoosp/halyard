@@ -6,9 +6,12 @@
 //! versions out, so the planner (M1.9) can compose them deterministically.
 //!
 //! Layering note (§7.2): this crate depends on `halyard-core` for the
-//! `Bump` wire type; `halyard-core` never depends on this crate. When the
-//! planner (M1.9, living in core) needs the algebra, the layering decision
-//! gets an ADR — flagged in the M1 foundation PR body.
+//! `Bump` wire type; `halyard-core` never depends on this crate. Since
+//! slice C (M1.9) the bump application / commit-mapping / requirement
+//! rewriting *implementations* live in `halyard-core` (`bump` / `rewrite`
+//! modules) so the planner can compose them; this crate re-exports every
+//! public path unchanged (ADR-0008) and owns the release-time prerelease
+//! channels.
 
 #![forbid(unsafe_code)]
 
