@@ -47,9 +47,12 @@ pub struct RelPath(String);
 
 impl RelPath {
     /// Validates and constructs; `None` when `raw` is not a normalized
-    /// repo-relative path (the empty string names the repo root and is
-    /// valid).
+    /// repo-relative path. The empty string names the repository root and
+    /// is valid (§6.1 root packages / single-package mode).
     pub fn new(raw: &str) -> Option<Self> {
+        if raw.is_empty() {
+            return Some(Self(raw.to_owned()));
+        }
         if raw.starts_with('/') || raw.contains('\\') {
             return None;
         }
@@ -520,6 +523,14 @@ pub struct Package {
     pub tag_template: TagTemplate,
     /// Changelog file, when the package owns one.
     pub changelog: Option<RelPath>,
+    /// Byte site of the package's **own version value** in its manifest
+    /// (additive M1.9 extension): the patch target when the plan bumps
+    /// this package. For `WorkspaceInherited` versions this points into
+    /// the authoritative workspace manifest (all inheritors share one
+    /// site, deduplicated by the planner). `None` = the version is not
+    /// editable in place (`Dynamic`) or the adapter could not locate the
+    /// value (the plan then carries no own-version edit for the package).
+    pub version_site: Option<ManifestSite>,
     /// Which files count as "changes to this package".
     pub include: PathFilter,
     /// Versioning group this package belongs to.
@@ -540,6 +551,12 @@ pub struct DepEdge {
     pub req: ReqSpec,
     /// Where the requirement text lives (the edit site, §9.1).
     pub site: ManifestSite,
+    /// The requirement text **as written** (sliced from the manifest at
+    /// the site's first span; empty when the row was synthesized or the
+    /// site carries no span). The planner's rewriter needs the raw text
+    /// because `VersionReq`'s `Display` cannot reproduce bare styles
+    /// (`0.4` parses as `^0.4`, appendix A.2 / ADR-0008).
+    pub raw: BString,
 }
 
 /// The discovered monorepo (§6.6): packages, groups, polyglot links and
@@ -732,6 +749,7 @@ mod tests {
             deps: Vec::new(),
             tag_template: TagTemplate::parse("{name}-v{version}").unwrap(),
             changelog: None,
+            version_site: None,
             include: PathFilter::new(Vec::new(), Vec::new()),
             group: GroupId::new(0),
             facets: crate::discover::Facets::default(),
