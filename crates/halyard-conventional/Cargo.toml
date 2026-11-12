@@ -1,0 +1,26 @@
+[package]
+name = "halyard-conventional"
+description = "Spec-compliant conventional-commit parser: types, scopes, footers, trailers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# §7.1: hand-written zero-alloc parser over bytes; `bstr` owns the emitted
+# fields (subject/body bytes borrowed during parsing, copied on emit).
+winnow = { workspace = true }
+bstr = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+insta = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[lints]
+workspace = true
