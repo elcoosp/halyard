@@ -25,6 +25,14 @@ pattern from M1 onward where useful).
 | `E-EDIT-IO` | [E-EDIT-IO.md](E-EDIT-IO.md) | edit atomic write (M1.4) |
 | `E-EDIT-UNREWRITABLE` | [E-EDIT-UNREWRITABLE.md](E-EDIT-UNREWRITABLE.md) | version requirement rewriter (M1.3, §A.2) |
 | `E-TEST-FIXTURE` | [E-TEST-FIXTURE.md](E-TEST-FIXTURE.md) | test-support fixture failures |
+| `E-DISC-IO` | [E-DISC-IO.md](E-DISC-IO.md) | edit |
+| `E-DISC-MANIFEST` | [E-DISC-MANIFEST.md](E-DISC-MANIFEST.md) | edit |
+| `E-DISC-NESTED-WS` | [E-DISC-NESTED-WS.md](E-DISC-NESTED-WS.md) | edit |
+| `E-DISC-GLOB` | [E-DISC-GLOB.md](E-DISC-GLOB.md) | edit |
+| `E-DISC-NO-PACKAGE` | [E-DISC-NO-PACKAGE.md](E-DISC-NO-PACKAGE.md) | edit |
+| `E-DISC-DUPLICATE` | [E-DISC-DUPLICATE.md](E-DISC-DUPLICATE.md) | edit |
+| `E-DISC-LINK-UNKNOWN` | [E-DISC-LINK-UNKNOWN.md](E-DISC-LINK-UNKNOWN.md) | edit |
+| `E-GRAPH-CYCLE` | [E-GRAPH-CYCLE.md](E-GRAPH-CYCLE.md) | edit |
 
 ## Extension policy
 
