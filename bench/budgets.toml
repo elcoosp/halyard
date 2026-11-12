@@ -1,0 +1,10 @@
+# Performance budgets (§14.1). Measured by the bench harness on the fixed
+# corpus; enforced by `cargo run -p xtask -- perf-gate` (CI fails a PR that
+# regresses any p50 budget by > 5 %).
+#
+# The first budgets register with M2.6 (the git engine's no-op/plan paths).
+# Until then this registry is intentionally empty: the gate runs and passes
+# vacuously rather than silently skipping.
+
+[budgets]
+note = "empty until M2.6; see §14.1 and §15.6"
