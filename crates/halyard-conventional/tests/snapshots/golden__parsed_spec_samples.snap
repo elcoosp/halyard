@@ -1,0 +1,52 @@
+---
+source: crates/halyard-conventional/tests/golden.rs
+expression: parsed
+---
+[
+    Some(
+        ConventionalCommit {
+            kind: "feat",
+            scope: None,
+            breaking: false,
+            description: "allow provided config to extend other configs",
+            body: None,
+            footers: [],
+            pr: None,
+        },
+    ),
+    Some(
+        ConventionalCommit {
+            kind: "feat",
+            scope: Some(
+                "api",
+            ),
+            breaking: true,
+            description: "send an email (#42)",
+            body: None,
+            footers: [],
+            pr: Some(
+                42,
+            ),
+        },
+    ),
+    Some(
+        ConventionalCommit {
+            kind: "fix",
+            scope: None,
+            breaking: false,
+            description: "correct minor typo",
+            body: None,
+            footers: [
+                Trailer {
+                    key: "Reviewed-by",
+                    value: "Z",
+                },
+                Trailer {
+                    key: "Refs",
+                    value: "#133",
+                },
+            ],
+            pr: None,
+        },
+    ),
+]
