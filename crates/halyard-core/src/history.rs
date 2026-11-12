@@ -108,6 +108,91 @@ impl HistoryDigest {
     }
 }
 
+/// The history seam between the git engine (M2) and the pure planner
+/// (§4, M1.9): the planner reads **pre-materialized** data through this
+/// trait, which is what keeps [`crate::planner::plan`] free of I/O
+/// (invariant I6). A provider implementation (the in-memory
+/// [`FixedHistory`], or the `gix`-backed engine in `halyard-git`) does its
+/// walking at *construction* time — inside the imperative shell — and
+/// serves the finished [`HistoryDigest`] immutably afterwards.
+pub trait HistoryProvider {
+    /// The commit the snapshot was taken at (`None` = empty repository).
+    fn head(&self) -> Option<Oid>;
+
+    /// The materialized digest between HEAD and every package's release
+    /// base (§5.7). Must stay aligned with the [`ReleaseRefs`] the
+    /// snapshot carries: `bases[i]` describes package `i` in both.
+    fn digest(&self) -> &HistoryDigest;
+
+    /// Commit indices relevant to one package (convenience over
+    /// [`HistoryDigest::commits_for`]).
+    fn commits_for(&self, pkg: PkgId) -> &[CommitIdx] {
+        self.digest().commits_for(pkg)
+    }
+}
+
+/// An in-memory [`HistoryProvider`]: a pre-built digest (and head) served
+/// as-is. This is the planner's test double *and* the M1.9 "naive"
+/// provider: fixture-built digests (from `halyard-test-support` scenarios
+/// or recorded walks) flow in unchanged, so golden plans are reproducible
+/// without any git engine.
+#[derive(Clone, Debug, Default)]
+pub struct FixedHistory {
+    head: Option<Oid>,
+    digest: HistoryDigest,
+}
+
+impl FixedHistory {
+    /// Wraps a materialized digest.
+    pub fn new(head: Option<Oid>, digest: HistoryDigest) -> Self {
+        Self { head, digest }
+    }
+
+    /// Mutable digest access for test-fixture construction (the fields of
+    /// [`HistoryDigest`] are public; this keeps `FixedHistory`'s own
+    /// fields private so invariants stay with the constructors).
+    pub fn digest_mut(&mut self) -> &mut HistoryDigest {
+        &mut self.digest
+    }
+}
+
+impl HistoryProvider for FixedHistory {
+    fn head(&self) -> Option<Oid> {
+        self.head.clone()
+    }
+
+    fn digest(&self) -> &HistoryDigest {
+        &self.digest
+    }
+}
+
+/// Per-package release bases (§4 `refs`, §8.2): entry `i` is the base of
+/// package `i` (aligned with [`crate::package::Workspace::packages`]);
+/// `None` = the package has no release tag yet (`Base::Initial`).
+///
+/// Produced by `halyard-git`'s ref enumeration (M2.1) and consumed by the
+/// planner through [`crate::planner::Snapshot::refs`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReleaseRefs(Vec<Option<BaseRef>>);
+
+impl ReleaseRefs {
+    /// Builds the refs from per-package bases (must be aligned with the
+    /// workspace's package list).
+    pub fn from_bases(bases: Vec<Option<BaseRef>>) -> Self {
+        Self(bases)
+    }
+
+    /// The bases, package-id aligned.
+    pub fn bases(&self) -> &[Option<BaseRef>] {
+        &self.0
+    }
+
+    /// The base of one package (`None` = initial release or foreign id).
+    pub fn base_of(&self, pkg: PkgId) -> Option<&BaseRef> {
+        self.0.get(pkg.to_usize()).and_then(|b| b.as_ref())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
