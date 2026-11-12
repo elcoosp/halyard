@@ -1,0 +1,23 @@
+[package]
+name = "halyard-edit"
+description = "EditSet byte-range patches, atomic apply with fsync+rename, EOL/BOM preservation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+halyard-core = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "apply"
+harness = false
+
+[lints]
+workspace = true
