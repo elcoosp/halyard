@@ -22,5 +22,11 @@ criterion = { workspace = true }
 name = "parse"
 harness = false
 
+# §11.6 (M4.3 `check`): the PR-title lint seam shares the parser bench
+# profile (one lint per `check` invocation, cold path).
+[[bench]]
+name = "title_lint"
+harness = false
+
 [lints]
 workspace = true
