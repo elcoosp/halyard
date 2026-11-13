@@ -13,14 +13,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use halyard_core::BString;
 use gix::hash::ObjectId;
 use gix::reference::Category;
+use halyard_core::BString;
+use halyard_core::Oid;
 use halyard_core::history::BaseRef;
 use halyard_core::package::Workspace;
-use halyard_core::Oid;
 
-use crate::{map_git_err, GitError};
+use crate::{GitError, map_git_err};
 
 /// One tag candidate: name, peeled commit and (per package) the parsed
 /// version (§8.2 step 3: invalid versions are ignored, not fatal).
@@ -42,9 +42,12 @@ fn core_oid(oid: ObjectId) -> Oid {
     let hex = oid.to_string();
     Oid::from_hex(hex.as_bytes()).unwrap_or_else(|| {
         // Unreachable for gix-produced oids; the zero-oid fallback keeps
-        // the function total without panicking (§15.3).
+        // the function total without panicking (§15.3). The static hex
+        // literals are 40-char valid hex — validated by this module's
+        // tests — so the final arm cannot be reached either.
         Oid::from_hex(b"0000000000000000000000000000000000000000")
-            .unwrap_or_else(|| Oid::from_hex(b"1111111111111111111111111111111111111111").expect("static hex is valid"))
+            .or_else(|| Oid::from_hex(b"1111111111111111111111111111111111111111"))
+            .unwrap_or_else(|| unreachable!("static fallback hex is valid"))
     })
 }
 
@@ -220,7 +223,10 @@ impl<'r> Generations<'r> {
     /// graph or for commits outside it) — the index the changed-path
     /// Bloom filters (§8.4 step 4) are keyed by.
     pub fn position(&self, oid: ObjectId) -> Option<usize> {
-        self.graph.as_ref()?.lookup(&oid).map(|pos| pos.0 as usize)
+        self.graph
+            .as_ref()?
+            .lookup(oid)
+            .map(|pos| usize::try_from(pos.0).unwrap_or(usize::MAX))
     }
 
     /// Generation **and** committer timestamp in one lookup: the
@@ -231,22 +237,18 @@ impl<'r> Generations<'r> {
     ///
     /// [`GitError::Object`] when the commit cannot be read.
     pub fn of_with_time(&mut self, oid: ObjectId) -> Result<(u32, i64), GitError> {
-        if let Some(graph) = &self.graph {
-            if let Some(position) = graph.lookup(&oid) {
-                let entry = graph.commit_at(position);
-                let generation = entry.generation();
-                self.cache.insert(oid, generation);
-                let time = i64::try_from(entry.committer_timestamp()).unwrap_or(i64::MAX);
-                return Ok((generation, time));
-            }
+        if let Some(graph) = &self.graph
+            && let Some(position) = graph.lookup(oid)
+        {
+            let entry = graph.commit_at(position);
+            let generation = entry.generation();
+            self.cache.insert(oid, generation);
+            let time = i64::try_from(entry.committer_timestamp()).unwrap_or(i64::MAX);
+            return Ok((generation, time));
         }
         let generation = self.of(oid)?;
         // The DFS cached the time during its single read per commit.
-        let time = self
-            .times
-            .get(&oid)
-            .copied()
-            .unwrap_or(i64::MAX);
+        let time = self.times.get(&oid).copied().unwrap_or(i64::MAX);
         Ok((generation, time))
     }
 
@@ -261,13 +263,13 @@ impl<'r> Generations<'r> {
         if let Some(cached) = self.cache.get(&oid) {
             return Ok(*cached);
         }
-        if let Some(graph) = &self.graph {
-            if let Some(position) = graph.lookup(&oid) {
-                let entry = graph.commit_at(position);
-                let generation = entry.generation();
-                self.cache.insert(oid, generation);
-                return Ok(generation);
-            }
+        if let Some(graph) = &self.graph
+            && let Some(position) = graph.lookup(oid)
+        {
+            let entry = graph.commit_at(position);
+            let generation = entry.generation();
+            self.cache.insert(oid, generation);
+            return Ok(generation);
         }
         let generation = self.compute(oid)?;
         self.cache.insert(oid, generation);
@@ -294,20 +296,19 @@ impl<'r> Generations<'r> {
                     if self.cache.contains_key(&current) {
                         continue;
                     }
-                    let commit = self
-                        .repo
-                        .find_commit(current)
-                        .map_err(|e| {
-                            map_git_err("E-GIT-OBJECT", format!("cannot read commit {current}: {e}"))
-                        })?;
+                    let commit = self.repo.find_commit(current).map_err(|e| {
+                        map_git_err("E-GIT-OBJECT", format!("cannot read commit {current}: {e}"))
+                    })?;
                     let time = commit
                         .time()
                         .map_err(|e| {
-                            map_git_err("E-GIT-OBJECT", format!("cannot read time of {current}: {e}"))
+                            map_git_err(
+                                "E-GIT-OBJECT",
+                                format!("cannot read time of {current}: {e}"),
+                            )
                         })?
                         .seconds;
-                    let parents: Vec<ObjectId> =
-                        commit.parent_ids().map(|p| p.detach()).collect();
+                    let parents: Vec<ObjectId> = commit.parent_ids().map(gix::Id::detach).collect();
                     self.times.insert(current, time);
                     stack.push(Frame::Merge(current));
                     let staged_parents = staged.entry(current).or_default();
@@ -329,8 +330,9 @@ impl<'r> Generations<'r> {
                 }
             }
         }
-        self.cache.get(&oid).copied().ok_or_else(|| {
-            map_git_err("E-GIT-OBJECT", format!("generation of {oid} not derived"))
-        })
+        self.cache
+            .get(&oid)
+            .copied()
+            .ok_or_else(|| map_git_err("E-GIT-OBJECT", format!("generation of {oid} not derived")))
     }
 }
