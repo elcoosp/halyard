@@ -36,13 +36,13 @@ pub struct LockfileVersionChange {
 }
 
 impl LockfileVersionChange {
-    /// Derives the lockfile change for one plan release: cargo releases
-    /// only, and only real version moves (`from != to`; a `Bump::None`
-    /// release must not touch the lockfile). `None` for every other
-    /// ecosystem or a no-move release.
+    /// Derives the lockfile change for one plan release of a given
+    /// ecosystem, and only for a real version move (`from != to`; a
+    /// `Bump::None` release must not touch the lockfile). `None` for any
+    /// other ecosystem or a no-move release.
     #[must_use]
-    pub fn from_release(release: &PlanRelease) -> Option<Self> {
-        if release.ecosystem != "cargo" || release.from == release.to {
+    pub fn from_release_for_ecosystem(release: &PlanRelease, ecosystem: &str) -> Option<Self> {
+        if release.ecosystem != ecosystem || release.from == release.to {
             return None;
         }
         Some(Self {
@@ -50,6 +50,13 @@ impl LockfileVersionChange {
             from: release.from.clone(),
             to: release.to.clone(),
         })
+    }
+
+    /// Derives the Cargo.lock change for one plan release (M3.2, §9.2):
+    /// cargo releases only, real moves only.
+    #[must_use]
+    pub fn from_release(release: &PlanRelease) -> Option<Self> {
+        Self::from_release_for_ecosystem(release, "cargo")
     }
 }
 
