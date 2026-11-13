@@ -10,7 +10,10 @@
 //!   `serde_json`).
 //! * `halyard-conventional` — standalone parser (`winnow`, `bstr`).
 //! * `halyard-edit` — depends on `halyard-core` only.
-//! * `halyard-test-support` — may depend on `halyard-core`.
+//! * `halyard-forge` — depends on `halyard-core` only (§11.4 seam; the
+//!   REST adapter in M4.1b inherits the rule).
+//! * `halyard-test-support` — may depend on `halyard-core` and
+//!   `halyard-forge` (the mock-forge re-export, §7.1).
 //! * `halyard-version` — depends on `halyard-core` + `semver`.
 //! * `xtask` / `halyard-cli` — workspace tooling and user shell: may depend
 //!   on any workspace crate.
@@ -67,9 +70,17 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&[]),
     },
+    // M4.1a forge seam (§11.4): pure vocabulary — the trait, its data
+    // types and the failure taxonomy. No HTTP here; the REST adapter
+    // joins in M4.1b and inherits the same core-only rule.
+    LayerRule {
+        name: "halyard-forge",
+        workspace: &["halyard-core"],
+        external: Some(&[]),
+    },
     LayerRule {
         name: "halyard-test-support",
-        workspace: &["halyard-core"],
+        workspace: &["halyard-core", "halyard-forge"],
         // `serde_json` parses `cargo metadata` ground truth for the M1.5
         // differential comparator; test-support only.
         external: Some(&["tempfile", "criterion", "serde_json"]),
@@ -275,6 +286,7 @@ mod tests {
             "halyard-eco-cargo",
             "halyard-eco-npm",
             "halyard-edit",
+            "halyard-forge",
             "halyard-git",
             "halyard-test-support",
             "halyard-version",
