@@ -1489,6 +1489,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "halyard-forge"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+]
+
+[[package]]
 name = "halyard-git"
 version = "0.0.0"
 dependencies = [
@@ -1512,6 +1520,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "halyard-core",
+ "halyard-forge",
  "serde_json",
  "tempfile",
 ]
