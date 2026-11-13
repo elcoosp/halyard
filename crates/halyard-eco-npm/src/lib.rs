@@ -13,15 +13,18 @@ use halyard_core::discover::{
     DiscoverCtx, DiscoverError, DiscoveryWarning, Facets, ManifestFormat, RawDep, RawPackage,
     RawVersionSource,
 };
+use halyard_core::edit::{EditFailure, EditOutcome};
 use halyard_core::package::{
     DepKind, Ecosystem, ManifestSite, RelPath, ReqSpec, Span, WorkspaceProtocol,
 };
+use halyard_core::plan::PlanPatch;
 use halyard_core::{EcosystemAdapter, glob};
 
+pub mod edit;
 pub mod json_span;
 pub mod pnpm_yaml;
 
-/// The npm-family adapter (§7.3 discovery subset).
+/// The npm-family adapter (§7.3 discovery + manifest-edit subset).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NpmAdapter;
 
@@ -51,27 +54,28 @@ impl EcosystemAdapter for NpmAdapter {
         let pnpm_globs = match ctx.file("pnpm-workspace.yaml") {
             Some(bytes) => {
                 let text = utf8(bytes, "pnpm-workspace.yaml")?;
-                let ws = pnpm_yaml::parse_pnpm_workspace(text).map_err(|e| {
-                    DiscoverError::Manifest {
+                let ws =
+                    pnpm_yaml::parse_pnpm_workspace(text).map_err(|e| DiscoverError::Manifest {
                         file: "pnpm-workspace.yaml".to_owned(),
                         format: ManifestFormat::Yaml,
                         message: e.to_string(),
                         span: None,
-                    }
-                })?;
+                    })?;
                 Some(ws.packages)
             }
             None => None,
         };
         let root_json = match ctx.file("package.json") {
-            Some(bytes) => Some(json_span::JsonDoc::parse(bytes).map_err(|e| {
-                DiscoverError::Manifest {
-                    file: "package.json".to_owned(),
-                    format: ManifestFormat::Json,
-                    message: e.to_string(),
-                    span: Some(e_position(&e)),
-                }
-            })?),
+            Some(bytes) => {
+                Some(
+                    json_span::JsonDoc::parse(bytes).map_err(|e| DiscoverError::Manifest {
+                        file: "package.json".to_owned(),
+                        format: ManifestFormat::Json,
+                        message: e.to_string(),
+                        span: Some(e_position(&e)),
+                    })?,
+                )
+            }
             None => None,
         };
         let npm_globs: Vec<String> = match &root_json {
@@ -80,9 +84,7 @@ impl EcosystemAdapter for NpmAdapter {
                     json_span::JsonValue::Array(items) => items
                         .iter()
                         .filter_map(|v| match &v.value {
-                            json_span::JsonValue::String { decoded, .. } => {
-                                Some(decoded.clone())
-                            }
+                            json_span::JsonValue::String { decoded, .. } => Some(decoded.clone()),
                             _ => None,
                         })
                         .collect(),
@@ -108,7 +110,10 @@ impl EcosystemAdapter for NpmAdapter {
             },
             None => Vec::new(),
         };
-        let sources = GlobSources { pnpm: pnpm_globs, npm: npm_globs };
+        let sources = GlobSources {
+            pnpm: pnpm_globs,
+            npm: npm_globs,
+        };
         if sources.pnpm.is_none() && sources.npm.is_empty() && root_json.is_none() {
             // No npm workspace or package here; the orchestrator merges
             // adapters, so an empty result is correct.
@@ -141,19 +146,41 @@ impl EcosystemAdapter for NpmAdapter {
                 message: e.to_string(),
                 span: Some(e_position(&e)),
             })?;
+            if dir.is_empty() && doc.get("name").is_none() {
+                // Anonymous root `package.json` (vuejs/core has one at every
+                // revision): it hosts the workspace fields but is not itself
+                // a package — pnpm does not list it as a member. A NAMED
+                // root still becomes a member row below.
+                continue;
+            }
             packages.push(package_from_doc(&doc, dir, &manifest_path)?);
         }
         Ok(packages)
+    }
+
+    fn edit_versions(
+        &self,
+        file: &RelPath,
+        content: &[u8],
+        patches: &[PlanPatch],
+    ) -> Result<EditOutcome, EditFailure> {
+        let mut doc = json_span::JsonDoc::parse(content).map_err(|e| EditFailure::Parse {
+            file: file.to_string(),
+            message: e.to_string(),
+        })?;
+        let counts = edit::edit_versions(&mut doc, file.as_str(), patches)?;
+        Ok(EditOutcome {
+            content: doc.render(),
+            applied: counts.applied,
+            skipped: counts.skipped,
+        })
     }
 }
 
 /// Converts a scanner error position into a core span.
 fn e_position(e: &json_span::JsonError) -> Span {
     let start = u32::try_from(e.position).unwrap_or(u32::MAX);
-    Span {
-        start,
-        end: start,
-    }
+    Span { start, end: start }
 }
 
 /// Decodes manifest bytes; non-UTF-8 manifests are `E-DISC-MANIFEST`.
@@ -170,17 +197,32 @@ fn utf8<'a>(bytes: &'a [u8], file: &str) -> Result<&'a str, DiscoverError> {
 /// committed directory inventory (§6.2). Dirs without a `package.json`
 /// are skipped (glob members are candidate roots, not requirements).
 fn member_dirs(ctx: &DiscoverCtx, sources: &GlobSources) -> Result<Vec<String>, DiscoverError> {
-    let mut patterns: Vec<String> = Vec::new();
+    // Patterns in document order with their negation flag (micromatch
+    // semantics: later negations exclude matched directories, later
+    // includes re-include them — evaluated per directory, not per
+    // pattern, so `!pkgs/secret` excludes the directories a previous
+    // glob matched).
+    let mut patterns: Vec<(String, bool)> = Vec::new();
     if let Some(pnpm) = &sources.pnpm {
-        patterns.extend(pnpm_yaml::apply_negations(pnpm));
+        for pattern in pnpm {
+            match pattern.strip_prefix('!') {
+                Some(neg) => patterns.push((neg.trim().to_owned(), true)),
+                None => patterns.push((pattern.trim().to_owned(), false)),
+            }
+        }
     }
-    patterns.extend(sources.npm.iter().cloned());
+    for pattern in &sources.npm {
+        patterns.push((pattern.clone(), false));
+    }
     let dirs = ctx.dirs();
     let mut members: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for pattern in &patterns {
-        if glob::matches(pattern, "") || !pattern.chars().any(|c| matches!(c, '*' | '?' | '[' | ']' )) {
+    for (pattern, negated) in &patterns {
+        if !negated
+            && (glob::matches(pattern, "")
+                || !pattern.chars().any(|c| matches!(c, '*' | '?' | '[' | ']')))
+        {
             // Explicit directory member.
-            if dirs.iter().any(|d| *d == pattern.as_str())
+            if dirs.contains(&pattern.as_str())
                 || ctx.file(&format!("{pattern}/package.json")).is_some()
             {
                 members.insert(pattern.clone());
@@ -191,9 +233,16 @@ fn member_dirs(ctx: &DiscoverCtx, sources: &GlobSources) -> Result<Vec<String>, 
                 message: "explicit member has no directory in the committed tree".to_owned(),
             });
         }
+        // Glob (or negated exclusion): expand against the committed
+        // directories that carry a manifest. Negations never error on
+        // absent directories — excluding a ghost is a no-op.
         for dir in &dirs {
             if glob::matches(pattern, dir) && ctx.file(&format!("{dir}/package.json")).is_some() {
-                members.insert((*dir).to_owned());
+                if *negated {
+                    members.remove(*dir);
+                } else {
+                    members.insert((*dir).to_owned());
+                }
             }
         }
     }
@@ -238,40 +287,77 @@ fn package_from_doc(
         });
     };
 
-    let (version, version_site) = match doc.get("version").map(|v| &v.value) {
-        Some(json_span::JsonValue::String { decoded, inner }) => {
-            let parsed = semver::Version::parse(decoded).ok();
-            if parsed.is_none() {
-                warnings.push(DiscoveryWarning {
-                    code: "invalid-version",
-                    subject: name.clone(),
-                    message: format!("version {decoded:?} is not valid semver"),
-                });
-            }
-            let site = ManifestSite {
-                file: manifest.clone(),
-                spans: vec![*inner],
-            };
-            (parsed, Some(site))
-        }
-        _ => {
+    let (version, version_site) = if let Some(json_span::JsonValue::String { decoded, inner }) =
+        doc.get("version").map(|v| &v.value)
+    {
+        let parsed = semver::Version::parse(decoded).ok();
+        if parsed.is_none() {
             warnings.push(DiscoveryWarning {
-                code: "no-version",
+                code: "invalid-version",
                 subject: name.clone(),
-                message: "no `version` in package.json; package treated as unpublished"
-                    .to_owned(),
+                message: format!("version {decoded:?} is not valid semver"),
             });
-            (None, None)
         }
+        let site = ManifestSite {
+            file: manifest.clone(),
+            spans: vec![*inner],
+        };
+        (parsed, Some(site))
+    } else {
+        warnings.push(DiscoveryWarning {
+            code: "no-version",
+            subject: name.clone(),
+            message: "no `version` in package.json; package treated as unpublished".to_owned(),
+        });
+        (None, None)
     };
 
     // `private: true` ⇒ not publishable (§6.4).
-    let publishable = !matches!(doc.get("private").map(|v| &v.value),
-        Some(json_span::JsonValue::Bool(true)));
+    let publishable = !matches!(
+        doc.get("private").map(|v| &v.value),
+        Some(json_span::JsonValue::Bool(true))
+    );
     // `publishConfig` is read but not interpreted (§6.4).
     let _publish_config = doc.get("publishConfig");
 
-    // Dependency fields (§6.4): order fixed for determinism.
+    // Dependency fields (§6.4) in fixed order, then the npm
+    // `optionalDependencies` override semantics.
+    let deps = collect_deps(doc, &manifest, &mut warnings);
+
+    // napi facet (§6.5): a `napi` key or an `@napi-rs/cli` dependency.
+    let napi = doc.get("napi").is_some() || deps.iter().any(|d| d.name == "@napi-rs/cli");
+
+    Ok(RawPackage {
+        name,
+        ecosystem: Ecosystem::Npm,
+        root: dir,
+        manifest: manifest_path.to_owned(),
+        version,
+        version_source: RawVersionSource::Local,
+        publishable,
+        deps,
+        tag_template: None,
+        changelog: None,
+        version_site,
+        include: halyard_core::package::PathFilter::new(Vec::new(), Vec::new()),
+        facets: Facets {
+            cdylib: false,
+            wasm_bindgen: false,
+            napi,
+        },
+        warnings,
+    })
+}
+
+/// Collects the four dependency tables in fixed document order (§6.4)
+/// and applies the npm `optionalDependencies` override semantics: an
+/// Optional row drops the same-name Normal row (dedup by name, first
+/// Optional wins — deterministic on repeated keys).
+fn collect_deps(
+    doc: &json_span::JsonDoc,
+    manifest: &RelPath,
+    warnings: &mut Vec<DiscoveryWarning>,
+) -> Vec<RawDep> {
     let mut deps: Vec<RawDep> = Vec::new();
     for (field, kind) in [
         ("dependencies", DepKind::Normal),
@@ -279,13 +365,13 @@ fn package_from_doc(
         ("peerDependencies", DepKind::Peer),
         ("optionalDependencies", DepKind::Optional),
     ] {
-        if let Some(json_span::JsonValue::Object(entries)) =
-            doc.get(field).map(|v| &v.value)
-        {
+        if let Some(json_span::JsonValue::Object(entries)) = doc.get(field).map(|v| &v.value) {
             for entry in entries {
                 let dep_name = entry.key.clone();
                 let req_text = match &entry.value.value {
-                    json_span::JsonValue::String { decoded, inner } => Some((decoded.as_str(), *inner)),
+                    json_span::JsonValue::String { decoded, inner } => {
+                        Some((decoded.as_str(), *inner))
+                    }
                     _ => None,
                 };
                 let Some((text, inner)) = req_text else {
@@ -327,35 +413,13 @@ fn package_from_doc(
             true
         });
     }
-
-    // napi facet (§6.5): a `napi` key or an `@napi-rs/cli` dependency.
-    let napi = doc.get("napi").is_some()
-        || deps.iter().any(|d| d.name == "@napi-rs/cli");
-
-    Ok(RawPackage {
-        name,
-        ecosystem: Ecosystem::Npm,
-        root: dir,
-        manifest: manifest_path.to_owned(),
-        version,
-        version_source: RawVersionSource::Local,
-        publishable,
-        deps,
-        tag_template: None,
-        changelog: None,
-        version_site,
-        include: halyard_core::package::PathFilter::new(Vec::new(), Vec::new()),
-        facets: Facets {
-            cdylib: false,
-            wasm_bindgen: false,
-            napi,
-        },
-        warnings,
-    })
+    deps
 }
 
-/// Classifies an npm requirement (§6.4 protocols).
-fn classify_req(text: &str) -> (ReqSpec, bool) {
+/// Classifies an npm requirement (§6.4 protocols). `pub(crate)`: the M3.3
+/// patcher reuses the exact M1.6 classification so skip-and-count rows
+/// match discovery's [`ReqSpec`] decisions.
+pub(crate) fn classify_req(text: &str) -> (ReqSpec, bool) {
     if let Some(rest) = text.strip_prefix("workspace:") {
         let protocol = match rest {
             "*" => WorkspaceProtocol::Star,
@@ -369,7 +433,10 @@ fn classify_req(text: &str) -> (ReqSpec, bool) {
         return (ReqSpec::Catalog(None), true);
     }
     if let Some(name) = text.strip_prefix("catalog:") {
-        return (ReqSpec::Catalog(Some(halyard_core::BString::from(name))), true);
+        return (
+            ReqSpec::Catalog(Some(halyard_core::BString::from(name))),
+            true,
+        );
     }
     if text.starts_with("file:") || text.starts_with("link:") {
         return (ReqSpec::PathOnly, true);
@@ -413,15 +480,18 @@ mod tests {
         ] {
             let ctx = ctx_with(&[
                 ("package.json", body),
-                ("packages/x/package.json", r#"{"name":"x","version":"1.0.0"}"#),
+                (
+                    "packages/x/package.json",
+                    r#"{"name":"x","version":"1.0.0"}"#,
+                ),
                 ("apps/a/package.json", r#"{"name":"a","version":"0.1.0"}"#),
             ]);
             let pkgs = NpmAdapter::new().discover(&ctx).unwrap();
             let roots: Vec<&str> = pkgs.iter().map(|p| p.root.as_str()).collect();
             assert_eq!(roots, vec!["", "apps/a", "packages/x"]);
-            assert_eq!(pkgs[0].root, "");
-            assert_eq!(pkgs[1].name, "a");
-            assert_eq!(pkgs[2].name, "x");
+            assert_eq!(pkgs.first().expect("three pkgs").root, "");
+            assert_eq!(pkgs.get(1).expect("three pkgs").name, "a");
+            assert_eq!(pkgs.get(2).expect("three pkgs").name, "x");
             let _ = expected;
         }
     }
@@ -434,8 +504,14 @@ mod tests {
                 "packages:\n  - 'packages/*'\n  - '!packages/secret'\ncatalog:\n  react: ^18.0.0\n",
             ),
             ("package.json", r#"{"name":"root","private":true}"#),
-            ("packages/x/package.json", r#"{"name":"x","version":"1.0.0","dependencies":{"react":"catalog:","lodash":"catalog:std"}}"#),
-            ("packages/secret/package.json", r#"{"name":"secret","version":"0.0.1","private":true}"#),
+            (
+                "packages/x/package.json",
+                r#"{"name":"x","version":"1.0.0","dependencies":{"react":"catalog:","lodash":"catalog:std"}}"#,
+            ),
+            (
+                "packages/secret/package.json",
+                r#"{"name":"secret","version":"0.0.1","private":true}"#,
+            ),
         ]);
         let pkgs = NpmAdapter::new().discover(&ctx).unwrap();
         // Root + x only (secret negated); root has a name so it is a member.
@@ -443,18 +519,24 @@ mod tests {
         assert_eq!(names, vec!["root", "x"]);
         let x = pkgs.iter().find(|p| p.name == "x").unwrap();
         assert_eq!(x.deps.len(), 2);
-        assert!(matches!(x.deps[0].req, ReqSpec::Catalog(None)));
         assert!(matches!(
-            x.deps[1].req,
+            x.deps.first().expect("two deps").req,
+            ReqSpec::Catalog(None)
+        ));
+        assert!(matches!(
+            x.deps.get(1).expect("two deps").req,
             ReqSpec::Catalog(Some(ref n)) if n == b"std"
         ));
-        assert!(x.deps[0].internal);
+        assert!(x.deps.first().expect("two deps").internal);
     }
 
     #[test]
     fn protocols_covered() {
         let ctx = ctx_with(&[
-            ("package.json", r#"{"name":"root","workspaces":["packages/*"]}"#),
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
             (
                 "packages/x/package.json",
                 r#"{"name":"x","version":"1.0.0","dependencies":{"a":"workspace:*","b":"workspace:^","c":"workspace:~","d":"workspace:1.2.3","e":"file:../f","f":"link:../g","g":">=8 <10"}}"#,
@@ -463,19 +545,43 @@ mod tests {
         let pkgs = NpmAdapter::new().discover(&ctx).unwrap();
         let x = pkgs.iter().find(|p| p.name == "x").unwrap();
         let reqs: Vec<(&ReqSpec, bool)> = x.deps.iter().map(|d| (&d.req, d.internal)).collect();
-        assert!(matches!(reqs[0], (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Star), true)));
-        assert!(matches!(reqs[1], (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Caret), true)));
-        assert!(matches!(reqs[2], (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Tilde), true)));
-        assert!(matches!(reqs[3], (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Exact), true)));
-        assert!(matches!(reqs[4], (ReqSpec::PathOnly, true)));
-        assert!(matches!(reqs[5], (ReqSpec::PathOnly, true)));
-        assert!(matches!(reqs[6], (ReqSpec::Other { .. }, false)));
+        assert!(matches!(
+            reqs.first().expect("seven reqs"),
+            (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Star), true)
+        ));
+        assert!(matches!(
+            reqs.get(1).expect("seven reqs"),
+            (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Caret), true)
+        ));
+        assert!(matches!(
+            reqs.get(2).expect("seven reqs"),
+            (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Tilde), true)
+        ));
+        assert!(matches!(
+            reqs.get(3).expect("seven reqs"),
+            (ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Exact), true)
+        ));
+        assert!(matches!(
+            reqs.get(4).expect("seven reqs"),
+            (ReqSpec::PathOnly, true)
+        ));
+        assert!(matches!(
+            reqs.get(5).expect("seven reqs"),
+            (ReqSpec::PathOnly, true)
+        ));
+        assert!(matches!(
+            reqs.get(6).expect("seven reqs"),
+            (ReqSpec::Other { .. }, false)
+        ));
     }
 
     #[test]
     fn private_publish_config_and_dep_kinds() {
         let ctx = ctx_with(&[
-            ("package.json", r#"{"name":"root","workspaces":["packages/*"]}"#),
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
             (
                 "packages/x/package.json",
                 r#"{"name":"x","version":"1.0.0","private":true,"publishConfig":{"access":"public"},"dependencies":{"y":"workspace:*"},"devDependencies":{"z":"workspace:*"},"peerDependencies":{"w":"^1"},"optionalDependencies":{"o":"workspace:*"}}"#,
@@ -495,7 +601,10 @@ mod tests {
     #[test]
     fn optional_dependencies_override_normal() {
         let ctx = ctx_with(&[
-            ("package.json", r#"{"name":"root","workspaces":["packages/*"]}"#),
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
             (
                 "packages/x/package.json",
                 r#"{"name":"x","dependencies":{"o":"^1"},"optionalDependencies":{"o":"^1"}}"#,
@@ -505,16 +614,28 @@ mod tests {
         let x = pkgs.iter().find(|p| p.name == "x").unwrap();
         let o_count = x.deps.iter().filter(|d| d.name == "o").count();
         assert_eq!(o_count, 1);
-        assert_eq!(x.deps[0].kind, DepKind::Optional);
+        assert_eq!(x.deps.first().expect("one dep").kind, DepKind::Optional);
     }
 
     #[test]
     fn napi_facet_from_key_or_dep() {
         let ctx = ctx_with(&[
-            ("package.json", r#"{"name":"root","workspaces":["packages/*"]}"#),
-            ("packages/a/package.json", r#"{"name":"a","version":"1.0.0","napi":{"binaryName":"a"}}"#),
-            ("packages/b/package.json", r#"{"name":"b","version":"1.0.0","devDependencies":{"@napi-rs/cli":"^2"}}"#),
-            ("packages/c/package.json", r#"{"name":"c","version":"1.0.0"}"#),
+            (
+                "package.json",
+                r#"{"name":"root","workspaces":["packages/*"]}"#,
+            ),
+            (
+                "packages/a/package.json",
+                r#"{"name":"a","version":"1.0.0","napi":{"binaryName":"a"}}"#,
+            ),
+            (
+                "packages/b/package.json",
+                r#"{"name":"b","version":"1.0.0","devDependencies":{"@napi-rs/cli":"^2"}}"#,
+            ),
+            (
+                "packages/c/package.json",
+                r#"{"name":"c","version":"1.0.0"}"#,
+            ),
         ]);
         let pkgs = NpmAdapter::new().discover(&ctx).unwrap();
         let facet = |name: &str| pkgs.iter().find(|p| p.name == name).unwrap().facets.napi;
@@ -524,8 +645,31 @@ mod tests {
     }
 
     #[test]
-    fn missing_name_is_an_error_with_stable_code() {
+    fn anonymous_root_is_a_host_not_a_member() {
+        // A root package.json without `name` hosts the workspace; a member
+        // without `name` is still an honest manifest error.
+        let ctx = ctx_with(&[
+            (
+                "package.json",
+                r#"{"version":"1.0.0","workspaces":["pkgs/*"]}"#,
+            ),
+            ("pkgs/a/package.json", r#"{"name":"a","version":"1.0.0"}"#),
+        ]);
+        let pkgs = NpmAdapter::new().discover(&ctx).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs.first().unwrap().name, "a");
+
         let ctx = ctx_with(&[("package.json", r#"{"version":"1.0.0"}"#)]);
+        assert_eq!(
+            NpmAdapter::new().discover(&ctx).unwrap(),
+            Vec::<RawPackage>::new()
+        );
+
+        // A MEMBER without a name fails closed with the stable code.
+        let ctx = ctx_with(&[
+            ("package.json", r#"{"name":"root","workspaces":["pkgs/*"]}"#),
+            ("pkgs/a/package.json", r#"{"version":"1.0.0"}"#),
+        ]);
         let err = NpmAdapter::new().discover(&ctx).unwrap_err();
         assert_eq!(err.code(), "E-DISC-MANIFEST");
     }
