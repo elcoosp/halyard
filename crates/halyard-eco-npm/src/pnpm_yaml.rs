@@ -40,7 +40,11 @@ pub struct YamlError {
 
 impl std::fmt::Display for YamlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "invalid pnpm-workspace.yaml at line {}: {}", self.line, self.message)
+        write!(
+            f,
+            "invalid pnpm-workspace.yaml at line {}: {}",
+            self.line, self.message
+        )
     }
 }
 
@@ -50,10 +54,12 @@ impl std::error::Error for YamlError {}
 /// panicking.
 pub fn parse_pnpm_workspace(text: &str) -> Result<PnpmWorkspace, YamlError> {
     let mut out = PnpmWorkspace::default();
-    let lines: Vec<&str> = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+    let lines: Vec<&str> = text
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect();
     let mut i = 0usize;
-    while i < lines.len() {
-        let raw = lines[i];
+    while let Some(raw) = lines.get(i) {
         let trimmed = strip_comment(raw).trim_end().to_owned();
         i += 1;
         if trimmed.trim().is_empty() {
@@ -69,7 +75,7 @@ pub fn parse_pnpm_workspace(text: &str) -> Result<PnpmWorkspace, YamlError> {
                 message: "unexpectedly indented line at top level".to_owned(),
             });
         }
-        let Some((key, _)) = split_key(&content) else {
+        let Some((key, _)) = split_key(content) else {
             return Err(YamlError {
                 line: i,
                 message: format!("expected `key:` at top level, found {content:?}"),
@@ -94,13 +100,22 @@ pub fn parse_pnpm_workspace(text: &str) -> Result<PnpmWorkspace, YamlError> {
                 }
                 i = next;
             }
-            other => {
-                return Err(YamlError {
-                    line: i,
-                    message: format!(
-                        "unsupported key {other:?} (supported: packages, catalog, catalogs)"
-                    ),
-                });
+            _other => {
+                // Unknown top-level keys (pnpm gains fields such as
+                // `allowBuilds` or `onlyBuiltDependencies` across
+                // releases) carry no member/catalog semantics: skip the
+                // key and its indented block.
+                while let Some(next) = lines.get(i) {
+                    let blank = next.trim().is_empty();
+                    let indented = next
+                        .strip_prefix(' ')
+                        .is_some_and(|rest| !rest.trim().is_empty());
+                    if blank || indented {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -136,13 +151,17 @@ fn strip_comment(line: &str) -> &str {
     let mut in_single = false;
     let mut in_double = false;
     for (idx, b) in bytes.iter().enumerate() {
-        match b {
+        match *b {
             b'\'' if !in_double => in_single = !in_single,
             b'"' if !in_single => in_double = !in_double,
-            b'#' if !in_single && !in_double => {
-                if idx == 0 || bytes[idx - 1] == b' ' || bytes[idx - 1] == b'\t' {
-                    return &line[..idx];
-                }
+            // Unquoted `#` preceded by whitespace (or at line start)
+            // opens a comment; `#` inside quotes or glued to text does
+            // not.
+            b'#' if !in_single
+                && !in_double
+                && (idx == 0 || matches!(bytes.get(idx - 1), Some(b' ' | b'\t'))) =>
+            {
+                return &line[..idx];
             }
             _ => {}
         }
@@ -190,8 +209,8 @@ fn unquote(scalar: &str) -> String {
 fn parse_block_list(lines: &[&str], mut i: usize) -> Result<(Vec<String>, usize), YamlError> {
     let mut items = Vec::new();
     let line_no = |i: usize| i + 1;
-    while i < lines.len() {
-        let trimmed_full = strip_comment(lines[i]).trim_end().to_owned();
+    while let Some(raw) = lines.get(i) {
+        let trimmed_full = strip_comment(raw).trim_end().to_owned();
         if trimmed_full.trim().is_empty() {
             i += 1;
             continue;
@@ -227,10 +246,13 @@ fn parse_block_list(lines: &[&str], mut i: usize) -> Result<(Vec<String>, usize)
 }
 
 /// Parses a block map of scalars (`name: value`).
-fn parse_block_map(lines: &[&str], mut i: usize) -> Result<(std::collections::BTreeMap<String, String>, usize), YamlError> {
+fn parse_block_map(
+    lines: &[&str],
+    mut i: usize,
+) -> Result<(std::collections::BTreeMap<String, String>, usize), YamlError> {
     let mut map = std::collections::BTreeMap::new();
-    while i < lines.len() {
-        let trimmed_full = strip_comment(lines[i]).trim_end().to_owned();
+    while let Some(raw) = lines.get(i) {
+        let trimmed_full = strip_comment(raw).trim_end().to_owned();
         if trimmed_full.trim().is_empty() {
             i += 1;
             continue;
@@ -265,20 +287,18 @@ fn parse_block_map(lines: &[&str], mut i: usize) -> Result<(std::collections::BT
 
 /// True when the line opens a nested block (`name:` with empty value).
 fn rest_is_list_marker(content: &str) -> bool {
-    split_key(content)
-        .map(|(_, rest)| rest.is_empty())
-        .unwrap_or(false)
+    split_key(content).is_some_and(|(_, rest)| rest.is_empty())
 }
+
+/// One parsed named catalog: `(name, dep → requirement)` pairs.
+type NamedCatalogs = Vec<(String, std::collections::BTreeMap<String, String>)>;
 
 /// Parses `catalogs:` children: `name:` lines each followed by an indented
 /// `dep: version` map.
-fn parse_named_maps(
-    lines: &[&str],
-    mut i: usize,
-) -> Result<(Vec<(String, std::collections::BTreeMap<String, String>)>, usize), YamlError> {
-    let mut maps: Vec<(String, std::collections::BTreeMap<String, String>)> = Vec::new();
-    while i < lines.len() {
-        let trimmed_full = strip_comment(lines[i]).trim_end().to_owned();
+fn parse_named_maps(lines: &[&str], mut i: usize) -> Result<(NamedCatalogs, usize), YamlError> {
+    let mut maps: NamedCatalogs = Vec::new();
+    while let Some(raw) = lines.get(i) {
+        let trimmed_full = strip_comment(raw).trim_end().to_owned();
         if trimmed_full.trim().is_empty() {
             i += 1;
             continue;
@@ -346,13 +366,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ws.packages, vec!["pkgs/*"]);
-        assert_eq!(ws.catalogs.get("").unwrap().get("a").map(String::as_str), Some("1.0.0"));
+        assert_eq!(
+            ws.catalogs.get("").unwrap().get("a").map(String::as_str),
+            Some("1.0.0")
+        );
     }
 
     #[test]
-    fn unsupported_keys_error() {
-        let err = parse_pnpm_workspace("onlyBuiltDependencies:\n  - esbuild\n").unwrap_err();
-        assert!(err.message.contains("unsupported key"));
+    fn unknown_keys_are_skipped_with_their_block() {
+        // pnpm v10-era keys must not fail discovery of members/catalogs.
+        let ws = parse_pnpm_workspace(
+            "allowBuilds:\n  - esbuild\n  - wasm-pack\npackages:\n  - 'pkgs/*'\nonlyBuiltDependencies:\n  - esbuild\ncatalog:\n  react: ^18.0.0\n",
+        )
+        .unwrap();
+        assert_eq!(ws.packages, vec!["pkgs/*"]);
+        assert_eq!(
+            ws.catalogs
+                .get("")
+                .unwrap()
+                .get("react")
+                .map(String::as_str),
+            Some("^18.0.0")
+        );
     }
 
     #[test]
