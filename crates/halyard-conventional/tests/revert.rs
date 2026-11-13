@@ -21,17 +21,23 @@ fn message(subject: &str, body: &str) -> Vec<u8> {
 fn revert_target_matches_git_canonical_body() {
     let oid = "9f32036f7215bb0fb590f120442648feca5a6104";
     let msg = message(
-        &format!(r#"Revert "feat: grow parser""#),
+        r#"Revert "feat: grow parser""#,
         &format!("This reverts commit {oid}."),
     );
-    assert_eq!(revert_target(&msg).map(|t| t.to_string()), Some(oid.to_owned()));
+    assert_eq!(
+        revert_target(&msg).map(|t| t.to_string()),
+        Some(oid.to_owned())
+    );
 }
 
 #[test]
 fn revert_target_without_trailing_period() {
     let oid = "0123456789abcdef0123456789abcdef01234567";
     let msg = message("revert: undo", &format!("This reverts commit {oid}"));
-    assert_eq!(revert_target(&msg).map(|t| t.to_string()), Some(oid.to_owned()));
+    assert_eq!(
+        revert_target(&msg).map(|t| t.to_string()),
+        Some(oid.to_owned())
+    );
 }
 
 #[test]
@@ -41,19 +47,28 @@ fn revert_target_tolerates_surrounding_lines_and_indent() {
         "fix: something else",
         &format!("why:\n\n  This reverts commit {oid}.\n\nbecause reasons"),
     );
-    assert_eq!(revert_target(&msg).map(|t| t.to_string()), Some(oid.to_owned()));
+    assert_eq!(
+        revert_target(&msg).map(|t| t.to_string()),
+        Some(oid.to_owned())
+    );
 }
 
 #[test]
 fn revert_target_rejects_bad_shapes() {
     let truncated = message("revert: x", "This reverts commit 9f32036 (short).");
     assert_eq!(revert_target(&truncated), None);
-    let nonhex = message("revert: x", "This reverts commit zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.");
+    let nonhex = message(
+        "revert: x",
+        "This reverts commit zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.",
+    );
     assert_eq!(revert_target(&nonhex), None);
     let absent = message("revert: x", "This reverts commit .");
     assert_eq!(revert_target(&absent), None);
     // Lowercase variant is git's *subject* shape only; no OID, no match.
-    let lowercase_key = message("revert: x", "this reverts commit 9f32036f7215bb0fb590f120442648feca5a6104");
+    let lowercase_key = message(
+        "revert: x",
+        "this reverts commit 9f32036f7215bb0fb590f120442648feca5a6104",
+    );
     assert_eq!(revert_target(&lowercase_key), None);
     assert_eq!(revert_target(b""), None);
 }
