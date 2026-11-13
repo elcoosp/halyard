@@ -11,12 +11,12 @@
 //!   (`halyard-discover`) owns the walk and the reads.
 //! * Everything is a plain-data row with `String` names; the orchestrator
 //!   interns them into the [`Workspace`] interner (§5.1).
-//! * The trait carries **only** what this milestone implements
-//!   (`discover`). The §7.3 methods that mutate manifests and lockfiles
-//!   (`edit_versions`, `patch_lockfile`, `publish`, …) are deliberately
-//!   absent until the mutation engine lands (M3/M5); shipping a stubbed
-//!   method is forbidden (TASK §2.2). The omission is tracked as a slice-C
-//!   task in `PROGRESS.md`.
+//! * The trait carries the implemented §7.3 surface: `discover`
+//!   (M1.5/M1.6) and `edit_versions` (M3.1/M3.3 — the manifest edit
+//!   subset over the plan's byte patches, §5.8/§9.1). The remaining §7.3
+//!   methods (`patch_lockfile`, `publish`, …) stay absent until their
+//!   milestones land (M3.2/M3.4/M5); shipping a stubbed method is
+//!   forbidden (TASK §2.2). The omission is tracked in `PROGRESS.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,7 +45,11 @@ struct RelPathKey(BString);
 
 impl RelPathKey {
     fn new(path: &str) -> Option<Self> {
-        crate::package::RelPath::new(path).map(|_| Self(BString::from(path)))
+        crate::package::RelPath::new(path)
+            // The file inventory holds files only: the empty path names
+            // the repository *root* (a directory, §6.1), never a file.
+            .filter(|_| !path.is_empty())
+            .map(|_| Self(BString::from(path)))
     }
     fn as_str(&self) -> &str {
         std::str::from_utf8(&self.0).unwrap_or_default()
@@ -72,7 +76,9 @@ impl DiscoverCtx {
 
     /// Contents of one registered file (`None` for inventory-only paths).
     pub fn file(&self, path: &str) -> Option<&[u8]> {
-        self.contents.get(&RelPathKey(BString::from(path))).map(|b| b.as_ref())
+        self.contents
+            .get(&RelPathKey(BString::from(path)))
+            .map(std::convert::AsRef::as_ref)
     }
 
     /// The committed file inventory, sorted by path.
@@ -89,10 +95,10 @@ impl DiscoverCtx {
             let mut offset = 0usize;
             while let Some(idx) = path.get(offset..).and_then(|s| s.find('/')) {
                 let end = offset + idx;
-                if end > 0 {
-                    if let Some(dir) = path.get(..end) {
-                        out.insert(dir);
-                    }
+                if end > 0
+                    && let Some(dir) = path.get(..end)
+                {
+                    out.insert(dir);
                 }
                 offset = end + 1;
             }
@@ -362,19 +368,39 @@ impl std::fmt::Display for DiscoverError {
 
 impl std::error::Error for DiscoverError {}
 
-/// The per-ecosystem discovery seam (§7.3, discovery subset).
+/// The per-ecosystem discovery + edit seam (§7.3).
 ///
-/// `edit_versions`, `patch_lockfile`, `publish` and the other §7.3 methods
-/// are **intentionally absent** until the mutation/publish engines exist
-/// (M3/M5): a trait method that is not implemented end-to-end would be a
-/// stub, and stubs are forbidden (TASK §2.2). The trait is extended in the
-/// slice that implements the method for real — see `PROGRESS.md`, slice C.
+/// `patch_lockfile`, `publish` and the remaining §7.3 methods are
+/// **intentionally absent** until the lockfile/publish engines exist
+/// (M3.2/M3.4/M5): a trait method that is not implemented end-to-end
+/// would be a stub, and stubs are forbidden (TASK §2.2). `edit_versions`
+/// joined the trait in M3 together with its first two end-to-end
+/// implementations (see [`crate::edit`]).
 pub trait EcosystemAdapter: Send + Sync {
     /// Adapter identifier (`cargo`, `npm`), used in logs and diagnostics.
     fn id(&self) -> &'static str;
     /// Identify member manifests from the orchestrator-provided tree and
     /// produce raw package rows. Pure parse: no process spawn, no I/O.
     fn discover(&self, ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError>;
+    /// Apply the plan's version-rewrite patches for ONE manifest (§7.3
+    /// edit subset, M3.1/M3.3): the patches are the per-file byte patches
+    /// the planner emitted (§5.8 `edits`, §9.1) — requirement text and
+    /// own-version rows — computed over the manifest as it exists at
+    /// [`crate::plan::Plan::head`].
+    ///
+    /// Implementations re-apply the patches **semantically** (parse the
+    /// manifest, locate the row each span targets, classify it like
+    /// [`crate::rewrite::rewrite_requirement`] does, rewrite in place
+    /// preserving formatting) and verify by re-parse before returning, so
+    /// untouched bytes survive verbatim (invariant I4) and a drifted
+    /// working tree fails closed ([`EditFailure::SpanMismatch`]). Pure
+    /// parse+mutate over the given bytes: no process spawn, no I/O.
+    fn edit_versions(
+        &self,
+        file: &crate::package::RelPath,
+        content: &[u8],
+        patches: &[crate::plan::PlanPatch],
+    ) -> Result<crate::edit::EditOutcome, crate::edit::EditFailure>;
 }
 
 /// Merge-time context: links a [`RawPackage`]/[`RawDep`] name to the
@@ -412,7 +438,8 @@ mod tests {
             ("a/Cargo.toml", "[package]\nname = \"a\"\n"),
             ("docs/readme.md", "hi\n"),
         ]);
-        assert_eq!(ctx.file("Cargo.toml").map(|b| b.len()), Some(30));
+        // `[workspace]\n` (12 bytes) + `members = ["a"]\n` (16 bytes).
+        assert_eq!(ctx.file("Cargo.toml").map(<[u8]>::len), Some(28));
         assert!(ctx.file("a/Cargo.toml").is_some());
         assert!(ctx.file("missing").is_none());
         let tomls = ctx.files_with_suffix("Cargo.toml");
