@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use halyard_core::plan::{Plan, PlanRelease};
-use minijinja::{context, Environment};
+use minijinja::{Environment, context};
 
 /// The stable `<!-- halyard:insert -->` marker (§9.4) and the Unreleased
 /// heading the renderer replaces.
@@ -91,10 +91,18 @@ pub fn render_release(release: &PlanRelease, style: &str) -> Result<String, Chan
         .map_err(|e| ChangelogError::Style {
             requested: format!("template error: {e}"),
         })?;
-    let template = env.get_template("release").map_err(|e| ChangelogError::Style {
-        requested: format!("template error: {e}"),
-    })?;
-    let sections = sections_of(&release.changelog.as_ref().map(|c| c.entry_md.clone()).unwrap_or_default());
+    let template = env
+        .get_template("release")
+        .map_err(|e| ChangelogError::Style {
+            requested: format!("template error: {e}"),
+        })?;
+    let sections = sections_of(
+        &release
+            .changelog
+            .as_ref()
+            .map(|c| c.entry_md.clone())
+            .unwrap_or_default(),
+    );
     // Dateless heading: the release step (which owns the clock) stamps
     // dates; the pure renderer never reads one (§4 purity).
     template
@@ -131,38 +139,89 @@ pub fn render_plan(
         sections.push(render_release(release, style)?);
     }
     let body = sections.join("\n");
+    let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
     let Some(existing) = existing else {
         return Ok(format!(
             "# Changelog\n\nAll notable changes to this project are documented here.\n\n\
              {UNRELEASED_HEADING}\n\n{INSERT_MARKER}\n\n{body}"
         ));
     };
-    // Idempotent insertion (I1): replace the span between the Unreleased
-    // heading (or marker) and the next `## [` heading; anchor-less files
-    // are an error, never a silent rewrite.
-    if let Some(marker_pos) = existing.find(INSERT_MARKER) {
-        let head = existing.get(..marker_pos).unwrap_or_default();
-        let tail = existing
+    // Idempotent insertion (I1): any existing release section for one of
+    // the plan's versions is removed first (the re-run replaces it in
+    // place, §9.4), then the fresh body is inserted after the marker or
+    // the `Unreleased` heading. Anchor-less files are an error, never a
+    // silent rewrite.
+    let cleaned = remove_release_sections(existing, &versions);
+    if let Some(marker_pos) = cleaned.find(INSERT_MARKER) {
+        let head = cleaned.get(..marker_pos).unwrap_or_default();
+        let tail = cleaned
             .get(marker_pos + INSERT_MARKER.len()..)
             .unwrap_or_default()
             .trim_start_matches('\n');
+        // With nothing after the marker the output must be byte-identical
+        // to the fresh document (no dangling blank-line tail).
+        if tail.is_empty() {
+            return Ok(format!("{head}{INSERT_MARKER}\n\n{body}"));
+        }
         return Ok(format!("{head}{INSERT_MARKER}\n\n{body}\n\n{tail}"));
     }
-    let unreleased = existing.find(UNRELEASED_HEADING).ok_or_else(|| {
-        ChangelogError::File {
+    let unreleased = cleaned
+        .find(UNRELEASED_HEADING)
+        .ok_or_else(|| ChangelogError::File {
             file: "CHANGELOG.md".to_owned(),
             reason: "no `[Unreleased]` section and no insertion marker".to_owned(),
-        }
-    })?;
+        })?;
     let after_heading = unreleased + UNRELEASED_HEADING.len();
-    let rest = existing.get(after_heading..).unwrap_or_default();
+    let rest = cleaned.get(after_heading..).unwrap_or_default();
     let next_section = rest
         .find("\n## [")
-        .map(|offset| after_heading + offset + 1)
-        .unwrap_or(existing.len());
-    let head = existing.get(..after_heading).unwrap_or_default();
-    let tail = existing.get(next_section..).unwrap_or_default();
+        .map_or(cleaned.len(), |offset| after_heading + offset + 1);
+    let head = cleaned.get(..after_heading).unwrap_or_default();
+    let tail = cleaned.get(next_section..).unwrap_or_default();
     Ok(format!("{head}\n{body}\n\n{tail}"))
+}
+
+/// True when `line` is a `## [<version>]` heading whose version is one of
+/// `versions` (a re-run's replace targets, §9.4).
+fn is_release_heading(line: &str, versions: &[&str]) -> bool {
+    let Some(inner) = line.strip_prefix("## [") else {
+        return false;
+    };
+    let Some(end) = inner.find(']') else {
+        return false;
+    };
+    versions.contains(&&inner[..end])
+}
+
+/// Drops every `## [<version>]` section block whose version matches one
+/// of `versions`, keeping every other byte (blank lines between the
+/// remaining sections are collapsed only where the removed block was).
+/// Line-based over `split_inclusive`, so the untouched text (dates,
+/// trailing newline shape) survives verbatim (I4).
+fn remove_release_sections(text: &str, versions: &[&str]) -> String {
+    if versions.is_empty() {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut skipping = false;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.strip_suffix('\n').unwrap_or(line);
+        if !skipping && is_release_heading(trimmed, versions) {
+            skipping = true;
+            continue;
+        }
+        if skipping && trimmed.starts_with("## [") {
+            skipping = is_release_heading(trimmed, versions);
+            if !skipping {
+                out.push_str(line);
+            }
+            continue;
+        }
+        if !skipping {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Splits the planner's entry markdown (rendered `## <version>` block
@@ -176,10 +235,10 @@ fn sections_of(entry_md: &str) -> Vec<(String, Vec<String>)> {
                 sections.push(previous);
             }
             current = Some((title.to_owned(), Vec::new()));
-        } else if let Some(bullet) = line.strip_prefix("- ") {
-            if let Some((_, lines)) = current.as_mut() {
-                lines.push(bullet.to_owned());
-            }
+        } else if let Some(bullet) = line.strip_prefix("- ")
+            && let Some((_, lines)) = current.as_mut()
+        {
+            lines.push(bullet.to_owned());
         }
     }
     if let Some(last) = current.take() {
@@ -190,13 +249,13 @@ fn sections_of(entry_md: &str) -> Vec<(String, Vec<String>)> {
 
 /// The keep-a-changelog release template (minijinja, compiled per call —
 /// releases are one-shot documents, not hot-loop text).
-static RELEASE_TEMPLATE: &str = r#"## [{{ version }}]
+static RELEASE_TEMPLATE: &str = r"## [{{ version }}]
 {% for section in sections %}
 ### {{ section.0 }}
 
 {% for line in section.1 %}- {{ line }}
 {% endfor %}
-{% endfor %}"#;
+{% endfor %}";
 
 /// Convenience: a map view of the plan's releases by version (used by the
 /// idempotence tests to compare pre/post states).
@@ -207,9 +266,7 @@ pub fn releases_by_version(plan: &Plan) -> BTreeMap<&str, &PlanRelease> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halyard_core::plan::{
-        Plan, PlanChangelog, PlanRelease,
-    };
+    use halyard_core::plan::{Plan, PlanChangelog, PlanRelease};
 
     fn sample_plan() -> Plan {
         Plan {
