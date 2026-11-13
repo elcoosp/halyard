@@ -1,0 +1,205 @@
+//! Plan-driven apply integration (M3.6): `edit_set_from_plan` round-trip
+//! plus the full local apply flow — real discovery, real adapters, atomic
+//! writes into a tempdir workspace.
+
+use std::path::Path;
+
+use halyard_core::EcosystemAdapter;
+use halyard_core::discover::DiscoverCtx;
+use halyard_core::package::Workspace;
+use halyard_core::plan::{PLAN_SCHEMA_V1, Plan, PlanEdit, PlanPatch};
+use halyard_core::rewrite::{RewriteOutcome, UpperBoundPolicy, rewrite_requirement};
+use halyard_discover::DiscoverInput;
+use halyard_edit::{ApplyReport, apply_plan, dry_run_preview, edit_set_from_plan};
+use semver::Version;
+
+type BoxError = Box<dyn std::error::Error>;
+
+const ROOT_MANIFEST: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\"crates/lib\"]\n\n[dependencies]\nlib = { version = \"0.1\", path = \"crates/lib\" }\n";
+const LIB_MANIFEST: &str = "[package]\nname = \"lib\"\nversion = \"0.2.0\"\n";
+
+fn cargo_files() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Cargo.toml", ROOT_MANIFEST),
+        ("crates/lib/Cargo.toml", LIB_MANIFEST),
+    ]
+}
+
+/// A fixed path→content file set for the synthetic workspace.
+type StaticFiles = Vec<(&'static str, &'static str)>;
+
+fn discovered() -> Result<(Workspace, StaticFiles), BoxError> {
+    let files = cargo_files();
+    let mut ctx = DiscoverCtx::new();
+    for (path, body) in &files {
+        if !ctx.insert_file(path, body.as_bytes().to_vec()) {
+            return Err(format!("ctx rejected {path}").into());
+        }
+    }
+    let discovery = halyard_discover::discover_from_ctx(&ctx, &DiscoverInput::default())?;
+    Ok((discovery.workspace, files))
+}
+
+/// The plan the M3.6 flow would carry: own-version site + the dependent
+/// requirement rewrite, both located through discovery's edit sites.
+fn plan_for(ws: &Workspace) -> Result<Plan, BoxError> {
+    let pkg = ws
+        .packages()
+        .iter()
+        .find(|p| ws.interner().get(p.name) == Some("app"))
+        .ok_or("app package present")?;
+    let site = pkg
+        .version_site
+        .as_ref()
+        .ok_or("own version site present")?;
+    let span = site.spans.first().copied().ok_or("version site span")?;
+    let edge = pkg.deps.first().ok_or("one dep edge")?;
+    let dep_span = edge.site.spans.first().copied().ok_or("dep site span")?;
+    let new_req = match rewrite_requirement("0.1", &Version::new(0, 2, 0), UpperBoundPolicy::Widen)?
+    {
+        RewriteOutcome::Rewritten(text) => text,
+        other @ RewriteOutcome::Unchanged { .. } => {
+            return Err(format!("expected a rewrite, got {other:?}").into());
+        }
+    };
+    Ok(Plan {
+        schema: PLAN_SCHEMA_V1.to_owned(),
+        base_branch: "main".to_owned(),
+        head: "a".repeat(40),
+        plan_hash: "blake3:test".to_owned(),
+        releases: Vec::new(),
+        edits: vec![PlanEdit {
+            file: "Cargo.toml".to_owned(),
+            patches: vec![
+                PlanPatch {
+                    start: span.start,
+                    end: span.end,
+                    text: "0.2.0".to_owned(),
+                },
+                PlanPatch {
+                    start: dep_span.start,
+                    end: dep_span.end,
+                    text: new_req,
+                },
+            ],
+        }],
+        order: Vec::new(),
+        skipped: Vec::new(),
+    })
+}
+
+fn write_files(tmp: &Path, files: &[(&'static str, &'static str)]) -> Result<(), BoxError> {
+    for (path, body) in files {
+        let target = tmp.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&target, body)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn edit_set_from_plan_round_trips_synthetic_plan() -> Result<(), BoxError> {
+    let plan = Plan {
+        schema: PLAN_SCHEMA_V1.to_owned(),
+        base_branch: "main".to_owned(),
+        head: String::new(),
+        plan_hash: String::new(),
+        releases: Vec::new(),
+        edits: vec![PlanEdit {
+            file: "a/Cargo.toml".to_owned(),
+            // The wire contract: a cargo version-site patch spans the
+            // quoted literal and carries the full replacement literal.
+            patches: vec![PlanPatch {
+                // Bytes 20..27 = the quoted literal `"0.4.1"` (cargo
+                // version-site spans include the quote pair).
+                start: 20,
+                end: 27,
+                text: "\"0.5.0\"".to_owned(),
+            }],
+        }],
+        order: Vec::new(),
+        skipped: Vec::new(),
+    };
+    let set = edit_set_from_plan(&plan)?;
+    let file = halyard_core::RelPath::new("a/Cargo.toml").ok_or("path")?;
+    let out = set.apply_content(&file, b"[package]\nversion = \"0.4.1\"\n")?;
+    assert_eq!(String::from_utf8(out)?, "[package]\nversion = \"0.5.0\"\n");
+    Ok(())
+}
+
+#[test]
+fn dry_run_preview_lists_sorted_files_and_patches() -> Result<(), BoxError> {
+    let (ws, _files) = discovered()?;
+    let plan = plan_for(&ws)?;
+    let preview = dry_run_preview(&plan)?;
+    let files: Vec<&String> = preview.keys().collect();
+    assert_eq!(files, vec!["Cargo.toml"]);
+    let patches = preview.get("Cargo.toml").ok_or("row")?;
+    assert_eq!(patches.len(), 2);
+    let texts: Vec<&str> = patches.iter().map(|p| p.text.as_str()).collect();
+    assert!(texts.contains(&"0.2.0"));
+    assert!(texts.contains(&"0.2"));
+    Ok(())
+}
+
+#[test]
+fn apply_plan_rewrites_the_workspace_and_reapplies_idempotently() -> Result<(), BoxError> {
+    let (ws, files) = discovered()?;
+    let plan = plan_for(&ws)?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    write_files(tmp.path(), &files)?;
+
+    let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    assert_eq!(report.files.len(), 1);
+    let first = report.files.first().ok_or("summary")?;
+    assert_eq!(first.file.as_str(), "Cargo.toml");
+    assert_eq!(first.applied, 2);
+    assert_eq!(first.skipped, 0);
+
+    let edited = std::fs::read_to_string(tmp.path().join("Cargo.toml"))?;
+    assert!(edited.contains("version = \"0.2.0\""), "{edited}");
+    assert!(
+        edited.contains("lib = { version = \"0.2\", path = \"crates/lib\" }"),
+        "{edited}"
+    );
+
+    // Re-apply the same plan: nothing changes (bytes and counts).
+    let report2 = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    let second = report2.files.first().ok_or("summary")?;
+    assert_eq!(second.applied, 0);
+    assert_eq!(second.skipped, 2);
+    let again = std::fs::read_to_string(tmp.path().join("Cargo.toml"))?;
+    assert_eq!(again, edited, "idempotent re-apply leaves bytes identical");
+    Ok(())
+}
+
+#[test]
+fn stale_span_fails_closed_and_writes_nothing() -> Result<(), BoxError> {
+    let (ws, files) = discovered()?;
+    let mut plan = plan_for(&ws)?;
+    plan.edits = vec![PlanEdit {
+        file: "Cargo.toml".to_owned(),
+        patches: vec![PlanPatch {
+            start: 0,
+            end: 2,
+            text: "9.9.9".to_owned(),
+        }],
+    }];
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    write_files(tmp.path(), &files)?;
+    let outcome = apply_plan(Path::new(tmp.path()), &plan, &ws, &adapters);
+    match outcome {
+        Err(err) => assert_eq!(err.code(), "E-EDIT-PATCHES"),
+        Ok(report) => panic!("apply unexpectedly succeeded: {report:?}"),
+    }
+    // Nothing was written.
+    let untouched = std::fs::read_to_string(tmp.path().join("Cargo.toml"))?;
+    assert_eq!(untouched, ROOT_MANIFEST);
+    Ok(())
+}
