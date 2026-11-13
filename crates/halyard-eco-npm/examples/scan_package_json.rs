@@ -31,7 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Lossless edit: only the version's inner span changes.
     let span = doc.set_string(&["version"], "1.3.0")?;
-    println!("patched inner span {}..{} -> \"1.3.0\"", span.start, span.end);
+    println!(
+        "patched inner span {}..{} -> \"1.3.0\"",
+        span.start, span.end
+    );
     println!("--- rendered ---");
     print!("{}", String::from_utf8(doc.render())?);
     Ok(())
