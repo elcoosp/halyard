@@ -6,9 +6,11 @@ every ecosystem, with a *Release PR* UX better than release-please and a
 runtime measured in milliseconds.
 
 **Status: M3 mutation slices landed (M3.1–M3.6, incl. the M3.2/M3.4
-lockfile patchers and the M3.5b style registry); M4 forge slice started —
+lockfile patchers and the M3.5b style registry); M4 forge slice underway —
 M4.1a Forge seam + `MemoryForge`, M4.2a §11.1 Release-PR state machine,
-M4.3a §11.3 Release-PR body renderer.** The architecture and multi-year master plan lives in
+M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr --dry` forecast
+over the dry-run `PreviewForge`), M4.3 `check` command (§11.6 PR-title
+lint).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -74,6 +76,19 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   with the embedded plan (canonical JSON → DEFLATE → base64) and the
   I8 verifier `extract_embedded_plan`; `E-CHLOG-PRBODY` fails closed on
   any tampered body.
+- **Dry-run Release-PR forecast (M4.2b step 1)** —
+  `halyard_forge::PreviewForge` (the dry-run adapter: every probe sees an
+  empty forge, every mutation is a `preview://`-marked forecast, the §11.5
+  call log stays observable) + `halyard pr --dry`: plan → §11.3 body →
+  §11.1 prepare-phase pass, reporting the effects, the call-budget
+  forecast and the body; live mode declines with `E-CLI-PR` until the
+  M4.1b adapter lands.
+- **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
+  (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
+  `halyard check --pr-title` (planner-exact prediction with the §10.2
+  pre-major remap per package, did-you-mean on typo'd types, `E-CLI-TITLE`
+  diagnosis) and `halyard check --exit-code` (§15.4 exit code 3 when a
+  release is pending).
 
 ## Layout
 
@@ -90,11 +105,11 @@ crates/
   halyard-git            gix engine: refs, painter walk, trie tree-diff (§8)
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
   halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
-  halyard-forge          Forge seam (§11.4) + MemoryForge + §11.1 state machine
+  halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, perf-gate, size-gate,
                          corpus, gen-repo, bench-competitors, discover-diff
-  halyard-cli            the user shell (plan/apply/explain/status/graph/doctor)
+  halyard-cli            the user shell (plan/apply/check/pr/explain/status/graph/doctor)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
