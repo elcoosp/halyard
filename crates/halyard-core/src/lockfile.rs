@@ -1,6 +1,6 @@
 //! The adapter lockfile seam (§7.3 lockfile subset, §9.2, M3.2): the
 //! outcome, change and failure types shared by every
-//! [`EcosystemAdapter::patch_lockfile`] implementation.
+//! `EcosystemAdapter::patch_lockfile` implementation.
 //!
 //! The planner (§4) reduces a release to manifest byte patches (§5.8);
 //! lockfiles are *derived* artifacts, so their rewrite is driven by the
