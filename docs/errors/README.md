@@ -33,12 +33,16 @@ pattern from M1 onward where useful).
 | `E-DISC-DUPLICATE` | [E-DISC-DUPLICATE.md](E-DISC-DUPLICATE.md) | edit |
 | `E-DISC-LINK-UNKNOWN` | [E-DISC-LINK-UNKNOWN.md](E-DISC-LINK-UNKNOWN.md) | edit |
 | `E-GRAPH-CYCLE` | [E-GRAPH-CYCLE.md](E-GRAPH-CYCLE.md) | edit |
-
 | `E-GIT-OPEN` | [E-GIT-OPEN.md](E-GIT-OPEN.md) | git engine repo open (M2) |
 | `E-GIT-HEAD` | [E-GIT-HEAD.md](E-GIT-HEAD.md) | git engine unborn HEAD (M2) |
 | `E-GIT-SHALLOW` | [E-GIT-SHALLOW.md](E-GIT-SHALLOW.md) | git engine shallow clone (M2) |
 | `E-GIT-REF` | [E-GIT-REF.md](E-GIT-REF.md) | git engine ref database (M2) |
 | `E-GIT-OBJECT` | [E-GIT-OBJECT.md](E-GIT-OBJECT.md) | git engine object reads (M2) |
+| `E-PLAN-CYCLE` | [E-PLAN-CYCLE.md](E-PLAN-CYCLE.md) | planner cycle (M1.9) |
+| `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
+| `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
+| `E-LOCK-PARSE` | [E-LOCK-PARSE.md](E-LOCK-PARSE.md) | lockfile patch seam (M3.2, §9.2) |
+| `E-LOCK-NATIVE` | [E-LOCK-NATIVE.md](E-LOCK-NATIVE.md) | native lockfile refresh fallback (M3.2, §9.2 rule 4) |
 | `E-CACHE-OPEN` | [E-CACHE-OPEN.md](E-CACHE-OPEN.md) | cache open (M2.5) |
 | `E-CACHE-HEADER` | [E-CACHE-HEADER.md](E-CACHE-HEADER.md) | cache header validation (M2.5) |
 | `E-CACHE-IO` | [E-CACHE-IO.md](E-CACHE-IO.md) | cache read/write/fsync (M2.5) |
