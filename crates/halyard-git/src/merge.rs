@@ -80,7 +80,10 @@ pub struct Candidate {
 ///
 /// Input order is the walk order; output order is preserved (I3).
 #[must_use]
-pub fn apply_policy(candidates: Vec<Candidate>, policy: MergePolicy) -> (Vec<Candidate>, MergeStats) {
+pub fn apply_policy(
+    candidates: Vec<Candidate>,
+    policy: MergePolicy,
+) -> (Vec<Candidate>, MergeStats) {
     let mut stats = MergeStats::default();
     let gated: Vec<Candidate> = candidates
         .into_iter()
@@ -142,9 +145,15 @@ fn cancel_reverts(mut candidates: Vec<Candidate>, stats: &mut MergeStats) -> Vec
             RevertDecision::NotARevert => {}
             RevertDecision::Cancel(j) => {
                 // Cancel only when neither side is already dropped.
-                if !drop[i] && !drop[*j] && i != *j {
-                    drop[i] = true;
-                    drop[*j] = true;
+                let already =
+                    drop.get(i).is_some_and(|d| *d) || drop.get(*j).is_some_and(|d| *d) || i == *j;
+                if !already {
+                    if let Some(slot) = drop.get_mut(i) {
+                        *slot = true;
+                    }
+                    if let Some(slot) = drop.get_mut(*j) {
+                        *slot = true;
+                    }
                     stats.reverts_canceled += 1;
                 }
             }
@@ -158,7 +167,7 @@ fn cancel_reverts(mut candidates: Vec<Candidate>, stats: &mut MergeStats) -> Vec
     }
     let mut result: Vec<Candidate> = Vec::with_capacity(candidates.len());
     for (i, candidate) in candidates.drain(..).enumerate() {
-        if !drop[i] {
+        if !drop.get(i).copied().unwrap_or(false) {
             result.push(candidate);
         }
     }
@@ -187,8 +196,8 @@ mod tests {
         Candidate {
             origin,
             oid: BString::from("a".repeat(40)),
-            parsed: halyard_conventional::parse(message.as_bytes())
-                .unwrap_or_else(|| halyard_conventional::ConventionalCommit {
+            parsed: halyard_conventional::parse(message.as_bytes()).unwrap_or_else(|| {
+                halyard_conventional::ConventionalCommit {
                     kind: BString::from("revert"),
                     scope: None,
                     breaking: false,
@@ -196,7 +205,8 @@ mod tests {
                     body: None,
                     footers: Vec::new(),
                     pr: None,
-                }),
+                }
+            }),
             message,
             is_merge,
         }
@@ -239,13 +249,16 @@ mod tests {
             )
         };
         // Revert after the commit (forward order).
-        let (kept, stats) = apply_policy(vec![target.clone(), revert.clone()], MergePolicy::FirstParentDiff);
+        let (kept, stats) = apply_policy(
+            vec![target.clone(), revert.clone()],
+            MergePolicy::FirstParentDiff,
+        );
         assert_eq!(stats.reverts_canceled, 1);
         assert!(kept.is_empty(), "commit + revert = zero net touch");
         // Same window, reverse order.
         let (kept, stats) = apply_policy(vec![revert, target], MergePolicy::FirstParentDiff);
         assert_eq!(stats.reverts_canceled, 1);
-        assert!(kept.is_empty());
+        assert_eq!(kept.len(), 0);
     }
 
     #[test]
@@ -259,7 +272,10 @@ mod tests {
         let (kept, stats) = apply_policy(vec![revert], MergePolicy::FirstParentDiff);
         assert_eq!(stats.reverts_as_fix, 1);
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].parsed.kind.as_bytes(), b"fix");
+        assert_eq!(
+            kept.first().expect("one candidate").parsed.kind.as_bytes(),
+            b"fix"
+        );
     }
 
     #[test]
@@ -267,13 +283,19 @@ mod tests {
         let revert = candidate(0, "revert: undo the parser change", "", false);
         let (kept, stats) = apply_policy(vec![revert], MergePolicy::FirstParentDiff);
         assert_eq!(stats.reverts_as_fix, 1);
-        assert_eq!(kept[0].parsed.kind.as_bytes(), b"fix");
+        assert_eq!(
+            kept.first().expect("one candidate").parsed.kind.as_bytes(),
+            b"fix"
+        );
     }
 
     #[test]
     fn ordinary_commits_are_untouched() {
         let (kept, stats) = apply_policy(
-            vec![candidate(0, "feat: one", "", false), candidate(2, "fix: two", "", false)],
+            vec![
+                candidate(0, "feat: one", "", false),
+                candidate(2, "fix: two", "", false),
+            ],
             MergePolicy::FirstParentDiff,
         );
         assert_eq!(kept.len(), 2);
