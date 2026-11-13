@@ -15,7 +15,7 @@ use gix::hash::ObjectId;
 use halyard_core::package::{
     Ecosystem, GroupId, Package, PathFilter, RelPath, TagTemplate, VersionSource, Workspace,
 };
-use halyard_core::PkgId;
+use halyard_core::{HistoryProvider, PkgId};
 use halyard_git::refs::Generations;
 use halyard_git::GitHistory;
 
