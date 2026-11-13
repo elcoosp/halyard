@@ -26,7 +26,11 @@ use halyard_cache::crc32;
 /// Modeled record: 4-byte length (of `payload`), 4-byte crc, payload.
 fn encode_record(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + payload.len());
-    out.extend_from_slice(&u32::try_from(payload.len()).unwrap_or(u32::MAX).to_le_bytes());
+    out.extend_from_slice(
+        &u32::try_from(payload.len())
+            .unwrap_or(u32::MAX)
+            .to_le_bytes(),
+    );
     out.extend_from_slice(&crc32(payload).to_le_bytes());
     out.extend_from_slice(payload);
     out
@@ -98,6 +102,9 @@ fn reader_never_sees_a_torn_record_under_lock_bracketing() {
             parse_chain(&file).is_some()
         });
         writer.join().expect("writer");
-        assert!(reader.join().expect("reader"), "a reader never sees a torn record");
+        assert!(
+            reader.join().expect("reader"),
+            "a reader never sees a torn record"
+        );
     });
 }
