@@ -28,10 +28,11 @@
 //!    hashed ([`plan_hash`](crate::canonical::plan_hash)).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 use semver::Version;
 
-use crate::bump::{apply_bump, PreMajorPolicy};
+use crate::bump::{PreMajorPolicy, apply_bump};
 use crate::graph::WorkspaceGraph;
 use crate::history::{HistoryDigest, HistoryProvider, ReleaseRefs};
 use crate::id::PkgId;
@@ -41,11 +42,11 @@ use crate::package::{
     Workspace,
 };
 use crate::plan::{
-    Bump, Plan, PlanChangelog, PlanEdit, PlanPatch, PlanPublish, PlanReason, PlanRelease, PlanSkip,
-    PLAN_SCHEMA_V1,
+    Bump, PLAN_SCHEMA_V1, Plan, PlanChangelog, PlanEdit, PlanPatch, PlanPublish, PlanReason,
+    PlanRelease, PlanSkip,
 };
 use crate::reason::{CascadeWhy, Reason};
-use crate::rewrite::{rewrite_requirement, RewriteOutcome, UpperBoundPolicy};
+use crate::rewrite::{RewriteOutcome, UpperBoundPolicy, rewrite_requirement};
 
 /// How the planner treats workspace-wide grouping (§5.4, resolved from
 /// `[versioning].policy` by `halyard-config`).
@@ -254,7 +255,7 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     normalize_groups(ws, cfg, &mut state);
     cascade(ws, &graph, &order, cfg, &mut state);
 
-    let targets = materialize_versions(ws, cfg, &state)?;
+    let targets = materialize_versions(ws, cfg, &state);
     let rewrites = collect_rewrites(ws, cfg, &targets)?;
 
     let mut releases: Vec<PlanRelease> = Vec::new();
@@ -272,8 +273,11 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
         };
         let from = pkg.version.clone().unwrap_or_else(zero_version);
         let bump = minimal_bump(&from, target);
-        let tag = effective_template(ws, pkg, cfg)
-            .render(name, target, pkg.ecosystem.resolve(ws.interner()));
+        let tag = effective_template(ws, pkg, cfg).render(
+            name,
+            target,
+            pkg.ecosystem.resolve(ws.interner()),
+        );
         let reasons: Vec<PlanReason> = state
             .reasons(pkg.id)
             .iter()
@@ -366,10 +370,10 @@ impl State {
 
     /// Raises the bump of `id` to `b` (monotone: only increases).
     fn raise(&mut self, id: PkgId, b: Bump) {
-        if let Some(slot) = self.bumps.get_mut(id.to_usize()) {
-            if *slot < b {
-                *slot = b;
-            }
+        if let Some(slot) = self.bumps.get_mut(id.to_usize())
+            && *slot < b
+        {
+            *slot = b;
         }
     }
 
@@ -399,7 +403,11 @@ impl State {
 }
 
 /// Step 1: commit-derived bumps and `Release-As` footers.
-fn direct_bumps(snapshot: &Snapshot<'_>, cfg: &PlanConfig, state: &mut State) -> Result<(), PlanError> {
+fn direct_bumps(
+    snapshot: &Snapshot<'_>,
+    cfg: &PlanConfig,
+    state: &mut State,
+) -> Result<(), PlanError> {
     let ws = snapshot.workspace;
     let digest = snapshot.history.digest();
     for pkg in ws.packages() {
@@ -416,9 +424,7 @@ fn direct_bumps(snapshot: &Snapshot<'_>, cfg: &PlanConfig, state: &mut State) ->
             };
             released_commits += 1;
             let release_as = commit.trailers.iter().find(|t| {
-                std::str::from_utf8(&t.key)
-                    .map(|k| k.eq_ignore_ascii_case("Release-As"))
-                    .unwrap_or(false)
+                std::str::from_utf8(&t.key).is_ok_and(|k| k.eq_ignore_ascii_case("Release-As"))
             });
             if let Some(trailer) = release_as {
                 let raw = String::from_utf8_lossy(&trailer.value).trim().to_owned();
@@ -441,7 +447,7 @@ fn direct_bumps(snapshot: &Snapshot<'_>, cfg: &PlanConfig, state: &mut State) ->
                         return Err(PlanError::ReleaseAsVersion {
                             oid: commit.oid.to_string(),
                             raw,
-                        })
+                        });
                     }
                 }
                 continue;
@@ -477,15 +483,7 @@ fn direct_bumps(snapshot: &Snapshot<'_>, cfg: &PlanConfig, state: &mut State) ->
 fn normalize_groups(ws: &Workspace, cfg: &PlanConfig, state: &mut State) {
     let mut pairs: Vec<(PkgId, PkgId)> = Vec::new();
     let mut single_union: Option<PkgId> = None;
-    if cfg.group_mode != GroupMode::Independent {
-        // Repo-wide Fixed/Linked policy: one union over every package.
-        single_union = ws.packages().first().map(|p| p.id);
-        for pkg in ws.packages().iter().skip(1) {
-            if let Some(first) = single_union {
-                pairs.push((first, pkg.id));
-            }
-        }
-    } else {
+    if cfg.group_mode == GroupMode::Independent {
         // Discovery-level groups (Fixed/Linked), when present.
         for group in ws.groups() {
             if group.policy == GroupPolicy::Independent {
@@ -496,6 +494,14 @@ fn normalize_groups(ws: &Workspace, cfg: &PlanConfig, state: &mut State) {
                 for other in members {
                     pairs.push((first, other));
                 }
+            }
+        }
+    } else {
+        // Repo-wide Fixed/Linked policy: one union over every package.
+        single_union = ws.packages().first().map(|p| p.id);
+        for pkg in ws.packages().iter().skip(1) {
+            if let Some(first) = single_union {
+                pairs.push((first, pkg.id));
             }
         }
     }
@@ -678,12 +684,13 @@ fn cascade_reason(
     }
 }
 
-/// Step 4a: the next version per releasing package (id → target).
+/// Step 4a: the next version per releasing package (id → target). This
+/// step cannot fail, so it returns the map directly.
 fn materialize_versions(
     ws: &Workspace,
     cfg: &PlanConfig,
     state: &State,
-) -> Result<BTreeMap<PkgId, Version>, PlanError> {
+) -> BTreeMap<PkgId, Version> {
     let mut targets = BTreeMap::new();
     for pkg in ws.packages() {
         let id = pkg.id;
@@ -694,15 +701,14 @@ fn materialize_versions(
         let Some(from) = pkg.version.clone() else {
             continue;
         };
-        let target = match state.forced(id) {
-            Some(v) => v.clone(),
-            None => {
-                let bump = state.bump(id);
-                if bump.is_none() {
-                    continue;
-                }
-                apply_bump(&from, bump, &cfg.pre_major)
+        let target = if let Some(v) = state.forced(id) {
+            v.clone()
+        } else {
+            let bump = state.bump(id);
+            if bump.is_none() {
+                continue;
             }
+            apply_bump(&from, bump, &cfg.pre_major)
         };
         if target <= from {
             // Forced targets are validated on ingest; this guard keeps a
@@ -711,7 +717,7 @@ fn materialize_versions(
         }
         targets.insert(id, target);
     }
-    Ok(targets)
+    targets
 }
 
 /// Step 4b: requirement-rewrite patches for every edge whose requirement
@@ -744,15 +750,13 @@ fn collect_rewrites(
                         detail,
                         file: dep.site.file.to_string(),
                         package: pkg_name(ws, pkg).to_owned(),
-                    })
+                    });
                 }
             }
         }
     }
     // Deterministic output regardless of edge order: sort by site.
-    out.sort_by(|a, b| {
-        site_key(&a.0).cmp(&site_key(&b.0))
-    });
+    out.sort_by_key(|item| site_key(&item.0));
     out.dedup_by(|a, b| site_key(&a.0) == site_key(&b.0) && a.1 == b.1);
     Ok(out)
 }
@@ -761,8 +765,8 @@ fn collect_rewrites(
 fn site_key(site: &ManifestSite) -> (String, u32, u32) {
     (
         site.file.to_string(),
-        site.spans.first().map(|s| s.start).unwrap_or(u32::MAX),
-        site.spans.first().map(|s| s.end).unwrap_or(u32::MAX),
+        site.spans.first().map_or(u32::MAX, |s| s.start),
+        site.spans.first().map_or(u32::MAX, |s| s.end),
     )
 }
 
@@ -770,11 +774,10 @@ fn site_key(site: &ManifestSite) -> (String, u32, u32) {
 fn group_edits(edits: BTreeMap<(String, u32, u32), String>) -> Vec<PlanEdit> {
     let mut files: BTreeMap<String, Vec<PlanPatch>> = BTreeMap::new();
     for ((file, start, end), text) in edits {
-        files.entry(file).or_default().push(PlanPatch {
-            start,
-            end,
-            text,
-        });
+        files
+            .entry(file)
+            .or_default()
+            .push(PlanPatch { start, end, text });
     }
     files
         .into_iter()
@@ -828,10 +831,10 @@ fn effective_template(ws: &Workspace, pkg: &Package, cfg: &PlanConfig) -> TagTem
     if let Some(template) = &cfg.tag_template {
         return template.clone();
     }
-    if ws.packages().len() == 1 {
-        if let Ok(single) = TagTemplate::parse("v{version}") {
-            return single;
-        }
+    if ws.packages().len() == 1
+        && let Ok(single) = TagTemplate::parse("v{version}")
+    {
+        return single;
     }
     pkg.tag_template.clone()
 }
@@ -900,13 +903,16 @@ fn render_entry(
         if cfg.changelog_hidden_types.contains(kind_str.as_ref()) {
             continue;
         }
-        let Some(commit) = by_oid.get(oid.as_str()).and_then(|&ci| digest.commits.get(ci)) else {
+        let Some(commit) = by_oid
+            .get(oid.as_str())
+            .and_then(|&ci| digest.commits.get(ci))
+        else {
             continue;
         };
         let description = String::from_utf8_lossy(&commit.parsed.description).to_string();
         let mut line = format!("- {description}");
         if let Some(pr) = commit.pr {
-            line.push_str(&format!(" (#{pr})"));
+            let _ = write!(line, " (#{pr})");
         }
         if *is_breaking {
             breaking.push(line);
@@ -929,7 +935,7 @@ fn render_entry(
         if lines.is_empty() {
             continue;
         }
-        out.push_str(&format!("\n### {title}\n\n"));
+        let _ = write!(out, "\n### {title}\n\n");
         for line in lines {
             out.push_str(line);
             out.push('\n');
