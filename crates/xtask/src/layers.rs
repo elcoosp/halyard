@@ -102,6 +102,31 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core", "halyard-eco-cargo", "halyard-eco-npm"],
         external: Some(&["ignore"]),
     },
+    // M2 git engine (ADR-0009): depends on core **and** the conventional
+    // parser leaf; slice D adds `halyard-cache` (§8.7 — the cache is
+    // consulted before the tree diff) and `tracing` for the §14.3 span
+    // counters. `gix`/`gix-commitgraph` are the sanctioned object-access
+    // crates; `semver` parses tag versions.
+    LayerRule {
+        name: "halyard-git",
+        workspace: &["halyard-core", "halyard-conventional", "halyard-cache"],
+        external: Some(&["gix", "gix-commitgraph", "semver", "tracing"]),
+    },
+    // M3.5 changelog renderer (§9.4): consumes the Plan; `minijinja` is
+    // the template engine named by the spec.
+    LayerRule {
+        name: "halyard-changelog",
+        workspace: &["halyard-core"],
+        external: Some(&["minijinja"]),
+    },
+    // M2.5 persistent cache (§8.7): the only crate permitted `unsafe`
+    // (invariant I10). External set: `blake3` (content-addressed keys),
+    // `libc` (mmap + advisory flock), `tracing` (hit/miss counters).
+    LayerRule {
+        name: "halyard-cache",
+        workspace: &["halyard-core"],
+        external: Some(&["blake3", "libc", "tracing"]),
+    },
     LayerRule {
         name: "xtask",
         workspace: &["*"],
@@ -240,18 +265,62 @@ mod tests {
     fn every_current_member_has_a_rule() {
         let names = rule_names();
         for member in [
+            "halyard-cache",
+            "halyard-changelog",
+            "halyard-cli",
             "halyard-core",
-            "halyard-config",
             "halyard-conventional",
             "halyard-discover",
             "halyard-eco-cargo",
             "halyard-eco-npm",
             "halyard-edit",
+            "halyard-git",
             "halyard-test-support",
             "halyard-version",
             "xtask",
         ] {
             assert!(names.contains_key(member), "{member} lacks a layer rule");
+        }
+    }
+
+    /// Regression test (slice D close-out): the two engine-critical
+    /// manifests may not gain a dependency the rule table does not know.
+    /// Reads the checked-in manifests directly, so the drift is caught even
+    /// when the gate is run from a non-workspace cwd.
+    #[test]
+    fn git_and_cli_manifests_stay_within_their_rules() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("workspace root");
+        for crate_name in ["halyard-git", "halyard-cli"] {
+            let manifest = std::fs::read_to_string(
+                root.join("crates").join(crate_name).join("Cargo.toml"),
+            )
+            .unwrap_or_else(|e| panic!("read {crate_name} manifest: {e}"));
+            let value: Value =
+                toml::from_str(&manifest).unwrap_or_else(|e| panic!("parse {crate_name}: {e}"));
+            let deps = value
+                .get("dependencies")
+                .and_then(Value::as_object)
+                .expect("dependencies table");
+            let rule = RULES
+                .iter()
+                .find(|r| r.name == crate_name)
+                .expect("rule exists (every_current_member_has_a_rule)");
+            for dep in deps.keys() {
+                let is_workspace_crate = RULES.iter().any(|r| r.name == dep);
+                let allowed = if is_workspace_crate {
+                    rule.workspace.iter().any(|w| *w == dep || *w == "*")
+                } else {
+                    rule.external.is_none()
+                };
+                assert!(
+                    allowed,
+                    "{crate_name}: dependency {dep:?} violates its layer rule; update \
+                     xtask/src/layers.rs consciously (§7.2)"
+                );
+            }
         }
     }
 }
