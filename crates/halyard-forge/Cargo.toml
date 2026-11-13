@@ -14,9 +14,17 @@ halyard-core = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+# The release_machine example renders its PrSpec body through the §11.3
+# renderer (the real producer/consumer composition) — a dev-dep, so the
+# §7.2 layer rule (`forge → core` only) holds for the runtime graph.
+halyard-changelog = { workspace = true }
 
 [[bench]]
 name = "memory_forge"
+harness = false
+
+[[bench]]
+name = "state_machine"
 harness = false
 
 [lints]
