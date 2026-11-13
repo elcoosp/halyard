@@ -1,5 +1,5 @@
 //! The forge failure taxonomy (§15.4 `E-FORGE-*`): every variant has a
-//! stable code and a page under `docs/errors/`, and the [`MemoryForge`]
+//! stable code and a page under `docs/errors/`, and the [`MemoryForge`](crate::MemoryForge)
 //! failpoint harness gives each code a producer the M4.2
 //! failure-injection matrix (§15.2) reuses.
 //!
@@ -44,7 +44,7 @@ pub enum ForgeError {
     },
     /// The adapter does not implement this capability
     /// (`E-FORGE-UNSUPPORTED`); the trait's default
-    /// [`Forge::commit_via_api`] produces it, mirroring the lockfile
+    /// [`Forge::commit_via_api`](crate::Forge::commit_via_api) produces it, mirroring the lockfile
     /// seam's default-decline convention (§7.3).
     Unsupported {
         /// The adapter type that was asked.
