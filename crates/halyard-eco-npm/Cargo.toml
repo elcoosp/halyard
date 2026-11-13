@@ -15,12 +15,17 @@ semver = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+tempfile = { workspace = true }
 insta = { workspace = true }
 criterion = { workspace = true }
 halyard-test-support = { workspace = true }
 
 [[bench]]
 name = "json_scan"
+harness = false
+
+[[bench]]
+name = "lockfile_patch"
 harness = false
 
 [lints]
