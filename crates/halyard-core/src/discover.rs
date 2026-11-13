@@ -368,14 +368,15 @@ impl std::fmt::Display for DiscoverError {
 
 impl std::error::Error for DiscoverError {}
 
-/// The per-ecosystem discovery + edit seam (§7.3).
+/// The per-ecosystem discovery + edit + lockfile seam (§7.3).
 ///
-/// `patch_lockfile`, `publish` and the remaining §7.3 methods are
-/// **intentionally absent** until the lockfile/publish engines exist
-/// (M3.2/M3.4/M5): a trait method that is not implemented end-to-end
-/// would be a stub, and stubs are forbidden (TASK §2.2). `edit_versions`
-/// joined the trait in M3 together with its first two end-to-end
-/// implementations (see [`crate::edit`]).
+/// `publish` and the remaining §7.3 methods are **intentionally absent**
+/// until their engines exist (M5): a trait method that is not implemented
+/// end-to-end would be a stub, and stubs are forbidden (TASK §2.2).
+/// `edit_versions` joined the trait in M3 with its first two end-to-end
+/// implementations; `patch_lockfile` joined in M3.2 with the Cargo
+/// implementation and the documented [`crate::lockfile::NeedsNative`]
+/// fallback as the default for adapters without an in-memory patcher.
 pub trait EcosystemAdapter: Send + Sync {
     /// Adapter identifier (`cargo`, `npm`), used in logs and diagnostics.
     fn id(&self) -> &'static str;
@@ -401,6 +402,60 @@ pub trait EcosystemAdapter: Send + Sync {
         content: &[u8],
         patches: &[crate::plan::PlanPatch],
     ) -> Result<crate::edit::EditOutcome, crate::edit::EditFailure>;
+    /// Patch ONE lockfile for the plan's version moves (§7.3 lockfile
+    /// subset, §9.2, M3.2): rewrite the rows cargo itself would rewrite —
+    /// workspace members' `version` rows (no `source`) and `"name
+    /// version"` dependency disambiguation entries — byte-in place
+    /// (invariant I4), driven by [`crate::lockfile::LockfileVersionChange`]
+    /// rows derived from the plan's releases.
+    ///
+    /// The fidelity contract (§9.2): implementations that cannot
+    /// guarantee cargo-identical bytes return
+    /// [`crate::lockfile::LockfileOutcome::NeedsNative`] and leave the
+    /// content untouched; the orchestrator falls back to the native
+    /// refresh effect step (`cargo update --workspace --offline`, §9.2
+    /// rule 4). The default implementation IS that fallback: adapters
+    /// without an in-memory patcher (e.g. npm before M3.4) honestly
+    /// decline instead of guessing. Pure parse+mutate over the given
+    /// bytes: no process spawn, no I/O.
+    fn patch_lockfile(
+        &self,
+        file: &crate::package::RelPath,
+        content: &[u8],
+        changes: &[crate::lockfile::LockfileVersionChange],
+    ) -> Result<crate::lockfile::LockfileOutcome, crate::lockfile::LockfileFailure> {
+        // The fallback ignores its inputs by design: declining is
+        // independent of the lockfile bytes (§9.2 rule 4).
+        let _ = (file, content, changes);
+        Ok(crate::lockfile::LockfileOutcome::NeedsNative {
+            reason: format!(
+                "adapter {:?} has no in-memory lockfile patcher; refresh the lockfile natively",
+                self.id()
+            ),
+        })
+    }
+    /// The native lockfile refresh effect step (§7.3 lockfile subset,
+    /// §9.2 rule 4, M3.2): run the ecosystem's own tool to rewrite the
+    /// lockfile when the in-memory patcher declined
+    /// ([`crate::lockfile::LockfileOutcome::NeedsNative`]). This is the
+    /// one sanctioned subprocess of the lockfile flow — argv arrays only,
+    /// no shell interpolation (invariant I7) — and the *caller* verifies
+    /// its effect (only workspace members may change, §9.2).
+    ///
+    /// The default implementation honestly reports that the adapter has
+    /// no native refresh ([`crate::lockfile::NativeRefreshError::Unsupported`]):
+    /// an effect step that silently did nothing would violate I2.
+    fn refresh_lockfile_native(
+        &self,
+        ws_root: &std::path::Path,
+    ) -> Result<(), crate::lockfile::NativeRefreshError> {
+        // The root is irrelevant to the honest decline: no adapter tool
+        // is sanctioned for this adapter at all.
+        let _ = ws_root;
+        Err(crate::lockfile::NativeRefreshError::Unsupported {
+            adapter: self.id().to_owned(),
+        })
+    }
 }
 
 /// Merge-time context: links a [`RawPackage`]/[`RawDep`] name to the
