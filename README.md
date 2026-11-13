@@ -5,8 +5,10 @@ world. Zero-config for Cargo + pnpm + single-package repos, extensible to
 every ecosystem, with a *Release PR* UX better than release-please and a
 runtime measured in milliseconds.
 
-**Status: M3 apply slice landed (M3.1, M3.3, M3.6 + the M3.2 Cargo.lock
-slice; M3.4 pnpm-lock slice).** The architecture and multi-year master plan lives in
+**Status: M3 mutation slices landed (M3.1–M3.6, incl. the M3.2/M3.4
+lockfile patchers and the M3.5b style registry); M4 forge slice started —
+M4.1a Forge seam + `MemoryForge`, M4.2a §11.1 Release-PR state machine,
+M4.3a §11.3 Release-PR body renderer.** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -54,6 +56,25 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   < env `HALYARD_*` < CLI), `config_hash` over canonical JSON; snapshot-
   tested diagnostics.
 
+## What exists after the M4 forge slice
+
+- **Forge seam (M4.1a, ADR-0011)** — `halyard-forge`: the forge-agnostic
+  [`Forge`](crates/halyard-forge/src/lib.rs) trait (§11.4), its data
+  vocabulary, the `E-FORGE-*` taxonomy and the deterministic
+  `MemoryForge` reference adapter with call log + failpoint harness.
+- **Release-PR state machine (M4.2a)** — `halyard_forge::state`:
+  `run_release_machine` executes the §11.1 tag phase (GET-by-tag-first
+  release creation, PROPAGATE gating) and prepare phase (find → upsert /
+  no-op / close) against any `&dyn Forge`, with the §11.5 call budgets
+  and the §15.2 failure-injection matrix pinned in tests. The seam gained
+  `Forge::close_pr` (§11.1 step 3); the shell's git-side tag/push
+  effects and the M4.1b REST adapter are the remaining slices.
+- **Release-PR body renderer (M4.3a)** — `halyard-changelog::pr_body`:
+  the §11.3 stable body (plan table, changelog preview, override footer)
+  with the embedded plan (canonical JSON → DEFLATE → base64) and the
+  I8 verifier `extract_embedded_plan`; `E-CHLOG-PRBODY` fails closed on
+  any tampered body.
+
 ## Layout
 
 ```
@@ -61,11 +82,19 @@ crates/
   halyard-core           pure core types + plan contract + plan hash (no I/O)
   halyard-config         halyard.toml model + loader + layered resolution
   halyard-conventional   conventional-commit parser (winnow, zero-copy scan)
-  halyard-edit           EditSet byte patches + atomic apply
-  halyard-test-support   GitFixture DSL + scenarios (test infra)
   halyard-version        bump algebra + 0.x policy + requirement rewriter
+  halyard-edit           EditSet byte patches + atomic apply + plan apply
+  halyard-discover       topology + manifests → Workspace (§6)
+  halyard-eco-cargo      Cargo adapter: discovery, manifest + lockfile patchers
+  halyard-eco-npm        npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher
+  halyard-git            gix engine: refs, painter walk, trie tree-diff (§8)
+  halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
+  halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
+  halyard-forge          Forge seam (§11.4) + MemoryForge + §11.1 state machine
+  halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, perf-gate, size-gate,
-                         corpus, gen-repo, bench-competitors
+                         corpus, gen-repo, bench-competitors, discover-diff
+  halyard-cli            the user shell (plan/apply/explain/status/graph/doctor)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
@@ -86,14 +115,24 @@ cargo run -p xtask -- check-layers     # §7.2 layer rules
 cargo run -p xtask -- schema-check     # M0.7 schema drift
 cargo run -p xtask -- perf-gate        # §14.1 budgets (populated from M2.6)
 cargo run -p xtask -- size-gate        # §14.1 binary size (armed from M1.10)
+cargo run -p xtask -- git-diff         # tree-diff attribution vs git ground truth
 cargo run -p halyard-test-support --example fixture_tour
 cargo run -p halyard-core --example workspace_demo
 cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
 cargo run -p halyard-config --example resolve_layers
+cargo run -p halyard-discover --example discover_workspace
+cargo run -p halyard-eco-cargo --example parse_manifest
 cargo run -p halyard-eco-cargo --example patch_lockfile
+cargo run -p halyard-eco-npm --example scan_package_json
 cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
+cargo run -p halyard-git --example walk_history
+cargo run -p halyard-cache --example dump
+cargo run -p halyard-changelog --example render
+cargo run -p halyard-changelog --example render_pr_body
+cargo run -p halyard-forge --example release_lifecycle
+cargo run -p halyard-forge --example release_machine
 ```
 
 Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
