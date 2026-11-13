@@ -6,8 +6,8 @@
 use halyard_core::HistoryProvider;
 use halyard_git::GitHistory;
 
-use crate::CliError;
 use crate::Cli;
+use crate::CliError;
 
 /// One doctor check.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -50,14 +50,10 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
     }
 
     // Shallow + commit-graph + tags + head: one git probe each.
-    let repo = halyard_git::gix::open(std::path::Path::new(".")).map_err(|e| {
-        CliError::new(
-            "E-GIT-OPEN",
-            format!("doctor needs a git repository: {e}"),
-        )
-    })?;
-    let shallow = repo.git_dir().join("shallow").is_file()
-        || repo.common_dir().join("shallow").is_file();
+    let repo = halyard_git::gix::open(std::path::Path::new("."))
+        .map_err(|e| CliError::new("E-GIT-OPEN", format!("doctor needs a git repository: {e}")))?;
+    let shallow =
+        repo.git_dir().join("shallow").is_file() || repo.common_dir().join("shallow").is_file();
     checks.push(Check {
         name: "shallow".to_owned(),
         ok: !shallow,
@@ -84,15 +80,11 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
         },
     });
 
-    let tag_count = repo
-        .references()
-        .map(|platform| {
-            platform
-                .tags()
-                .map(|tags| tags.filter_map(Result::ok).count())
-                .unwrap_or(0)
-        })
-        .unwrap_or(0);
+    let tag_count = repo.references().map_or(0, |platform| {
+        platform
+            .tags()
+            .map_or(0, |tags| tags.filter_map(Result::ok).count())
+    });
     checks.push(Check {
         name: "tags".to_owned(),
         ok: tag_count > 0,
@@ -106,62 +98,11 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
     });
 
     // Config validity (defaults count as valid).
-    let config_path = cli.config.clone().or_else(|| {
-        let root = std::path::PathBuf::from("halyard.toml");
-        let dotted = std::path::PathBuf::from(".config/halyard.toml");
-        if root.is_file() {
-            Some(root)
-        } else if dotted.is_file() {
-            Some(dotted)
-        } else {
-            None
-        }
-    });
-    match config_path {
-        Some(path) => {
-            match halyard_config::load(&path) {
-                Ok(_) => checks.push(Check {
-                    name: "config".to_owned(),
-                    ok: true,
-                    detail: format!("{} parsed", path.display()),
-                }),
-                Err(e) => checks.push(Check {
-                    name: "config".to_owned(),
-                    ok: false,
-                    detail: format!("{}: {} ({})", path.display(), e, e.code()),
-                }),
-            }
-        }
-        None => checks.push(Check {
-            name: "config".to_owned(),
-            ok: true,
-            detail: "no halyard.toml; built-in defaults apply".to_owned(),
-        }),
-    }
+    checks.push(config_check(cli));
 
     // Token presence (skipped under --offline, I5: doctor itself never
     // contacts the network).
-    if cli.offline {
-        checks.push(Check {
-            name: "token".to_owned(),
-            ok: true,
-            detail: "--offline: forge token check skipped".to_owned(),
-        });
-    } else {
-        let token = std::env::var("GITHUB_TOKEN")
-            .ok()
-            .filter(|t| !t.is_empty());
-        checks.push(Check {
-            name: "token".to_owned(),
-            ok: token.is_some(),
-            detail: match token {
-                Some(_) => "GITHUB_TOKEN present (release/publish steps can authenticate)".to_owned(),
-                None => "GITHUB_TOKEN not set: planning works offline, but `pr`/`release`/\
-                         `publish` need a token (or run with --offline to silence this check)"
-                    .to_owned(),
-            },
-        });
-    }
+    checks.push(token_check(cli.offline));
 
     // History engine smoke check: the walk must succeed on this repo
     // (this is the doctor's cheapest "will plan() work" signal).
@@ -169,11 +110,8 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
         GitHistory::build(
             std::path::Path::new("."),
             &discovery.workspace,
-            halyard_config::resolve(&[
-                halyard_config::Layer::Defaults,
-            ])
-            .map(|c| c.initial_max_commits)
-            .unwrap_or(10_000),
+            halyard_config::resolve(&[halyard_config::Layer::Defaults])
+                .map_or(10_000, |c| c.initial_max_commits),
         )
     });
     match history {
@@ -202,4 +140,60 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
         warnings,
         healthy,
     })
+}
+
+/// The `halyard.toml` validity check (defaults count as valid).
+fn config_check(cli: &Cli) -> Check {
+    let config_path = cli.config.clone().or_else(|| {
+        let root = std::path::PathBuf::from("halyard.toml");
+        let dotted = std::path::PathBuf::from(".config/halyard.toml");
+        if root.is_file() {
+            Some(root)
+        } else if dotted.is_file() {
+            Some(dotted)
+        } else {
+            None
+        }
+    });
+    match config_path {
+        Some(path) => match halyard_config::load(&path) {
+            Ok(_) => Check {
+                name: "config".to_owned(),
+                ok: true,
+                detail: format!("{} parsed", path.display()),
+            },
+            Err(e) => Check {
+                name: "config".to_owned(),
+                ok: false,
+                detail: format!("{}: {} ({})", path.display(), e, e.code()),
+            },
+        },
+        None => Check {
+            name: "config".to_owned(),
+            ok: true,
+            detail: "no halyard.toml; built-in defaults apply".to_owned(),
+        },
+    }
+}
+
+/// The forge-token presence check (skipped under `--offline`).
+fn token_check(offline: bool) -> Check {
+    if offline {
+        return Check {
+            name: "token".to_owned(),
+            ok: true,
+            detail: "--offline: forge token check skipped".to_owned(),
+        };
+    }
+    let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
+    Check {
+        name: "token".to_owned(),
+        ok: token.is_some(),
+        detail: match token {
+            Some(_) => "GITHUB_TOKEN present (release/publish steps can authenticate)".to_owned(),
+            None => "GITHUB_TOKEN not set: planning works offline, but `pr`/`release`/\
+                     `publish` need a token (or run with --offline to silence this check)"
+                .to_owned(),
+        },
+    }
 }
