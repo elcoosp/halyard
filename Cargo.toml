@@ -13,6 +13,7 @@ members = [
     "crates/halyard-eco-cargo",
     "crates/halyard-eco-npm",
     "crates/halyard-edit",
+    "crates/halyard-forge",
     "crates/halyard-git",
     "crates/halyard-test-support",
     "crates/halyard-version",
@@ -72,6 +73,7 @@ halyard-discover = { path = "crates/halyard-discover" }
 halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
 halyard-eco-npm = { path = "crates/halyard-eco-npm" }
 halyard-edit = { path = "crates/halyard-edit" }
+halyard-forge = { path = "crates/halyard-forge" }
 halyard-git = { path = "crates/halyard-git" }
 halyard-test-support = { path = "crates/halyard-test-support" }
 
