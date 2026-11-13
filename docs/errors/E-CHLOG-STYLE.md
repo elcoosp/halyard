@@ -5,8 +5,8 @@
 
 ## What it means
 
-The requested changelog style is not shipped in v1; the only built-in
-style is `keep-a-changelog`.
+The requested changelog style is not shipped; the built-in styles are
+`keep-a-changelog`, `conventional` and `compact` (M3.5b).
 
 ## Cause
 
@@ -15,8 +15,9 @@ style is `keep-a-changelog`.
 
 ## Fix
 
-Use `keep-a-changelog`, or wait for the minijinja template path
-(M3.5b) for custom styles.
+Use one of the built-in styles. `github-release-notes` stays unshipped
+(it needs forge context — compare links, remote URL) until the forge
+milestone lands; a minijinja template path arrives with it.
 
 ## Command
 
