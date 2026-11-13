@@ -15,8 +15,100 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M3 apply slice (M3.1/M3.3/M3.6) | partial | main | M3.1 Cargo manifest patcher (`halyard-eco-cargo/src/edit.rs`: byte-level span patcher, quote-inclusive spans, dep-kind + `[workspace.dependencies]` + `[target.*]` sections, own `[package]` version, workspace-inherited rows skipped-and-counted, `E-EDIT-UNREWRITABLE` fail-closed, formatting/CRLF preserved), M3.3 package.json patcher (`halyard-eco-npm/src/edit.rs` + `JsonDoc::replace_span`; `catalog:`/`workspace:`/`link:`/`file:` skip-and-count via the M1.6 `classify_req`), `EcosystemAdapter::edit_versions` seam in core + both adapters (check-layers green, 14 crates), M3.6 `halyard-edit/src/plan_apply.rs` (`edit_set_from_plan`, `dry_run_preview`, `apply_plan` — staged in memory then atomic writes) + CLI `apply [--dry]` | M3.2 Cargo.lock patcher and M3.4 pnpm-lock patcher (lockfile slice, not started); perf-gate honest misses recorded (plan-200x40 p50 38 ms vs 25 ms budget; plan-1000x50k p50 1022 ms vs 400 ms — sandbox CPU ceiling, budgets untouched); bench byte-determinism impossible for wall-clock timings (only `docs/replay.md` is byte-gated) | 2026-11-13; clippy 0, tests 321/0, gate battery green (replay 6/6 = 100 % on conventional repos + byte-identical ×2, discover-diff 4/4 cargo, dhat 12/5 within bounds, git-diff attribution ✓); session log below |
 | M3.2 lockfile slice (patcher + native fallback) | done | main | M3.2 Cargo.lock patcher (`halyard-eco-cargo/src/lockfile.rs`: §9.2 rules 1–3, byte-in place, read-back verify, idempotent) + `EcosystemAdapter::patch_lockfile` seam (core `lockfile.rs`; default = documented `NeedsNative` fallback) + `apply_plan` lockfile stage (`LockfileSummary` in the report; decline reported, never guessed) + CLI render/JSON rows, M3.2 native fallback (`EcosystemAdapter::refresh_lockfile_native` + `verify_native_refresh` post-refresh gate + CLI orchestration, §9.2 rule 4), criterion bench (`lockfile_patch`), consumer example (`patch_lockfile.rs`), differential vs `cargo update -w --offline` byte-identical | M3.4 pnpm-lock patcher still open; the full §17 M3.2 acceptance runs "200 mutated fixtures" — this slice ships the differential harness with 1 fixture + unit-matrix coverage (scaling the fixture count is an xtask/nightly task); perf budgets untouched | 2026-11-13; see the session log below |
+| M3.4 pnpm-lock slice (patcher + native fallback) | done | feat/pnpm-lock-patcher | M3.4 `pnpm-lock.yaml` patcher (`halyard-eco-npm/src/lockfile.rs`: restricted importer-grammar scanner, specifier advance through the canonical `rewrite_requirement`, `<version>(link:…)` ref moves, importers-only byte patches, read-back re-analysis verify, idempotent) + `NpmAdapter::patch_lockfile` routing (package-lock.json/yarn.lock/bun.lock native-only declines) + `NpmAdapter::refresh_lockfile_native` dispatch (`pnpm install --lockfile-only --offline` / `npm install --package-lock-only` / `yarn install --mode update-lockfile` / `bun install --lockfile-only`; pure `refresh_command` table) + pnpm `verify_native_refresh` (importer-row snapshots, resolution-key/header changes fail closed) + core `LockfileVersionChange::from_release_for_ecosystem` + generalized `apply_plan` lockfile stage (`ApplyReport.lockfiles`, per-ecosystem rows incl. `ecosystem`) + CLI render/JSON rows and per-declined-row native refresh with verifier dispatch + criterion bench `lockfile_patch` + consumer example `patch_pnpm_lockfile` + differential vs real pnpm (skips honestly when pnpm absent) + CLI `--package` edit filter now resolves package roots from the workspace (was a hardcoded `crates/…` layout) | M3.4 §9.3 acceptance runs "pnpm differential on corpus" — this slice ships the workspace-protocol + linked-plain-semver differential harness (runs when a pnpm binary is present); the corpus-wide pnpm differential and the npm/yarn/bun lockfile patchers (native-only in v1 by design) remain open; perf budgets untouched | 2026-11-13; see the session log below |
+| M3.5b changelog styles slice (style registry + conventional/compact) | done | feat/pnpm-lock-patcher | M3.5b `Style` registry (`halyard-changelog`: `Style::{parse,name}` replacing the `style != "keep-a-changelog"` string check; `render_release`/`render_plan` dispatch through it), `conventional` style (planner section titles mapped through the documented type map — Features→feat, Bug Fixes/Fixed→fix, Performance→perf, Reverts→revert, unknown pass through verbatim; `### ⚠ BREAKING CHANGES` first), `compact` style (flat bullet list, breaking entries first), both idempotent with goldens; `github-release-notes` stays unshipped (needs forge context — documented); E-CHLOG-STYLE message + page updated to name the shipped set; `render` example now renders all three styles | minijinja template path (user-supplied template files) still open; `github-release-notes` waits for the forge milestone | 2026-11-13; see the session log below |
 
 ## Session log
+
+### 2026-11-13 — M3.4 pnpm-lock slice: importer patcher + native fallback (branch `feat/pnpm-lock-patcher`, base 8189fb1)
+
+- **Inventory at session start.** The M3.2 slice was green on main.
+  Docs drift found and fixed: README's daily clippy command still carried
+  `-W clippy::pedantic` although pedantic+restriction enforcement lives
+  in `[workspace.lints]` (a CLI `-W` overrides the curated
+  `must_use_candidate`/`missing_errors_doc` allows — the root Cargo.toml
+  comment documents the contract, CI matches it); README's status header
+  still said "milestone M1 in progress". Micro-debt cleaned: the CLI
+  `--package` plan filter hardcoded a `crates/<pkg>/Cargo.toml` layout
+  and dropped npm members living elsewhere — it now resolves the
+  package's manifest/root from the workspace.
+- **M3.4 implemented (no stubs), TDD with one full red→green cycle** (13
+  unit tests written first, run red against decline-only bodies, then
+  implemented):
+  - `halyard-eco-npm/src/lockfile.rs` — the restricted importer-grammar
+    scanner (line/indent based, quote-aware comment stripping, absolute
+    byte spans incl. inner spans for partial rewrites) and the patcher:
+    §9.3 rules — plain-semver specifiers advance through the canonical
+    `rewrite_requirement` (ADR-0008, so lockfile and manifest converge on
+    the same text), workspace:/catalog:/file:/link: protocol specifiers
+    skip (the plan does not rewrite protocol rows, M3.3 skip-and-count),
+    `link:…` refs skip, `<version>(link:…)` refs move their version
+    token, everything else declines (`packages:`/`snapshots:` resolution
+    keys for a member, bare registry version rows, foreign-grammar or
+    unrewritable specifiers, `lockfileVersion` < 6 or missing,
+    multi-document lockfiles). Read-back verification re-analyzes the
+    patched text as a pure skip pass. Unlike Cargo.lock, a member with
+    no importer rows is a legitimate no-op (pnpm records no mandatory
+    member rows) — documented difference from §9.2 rule 1.
+  - `verify_native_refresh` (pnpm): before/after importer-row snapshots;
+    only member importer rows may move — resolution-key, header or
+    non-member row changes fail closed (`E-LOCK-NATIVE`).
+  - `NpmAdapter` seam: `patch_lockfile` routes `pnpm-lock.yaml` to the
+    patcher (other npm-family lockfiles decline as native-only in v1);
+    `refresh_lockfile_native` dispatches on the detected lockfile kind
+    via the pure `refresh_command` table (argv arrays only, I7): `pnpm
+    install --lockfile-only --offline` (§9.3), `npm install
+    --package-lock-only`, `yarn install --mode update-lockfile`, `bun
+    install --lockfile-only` (the latter three VERIFIED against
+    docs.npmjs.com / bun.com/docs/pm/lockfile / yarnpkg CLI docs).
+  - Core: `LockfileVersionChange::from_release_for_ecosystem` (the
+    cargo-only `from_release` delegates); the seam docs updated to the
+    two-adapter reality.
+  - `halyard-edit`: the lockfile stage generalized to
+    `LOCKFILE_TARGETS` (Cargo.lock/cargo, pnpm-lock.yaml/npm);
+    `ApplyReport.lockfiles` is a `Vec<LockfileSummary>` with an
+    `ecosystem` field — all-or-none staging preserved.
+  - CLI: render/JSON rows iterate the lockfile stages; the native
+    fallback runs per declined row with the right adapter and the right
+    verifier (eco-cargo / eco-npm), members filtered by the row's
+    ecosystem.
+- **Tests/bench/example/differential.** 15 unit tests (patcher matrix:
+  rewrite, byte-preservation, protocol no-op, idempotence, resolution-key
+  decline, registry-row decline, unrewritable/foreign specifier declines,
+  drift declines, header/multi-doc declines, lonely-member no-op, empty
+  changes, CRLF + quoting) + 6 adapter tests (routing, native-only
+  declines, non-UTF-8, argv table, kind detection, spawn-free no-lockfile
+  failure) + 3 apply_plan integration tests on a pnpm workspace fixture
+  (patch + manifest rewrite, idempotent re-apply, resolution-key decline
+  leaves bytes untouched) + 2 differential tests vs a real pnpm (run
+  where pnpm exists; skip honestly otherwise — the sandbox has no pnpm).
+  Criterion bench `lockfile_patch` (40 importers, 10 member moves ≈
+  206 µs p50; `verify_native_refresh` ≈ 201 µs). Consumer example
+  `examples/patch_pnpm_lockfile.rs` (2 applied, 2 skipped on the
+  fixture). Error pages E-LOCK-PARSE/E-LOCK-NATIVE and the errors README
+  index extended to the npm side.
+- **Honest state at cut-off.** M3.4's full §17 acceptance ("pnpm
+  differential on corpus") remains an xtask/nightly follow-up; npm/yarn/
+  bun lockfiles are native-only in v1 by design (§9.3 Year-2 note). The
+  plan-perf budgets are untouched by this slice. Tree left dirty on
+  `feat/pnpm-lock-patcher` (no commits made).
+- **M3.5b implemented in the same session (M1 green end-to-end → M2
+  authorized), TDD red→green (tests first against the string-check
+  implementation):** the `Style` registry (`parse`/`name`) replaces the
+  `style != "keep-a-changelog"` check in both entry points;
+  `conventional` maps the planner's section titles through the
+  documented type map (breaking group first); `compact` flattens to one
+  bullet list (breaking entries first). Both styles reuse the
+  style-independent document machinery (marker/Unreleased insertion,
+  release-section replacement), so idempotence carries over — proven by
+  byte-identical re-run tests. `github-release-notes` stays unshipped
+  and the E-CHLOG-STYLE message + docs page now name the shipped set.
+  5 new tests (parse round-trip, compact golden, conventional golden +
+  title mapping, per-style idempotence, unknown-style message);
+  snapshots reviewed and accepted.
+- **Next session start point.** (1) M4.1 forge adapter, (2) the
+  corpus-wide pnpm differential as an xtask subcommand, (3) M2.6
+  perf-budget close-out, (4) the minijinja user-template path.
 
 ### 2026-11-12 — M2 slice D: tree diff + persistent cache (branch `feat/m2-tree-diff-cache-perf`, base 9f32036f7215bb0fb590f120442648feca5a6104)
 
