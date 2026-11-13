@@ -29,28 +29,40 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     } else {
         (pattern.to_owned(), path.to_owned())
     };
-    let pat_segs: Vec<&str> = pattern.split('/').collect();
-    let path_segs: Vec<&str> = path.split('/').collect();
-    match_segments(&pat_segs, &path_segs)
+    let pattern_parts: Vec<&str> = pattern.split('/').collect();
+    let path_parts: Vec<&str> = path.split('/').collect();
+    match_segments(&pattern_parts, &path_parts)
 }
 
 /// Glob matcher over one path segment (`fnmatch` semantics, UTF-8 aware).
 pub fn match_segment(pattern: &str, segment: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let seg: Vec<char> = segment.chars().collect();
-    seg_match(&pat, 0, &seg, 0)
+    seg_match(&pat, &seg)
 }
 
-/// Backtracking matcher over pattern/path segment char slices.
-fn seg_match(pat: &[char], mut pi: usize, seg: &[char], mut si: usize) -> bool {
-    // Backtracking star: remember the last star and retry with one more
-    // consumed character (classic greedy-with-fallback, bounded by input
-    // length so matching is total).
-    let mut star: Option<(usize, usize)> = None;
+/// Backtracking matcher over pattern/path segment char slices (classic
+/// greedy-with-last-star-fallback). Every star retry consumes exactly one
+/// more segment character, so the loop is bounded by `pat.len() ×
+/// seg.len()` steps — matching is total on every input (the previous
+/// version retried past the segment end and never terminated on
+/// non-matching star patterns).
+fn seg_match(pat: &[char], seg: &[char]) -> bool {
+    let mut pi = 0usize;
+    let mut si = 0usize;
+    // Last star seen: its pattern index and the segment index its next
+    // retry starts from (the star has consumed `star_next` characters).
+    let mut star_pi: Option<usize> = None;
+    let mut star_next = 0usize;
     loop {
-        match (pat.get(pi), seg.get(si)) {
+        let p = pat.get(pi).copied();
+        let s = seg.get(si).copied();
+        match (p, s) {
+            // Both exhausted: the segment matched exactly.
+            (None, None) => return true,
             (Some('*'), _) => {
-                star = Some((pi, si));
+                star_pi = Some(pi);
+                star_next = si;
                 pi += 1;
             }
             (Some('?'), Some(_)) => {
@@ -58,61 +70,60 @@ fn seg_match(pat: &[char], mut pi: usize, seg: &[char], mut si: usize) -> bool {
                 si += 1;
             }
             (Some('['), Some(_)) => {
-                let next = match class_end(pat, pi) {
-                    Some(end) => end,
-                    None => {
-                        // Unterminated class: treat `[` literally.
-                        if *seg.get(si).unwrap_or(&'\0') == '[' {
-                            pi += 1;
-                            si += 1;
-                            continue;
-                        }
+                let Some(end) = class_end(pat, pi) else {
+                    // Unterminated class: treat `[` literally.
+                    if s == Some('[') {
+                        pi += 1;
+                        si += 1;
+                    } else if !backtrack(&mut pi, &mut si, &mut star_pi, &mut star_next, seg.len())
+                    {
                         return false;
                     }
+                    continue;
                 };
-                if class_matches(&pat[pi + 1..next], seg[si]) {
-                    pi = next + 1;
+                let body = pat.get(pi + 1..end).unwrap_or(&[]);
+                if s.is_some_and(|c| class_matches(body, c)) {
+                    pi = end + 1;
                     si += 1;
-                } else {
-                    match star {
-                        Some((sp, ss)) => {
-                            pi = sp + 1;
-                            si = ss + 1;
-                            star = Some((sp, ss + 1));
-                            continue;
-                        }
-                        None => return false,
-                    }
+                } else if !backtrack(&mut pi, &mut si, &mut star_pi, &mut star_next, seg.len()) {
+                    return false;
                 }
             }
-            (Some(&pc), Some(&sc)) if pc == sc => {
+            (Some(pc), Some(sc)) if pc == sc => {
                 pi += 1;
                 si += 1;
             }
-            _ => match star {
-                Some((sp, ss)) => {
-                    pi = sp + 1;
-                    si = ss + 1;
-                    star = Some((sp, ss + 1));
-                    continue;
+            // Mismatch or one side exhausted: retry from after the last
+            // star with the star consuming one more character; a star at
+            // the segment end cannot consume more ⇒ no match.
+            _ => {
+                if !backtrack(&mut pi, &mut si, &mut star_pi, &mut star_next, seg.len()) {
+                    return false;
                 }
-                None => return seg.get(si).is_none() && pat.get(pi).is_none(),
-            },
-        }
-        if pat.get(pi).is_none() && seg.get(si).is_none() {
-            return true;
-        }
-        if pat.get(pi).is_none() || seg.get(si).is_none() {
-            match star {
-                Some((sp, ss)) => {
-                    pi = sp + 1;
-                    si = ss + 1;
-                    star = Some((sp, ss + 1));
-                    continue;
-                }
-                None => return false,
             }
         }
+    }
+}
+
+/// The single failure path of [`seg_match`]: retry from after the last
+/// star with the star consuming one more character; returns `false` when
+/// no retryable star exists (none seen, or already consuming to the
+/// segment end) — the caller translates that into "no match".
+fn backtrack(
+    pi: &mut usize,
+    si: &mut usize,
+    star_pi: &mut Option<usize>,
+    star_next: &mut usize,
+    seg_len: usize,
+) -> bool {
+    match *star_pi {
+        Some(sp) if *star_next < seg_len => {
+            *star_next += 1;
+            *si = *star_next;
+            *pi = sp + 1;
+            true
+        }
+        _ => false,
     }
 }
 
@@ -121,7 +132,7 @@ fn seg_match(pat: &[char], mut pi: usize, seg: &[char], mut si: usize) -> bool {
 /// right after the opening (`[]]`).
 fn class_end(pat: &[char], open: usize) -> Option<usize> {
     let mut i = open + 1;
-    if matches!(pat.get(i), Some('!') | Some('^')) {
+    if matches!(pat.get(i), Some('!' | '^')) {
         i += 1;
     }
     if pat.get(i) == Some(&']') {
@@ -140,19 +151,24 @@ fn class_end(pat: &[char], open: usize) -> Option<usize> {
 /// Evaluates the class body (`a-z`, `!abc`, …) against one char.
 fn class_matches(body: &[char], c: char) -> bool {
     let (negated, body) = match body.first() {
-        Some('!') | Some('^') => (true, &body[1..]),
+        Some('!' | '^') => (true, body.get(1..).unwrap_or(&[])),
         _ => (false, body),
     };
     let mut hit = false;
     let mut i = 0usize;
     while i < body.len() {
-        if body.len() >= i + 3 && body[i + 1] == '-' {
-            if (body[i]..=body[i + 2]).contains(&c) {
+        let first = body.get(i).copied();
+        let dash = body.get(i + 1).copied();
+        let last = body.get(i + 2).copied();
+        if dash == Some('-') && last.is_some() {
+            if let (Some(a), Some(b)) = (first, last)
+                && (a..=b).contains(&c)
+            {
                 hit = true;
             }
             i += 3;
         } else {
-            if body[i] == c {
+            if first == Some(c) {
                 hit = true;
             }
             i += 1;
@@ -161,22 +177,60 @@ fn class_matches(body: &[char], c: char) -> bool {
     hit != negated
 }
 
-/// Whole-pattern matcher over segment lists supporting `**`.
-fn match_segments(pat_segs: &[&str], path_segs: &[&str]) -> bool {
-    match pat_segs.split_first() {
-        None => path_segs.is_empty(),
-        Some((&"**", rest)) => {
-            // `**` consumes zero or more path segments.
-            (0..=path_segs.len()).any(|take| match_segments(rest, &path_segs[take..]))
-        }
-        Some((first, rest)) => {
-            let (head, tail) = match path_segs.split_first() {
-                Some(h) => h,
-                None => return false,
+/// Whole-pattern matcher over segment lists supporting `**`. Bottom-up
+/// DP over `(pattern segment, path segment)` indices: polynomial time and
+/// total on every input (nested `**` cannot blow up — the naive per-take
+/// recursion was exponential there).
+fn match_segments(pattern_parts: &[&str], path_parts: &[&str]) -> bool {
+    let pattern_len = pattern_parts.len();
+    let path_len = path_parts.len();
+    // `table[i * (path_len + 1) + j]` =
+    // pattern_parts[i..] matches path_parts[j..].
+    let mut table = vec![false; (pattern_len + 1) * (path_len + 1)];
+    // Both exhausted: match.
+    if let Some(cell) = table.get_mut(pattern_len * (path_len + 1) + path_len) {
+        *cell = true;
+    }
+    for i in (0..pattern_len).rev() {
+        for j in (0..=path_len).rev() {
+            let pattern = pattern_parts.get(i).unwrap_or(&"");
+            // Two or more consecutive stars in one segment act as `**`
+            // (fnmatch/gitignore convention: `***` ≡ `**`); a single `*`
+            // stays within its segment.
+            let multi_star = pattern.len() >= 2 && pattern.chars().all(|c| c == '*');
+            let ok = if multi_star {
+                // `**` consumes zero path segments…
+                let consume_zero = table
+                    .get((i + 1) * (path_len + 1) + j)
+                    .copied()
+                    .unwrap_or(false);
+                // …or one (including the last, so it can also swallow a
+                // trailing empty segment produced by a trailing `/`).
+                let consume_one = j < path_len
+                    && table
+                        .get(i * (path_len + 1) + (j + 1))
+                        .copied()
+                        .unwrap_or(false);
+                consume_zero || consume_one
+            } else {
+                let segment = path_parts.get(j);
+                match segment {
+                    Some(seg) => {
+                        match_segment(pattern, seg)
+                            && table
+                                .get((i + 1) * (path_len + 1) + (j + 1))
+                                .copied()
+                                .unwrap_or(false)
+                    }
+                    None => false,
+                }
             };
-            match_segment(first, head) && match_segments(rest, tail)
+            if let Some(cell) = table.get_mut(i * (path_len + 1) + j) {
+                *cell = ok;
+            }
         }
     }
+    table.first().copied().unwrap_or(false)
 }
 
 #[cfg(test)]
