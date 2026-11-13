@@ -415,7 +415,7 @@ pub trait EcosystemAdapter: Send + Sync {
     /// content untouched; the orchestrator falls back to the native
     /// refresh effect step (`cargo update --workspace --offline`, §9.2
     /// rule 4). The default implementation IS that fallback: adapters
-    /// without an in-memory patcher (e.g. npm before M3.4) honestly
+    /// without an in-memory patcher honestly
     /// decline instead of guessing. Pure parse+mutate over the given
     /// bytes: no process spawn, no I/O.
     fn patch_lockfile(
@@ -435,9 +435,11 @@ pub trait EcosystemAdapter: Send + Sync {
         })
     }
     /// The native lockfile refresh effect step (§7.3 lockfile subset,
-    /// §9.2 rule 4, M3.2): run the ecosystem's own tool to rewrite the
-    /// lockfile when the in-memory patcher declined
-    /// ([`crate::lockfile::LockfileOutcome::NeedsNative`]). This is the
+    /// §9.2 rule 4 / §9.3, M3.2+M3.4): run the ecosystem's own tool to
+    /// rewrite the lockfile when the in-memory patcher declined
+    /// ([`crate::lockfile::LockfileOutcome::NeedsNative`]) — `cargo
+    /// update --workspace --offline`, `pnpm install --lockfile-only
+    /// --offline`. This is the
     /// one sanctioned subprocess of the lockfile flow — argv arrays only,
     /// no shell interpolation (invariant I7) — and the *caller* verifies
     /// its effect (only workspace members may change, §9.2).
