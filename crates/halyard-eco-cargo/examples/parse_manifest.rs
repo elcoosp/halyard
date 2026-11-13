@@ -40,8 +40,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let packages = CargoAdapter::new().discover(&ctx)?;
     for pkg in packages {
-        println!("package {} (root: {})", pkg.name, if pkg.root.is_empty() { "<repo root>" } else { &pkg.root });
-        println!("  version: {}", pkg.version.as_ref().map_or("?".into(), ToString::to_string));
+        println!(
+            "package {} (root: {})",
+            pkg.name,
+            if pkg.root.is_empty() {
+                "<repo root>"
+            } else {
+                &pkg.root
+            }
+        );
+        println!(
+            "  version: {}",
+            pkg.version.as_ref().map_or("?".into(), ToString::to_string)
+        );
         match &pkg.version_source {
             RawVersionSource::Local => println!("  version source: local"),
             RawVersionSource::WorkspaceInherited { file, key_path } => {
