@@ -12,12 +12,15 @@
 //! | `gen-repo` | Deterministic synthetic repo generator (M0.4) |
 //! | `bench-competitors` | Competitor benchmark harness (M0.3) |
 
+mod bench;
 mod competitors;
 mod corpus;
 mod discover_diff;
 mod genrepo;
+mod gitdiff;
 mod layers;
 mod perf;
+mod replay;
 mod schema;
 mod size;
 
@@ -42,12 +45,17 @@ fn run(args: &[String]) -> Result<(), String> {
     match sub {
         "check-layers" => layers::check_layers(),
         "schema-check" => schema::schema_check(flag(rest, "--write")),
+        "schema-check-plan" => schema::schema_check_plan(flag(rest, "--write")),
         "perf-gate" => perf::perf_gate(),
         "size-gate" => size::size_gate(value_after(rest, "--binary")?),
         "corpus" => corpus::corpus(rest),
         "discover-diff" => discover_diff::discover_diff(rest),
         "gen-repo" => genrepo::gen_repo(rest),
         "bench-competitors" => competitors::bench_competitors(rest),
+        "git-diff" => gitdiff::git_diff(),
+        "replay" => replay::replay(rest),
+        "bench-public" => bench::bench_public(rest),
+        "pgo" => bench::pgo(rest),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -102,6 +110,12 @@ SUBCOMMANDS:
     gen-repo --packages N --commits K --shape SHAPE --seed S --out DIR
                                       deterministic synthetic repo (M0.4)
     bench-competitors [--tool T] [--fixture DIR] [--report]
-                                      competitor harness (M0.3)"
+                                      competitor harness (M0.3)
+    schema-check-plan [--write]       verify/regenerate the plan schema (D0)
+    git-diff                          tree-diff attribution vs git diff-tree (Slice C)
+    replay [--corpus DIR] [--format json]
+                                      time-machine replay harness (M2.7)
+    bench-public [--dry]              measure the §14.1 scenario budgets (M2.6)
+    pgo                               PGO generate/use prototype (M2.6b)"
     );
 }
