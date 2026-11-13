@@ -25,14 +25,14 @@ pattern from M1 onward where useful).
 | `E-EDIT-IO` | [E-EDIT-IO.md](E-EDIT-IO.md) | edit atomic write (M1.4) |
 | `E-EDIT-UNREWRITABLE` | [E-EDIT-UNREWRITABLE.md](E-EDIT-UNREWRITABLE.md) | version requirement rewriter (M1.3, §A.2) |
 | `E-TEST-FIXTURE` | [E-TEST-FIXTURE.md](E-TEST-FIXTURE.md) | test-support fixture failures |
-| `E-DISC-IO` | [E-DISC-IO.md](E-DISC-IO.md) | edit |
-| `E-DISC-MANIFEST` | [E-DISC-MANIFEST.md](E-DISC-MANIFEST.md) | edit |
-| `E-DISC-NESTED-WS` | [E-DISC-NESTED-WS.md](E-DISC-NESTED-WS.md) | edit |
-| `E-DISC-GLOB` | [E-DISC-GLOB.md](E-DISC-GLOB.md) | edit |
-| `E-DISC-NO-PACKAGE` | [E-DISC-NO-PACKAGE.md](E-DISC-NO-PACKAGE.md) | edit |
-| `E-DISC-DUPLICATE` | [E-DISC-DUPLICATE.md](E-DISC-DUPLICATE.md) | edit |
-| `E-DISC-LINK-UNKNOWN` | [E-DISC-LINK-UNKNOWN.md](E-DISC-LINK-UNKNOWN.md) | edit |
-| `E-GRAPH-CYCLE` | [E-GRAPH-CYCLE.md](E-GRAPH-CYCLE.md) | edit |
+| `E-DISC-IO` | [E-DISC-IO.md](E-DISC-IO.md) | discovery filesystem walk (M1.5) |
+| `E-DISC-MANIFEST` | [E-DISC-MANIFEST.md](E-DISC-MANIFEST.md) | discovery manifest parse (M1.5) |
+| `E-DISC-NESTED-WS` | [E-DISC-NESTED-WS.md](E-DISC-NESTED-WS.md) | discovery nested workspaces (M1.5) |
+| `E-DISC-GLOB` | [E-DISC-GLOB.md](E-DISC-GLOB.md) | discovery member globs (M1.5) |
+| `E-DISC-NO-PACKAGE` | [E-DISC-NO-PACKAGE.md](E-DISC-NO-PACKAGE.md) | discovery empty repo (M1.5) |
+| `E-DISC-DUPLICATE` | [E-DISC-DUPLICATE.md](E-DISC-DUPLICATE.md) | discovery duplicate members (M1.5) |
+| `E-DISC-LINK-UNKNOWN` | [E-DISC-LINK-UNKNOWN.md](E-DISC-LINK-UNKNOWN.md) | discovery polyglot links (M1.7) |
+| `E-GRAPH-CYCLE` | [E-GRAPH-CYCLE.md](E-GRAPH-CYCLE.md) | workspace graph cycles (M1.7) |
 | `E-GIT-OPEN` | [E-GIT-OPEN.md](E-GIT-OPEN.md) | git engine repo open (M2) |
 | `E-GIT-HEAD` | [E-GIT-HEAD.md](E-GIT-HEAD.md) | git engine unborn HEAD (M2) |
 | `E-GIT-SHALLOW` | [E-GIT-SHALLOW.md](E-GIT-SHALLOW.md) | git engine shallow clone (M2) |
@@ -52,12 +52,19 @@ pattern from M1 onward where useful).
 | `E-CLI-CWD` | [E-CLI-CWD.md](E-CLI-CWD.md) | CLI -C handling (M1.10) |
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
+| `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4) |
+| `E-FORGE-RATE-LIMIT` | [E-FORGE-RATE-LIMIT.md](E-FORGE-RATE-LIMIT.md) | forge throttling (M4.1a, exit code 5) |
+| `E-FORGE-CONFLICT` | [E-FORGE-CONFLICT.md](E-FORGE-CONFLICT.md) | forge CAS precondition (M4.1a, §11.2) |
+| `E-FORGE-REQUEST` | [E-FORGE-REQUEST.md](E-FORGE-REQUEST.md) | forge spec validation (M4.1a) |
+| `E-FORGE-UNSUPPORTED` | [E-FORGE-UNSUPPORTED.md](E-FORGE-UNSUPPORTED.md) | forge capability decline (M4.1a) |
 
 ## Extension policy
 
 - New user-facing error variants **must** land with their page in the same
-  PR (checked by review; enforced mechanically from M1.10 via
-  `xtask check-errors` once the taxonomy exists in code).
+  PR (checked by review — the same discipline as the layer table, which
+  errors an unknown crate: an unknown code fails the review pass through
+  the index above, which is kept bidirectionally exact against the
+  `code()` implementations).
 - Test-infrastructure errors (like `E-TEST-FIXTURE`) are outside §15.4's
   user taxonomy but still carry stable codes so CI logs stay greppable.
 - Codes are never reused or renumbered; a removed variant's page stays as
