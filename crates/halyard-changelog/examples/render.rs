@@ -1,6 +1,6 @@
-//! Renders keep-a-changelog output for a small in-memory plan — once for
-//! a fresh document and once for an existing document with an
-//! `## [Unreleased]` section (both printed to stdout).
+//! Renders the built-in changelog styles for a small in-memory plan:
+//! keep-a-changelog (fresh + merged into an existing document) and the
+//! M3.5b `conventional` / `compact` styles (all printed to stdout).
 //!
 //! Run with `cargo run -p halyard-changelog --example render`.
 
@@ -17,6 +17,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let existing = "# Changelog\n\n## [Unreleased]\n\n- old note\n\n## [0.1.0] - 2020-01-01\n\n### Added\n\n- initial\n";
     let merged = render_plan(&plan, "keep-a-changelog", Some(existing))?;
     println!("=== merged into existing document ===\n{merged}");
+
+    for style in ["conventional", "compact"] {
+        let styled = render_plan(&plan, style, None)?;
+        println!("=== {style} (fresh document) ===\n{styled}");
+    }
 
     Ok(())
 }
