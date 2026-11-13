@@ -28,6 +28,8 @@
 //! * [`glob`] — member-pattern matcher shared by the adapters (§6.2).
 //! * [`discover`] — the `EcosystemAdapter` seam, `DiscoverCtx`,
 //!   `RawPackage` and `E-DISC-*` errors (§6, §7.3).
+//! * [`edit`] — the adapter edit seam outcomes/failures (§7.3 edit
+//!   subset, M3.1/M3.3).
 //! * [`graph`] — CSR adjacency, topological order, SCCs, `E-GRAPH-CYCLE`
 //!   with the dev-cycle exemption (§6.6, M1.7).
 //! * [`link`] — polyglot link rules (§6.5, M1.7).
@@ -37,6 +39,7 @@ pub mod bitset;
 pub mod bump;
 pub mod canonical;
 pub mod discover;
+pub mod edit;
 pub mod glob;
 pub mod graph;
 pub mod history;
@@ -53,16 +56,17 @@ pub use bitset::SmallBitset;
 pub use bstr::BString;
 pub use canonical::{blake3_hex, canonical_json, plan_hash};
 pub use discover::{
-    DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, Facets, ManifestFormat,
-    RawDep, RawPackage, RawVersionSource,
+    DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, Facets, ManifestFormat, RawDep,
+    RawPackage, RawVersionSource,
 };
+pub use edit::{EditFailure, EditOutcome};
 pub use graph::{GraphError, WorkspaceGraph};
 pub use history::{
     AuthorRef, BaseRef, CommitIdx, FixedHistory, HistoryDigest, HistoryProvider, ParsedCommit,
     ReleaseRefs, RelevantCommit, Trailer,
 };
 pub use id::{Interner, PkgId, Sym};
-pub use link::{detect_links, ExplicitLinkSpec, LinkEdge, LinkMode, LinkRule};
+pub use link::{ExplicitLinkSpec, LinkEdge, LinkMode, LinkRule, detect_links};
 pub use package::{
     DepEdge, DepKind, Ecosystem, Group, GroupId, GroupPolicy, ManifestSite, Package, PathFilter,
     RelPath, ReqSpec, Span, TagTemplate, TagTemplateError, VersionSource, Workspace,
@@ -72,10 +76,10 @@ pub use plan::{
     Bump, PLAN_SCHEMA_V1, Plan, PlanChangelog, PlanEdit, PlanPatch, PlanPublish, PlanReason,
     PlanRelease, PlanSkip,
 };
-pub use planner::{plan, CascadeMode, GroupMode, PlanConfig, PlanError, Snapshot};
+pub use planner::{CascadeMode, GroupMode, PlanConfig, PlanError, Snapshot, plan};
 pub use reason::{CascadeWhy, Oid, Reason, ReasonChain, VersionResolution};
 pub use rewrite::{
-    rewrite_requirement, RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy,
-    VersionError,
+    RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy, VersionError,
+    rewrite_requirement,
 };
-pub use trie::{build_trie, layout_hash, Trie, TrieNode};
+pub use trie::{Trie, TrieNode, build_trie, layout_hash};
