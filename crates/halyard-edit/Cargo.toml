@@ -14,6 +14,11 @@ halyard-core = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 criterion = { workspace = true }
+# Dev-only (test-only by construction, check-layers exempts dev-deps):
+# the plan-apply integration test drives the real discovery merge and the
+# registered adapters end-to-end.
+halyard-discover = { workspace = true }
+semver = { workspace = true }
 
 [[bench]]
 name = "apply"
