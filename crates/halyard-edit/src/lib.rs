@@ -9,6 +9,12 @@
 //! preservation of untouched bytes (comments, ordering, whitespace,
 //! EOLs, BOM) automatic — invariant I4.
 //!
+//! The M3.6 plan-driven apply ([`apply_plan`]) extends this with the
+//! local `apply` flow: a [`halyard_core::plan::Plan`]'s edits convert
+//! into an [`EditSet`] ([`edit_set_from_plan`], [`dry_run_preview`] for
+//! `--dry`), route through the ecosystem adapters' semantic patchers
+//! (§7.3 `edit_versions`), and land with the same atomic protocol.
+//!
 //! This crate is an effectful shell component (it touches the
 //! filesystem); the pure core never depends on it.
 
@@ -17,7 +23,11 @@
 mod apply;
 mod atomic;
 mod error;
+mod plan_apply;
 
 pub use apply::{EditSet, LineEndings, Patch, apply, detect_line_endings, verify_outputs};
 pub use atomic::{apply_to_file, apply_to_file_verified, atomic_write};
 pub use error::EditError;
+pub use plan_apply::{
+    ApplyReport, DryPatch, FileSummary, apply_plan, dry_run_preview, edit_set_from_plan,
+};
