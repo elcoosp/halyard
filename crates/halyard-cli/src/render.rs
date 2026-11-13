@@ -9,9 +9,12 @@ use std::fmt::Write as _;
 use halyard_core::HistoryProvider;
 use halyard_core::{Plan, PlanRelease};
 use halyard_edit::{ApplyReport, DryPatch};
+use halyard_forge::{MachineEffect, MachineReport};
 
 use crate::Context;
+use crate::check;
 use crate::doctor::DoctorReport;
+use halyard_conventional::TitleLint;
 
 /// Renders the `apply --dry` preview (`plan_apply::dry_run_preview`): the
 /// byte patches the plan would write, per file, sorted by path (I3).
@@ -421,6 +424,224 @@ pub fn status_gha(context: &Context) -> String {
                 .map(String::as_str)
                 .unwrap_or_default(),
         );
+    }
+    out
+}
+
+/// Renders the `check --pr-title` verdict (§11.6): the accepted lint,
+/// the conveyed bump and the per-package prediction ("if merged, this
+/// will release"). Deterministic — the same title and plan render
+/// byte-identical text (I3).
+pub fn check_human(title: &str, lint: &TitleLint, predictions: &[check::Prediction]) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "title: {title:?}");
+    let scope = lint.scope.as_deref().unwrap_or("-");
+    let _ = writeln!(
+        out,
+        "verdict: accepted — {}({scope}), conveys {}",
+        lint.kind, lint.level
+    );
+    if predictions.is_empty() {
+        let _ = writeln!(
+            out,
+            "no pending releases: merging this title releases nothing"
+        );
+        return out;
+    }
+    let _ = writeln!(out, "if merged, this will release:");
+    let conveyed = check::bump_str(check::bump_of(lint.level));
+    for prediction in predictions {
+        if prediction.remapped {
+            let _ = writeln!(
+                out,
+                "  {} {} → {} (0.x policy: {} → {})",
+                prediction.package,
+                prediction.from,
+                check::bump_str(prediction.bump),
+                conveyed,
+                check::bump_str(prediction.bump)
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "  {} {} → {}",
+                prediction.package,
+                prediction.from,
+                check::bump_str(prediction.bump)
+            );
+        }
+    }
+    out
+}
+
+/// Renders the pending-release gate of `check` without a title (§16.2:
+/// "`check` | lint PR title/commits; `--exit-code` if release pending").
+pub fn check_pending_human(plan: &Plan) -> String {
+    let mut out = String::new();
+    if plan.releases.is_empty() {
+        let _ = writeln!(out, "no pending releases");
+        return out;
+    }
+    let _ = writeln!(out, "pending: {} release(s)", plan.releases.len());
+    for release in &plan.releases {
+        let _ = writeln!(
+            out,
+            "  {} {} → {} ({})",
+            release.package,
+            release.from,
+            release.to,
+            check::bump_str(release.bump)
+        );
+    }
+    out
+}
+
+/// The `check --pr-title` verdict as a GHA job summary.
+pub fn check_gha(title: &str, lint: &TitleLint, predictions: &[check::Prediction]) -> String {
+    let mut out = String::from("## halyard check\n\n");
+    let _ = writeln!(out, "- title: `{title}`");
+    let _ = writeln!(out, "- verdict: accepted, conveys **{}**", lint.level);
+    if predictions.is_empty() {
+        let _ = writeln!(
+            out,
+            "- no pending releases: merging this title releases nothing"
+        );
+        return out;
+    }
+    let _ = writeln!(out, "- if merged, this will release:");
+    for prediction in predictions {
+        let _ = writeln!(
+            out,
+            "  - {p}: {f} → {b}",
+            p = prediction.package,
+            f = prediction.from,
+            b = check::bump_str(prediction.bump)
+        );
+    }
+    out
+}
+
+/// The pending-release gate as a GHA summary.
+pub fn check_pending_gha(plan: &Plan) -> String {
+    let mut out = String::from("## halyard check\n\n");
+    if plan.releases.is_empty() {
+        let _ = writeln!(out, "- no pending releases");
+        return out;
+    }
+    let _ = writeln!(out, "- pending: {} release(s)", plan.releases.len());
+    for release in &plan.releases {
+        let _ = writeln!(
+            out,
+            "  - {p}: {f} → {t} ({b})",
+            p = release.package,
+            f = release.from,
+            t = release.to,
+            b = check::bump_str(release.bump)
+        );
+    }
+    out
+}
+
+/// One machine effect as a stable JSON row (the `pr --dry` document).
+pub fn pr_effect_json(effect: &MachineEffect) -> serde_json::Value {
+    match effect {
+        MachineEffect::ReleaseCreated { tag, url } => serde_json::json!({
+            "type": "release_created", "tag": tag, "url": url,
+        }),
+        MachineEffect::ReleaseExisted { tag } => {
+            serde_json::json!({ "type": "release_existed", "tag": tag })
+        }
+        MachineEffect::PrOpened { number } => {
+            serde_json::json!({ "type": "pr_opened", "number": number })
+        }
+        MachineEffect::PrUpdated { number } => {
+            serde_json::json!({ "type": "pr_updated", "number": number })
+        }
+        MachineEffect::PrUnchanged { number } => {
+            serde_json::json!({ "type": "pr_unchanged", "number": number })
+        }
+        MachineEffect::PrClosed { number } => {
+            serde_json::json!({ "type": "pr_closed", "number": number })
+        }
+    }
+}
+
+/// One machine effect with its payload, for the GHA summary.
+fn pr_effect_gha(effect: &MachineEffect) -> String {
+    match effect {
+        MachineEffect::ReleaseCreated { tag, url } => {
+            format!("would create release `{tag}` ({url})")
+        }
+        MachineEffect::ReleaseExisted { tag } => format!("release `{tag}` exists"),
+        MachineEffect::PrOpened { number } => format!("would open PR #{number} (preview)"),
+        MachineEffect::PrUpdated { number } => format!("would update PR #{number}"),
+        MachineEffect::PrUnchanged { number } => {
+            format!("PR #{number} already current (no mutating calls)")
+        }
+        MachineEffect::PrClosed { number } => format!("would close PR #{number}"),
+    }
+}
+
+/// Renders the `pr --dry` forecast (M4.2b step 1): the machine's effects
+/// over the preview forge, the §11.5 call-budget forecast and the
+/// rendered §11.3 body. Deterministic (I3): the same repo state renders
+/// byte-identical text.
+pub fn pr_dry_human(
+    title: &str,
+    branch: &str,
+    report: &MachineReport,
+    body: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "dry run: Release-PR forecast over the preview forge (nothing written)"
+    );
+    let _ = writeln!(out, "title: {title:?}");
+    let _ = writeln!(out, "branch: {branch}");
+    if report.effects.is_empty() {
+        let _ = writeln!(
+            out,
+            "nothing to do: no pending plan, no stale Release PR ({} probe call)",
+            report.calls
+        );
+    }
+    for effect in &report.effects {
+        let _ = writeln!(out, "{}", pr_effect_gha(effect));
+    }
+    let _ = writeln!(out, "forge calls forecast: {}", report.calls);
+    let _ = writeln!(
+        out,
+        "tag phase: not forecast (the live run reconciles manifest-vs-tags, §11.1 step 2)"
+    );
+    if let Some(body) = body {
+        let _ = writeln!(out, "body:");
+        let _ = writeln!(out, "{body}");
+    }
+    out
+}
+
+/// The `pr --dry` forecast as a GHA job summary (body folded into a
+/// details block).
+pub fn pr_dry_gha(title: &str, branch: &str, report: &MachineReport, body: Option<&str>) -> String {
+    let mut out = String::from("## halyard pr (dry)\n\n");
+    let _ = writeln!(out, "- title: `{title}`");
+    let _ = writeln!(out, "- branch: `{branch}`");
+    if report.effects.is_empty() {
+        let _ = writeln!(
+            out,
+            "- nothing to do: no pending plan, no stale Release PR ({} probe call)",
+            report.calls
+        );
+    }
+    for effect in &report.effects {
+        let _ = writeln!(out, "- {}", pr_effect_gha(effect));
+    }
+    let _ = writeln!(out, "- forge calls forecast: {}", report.calls);
+    if let Some(body) = body {
+        let _ = writeln!(out, "\n<details><summary>PR body preview</summary>\n");
+        let _ = writeln!(out, "{body}");
+        let _ = writeln!(out, "</details>");
     }
     out
 }
