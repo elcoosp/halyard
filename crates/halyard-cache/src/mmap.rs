@@ -42,10 +42,7 @@
 //!   `Send + Sync` because the mapped pages are immutable during the
 //!   object's lifetime (`PROT_READ`).
 
-#![allow(unsafe_code)]
-
 use std::fs::File;
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 /// A read-only shared mapping of the cache file (§8.7).
@@ -59,6 +56,9 @@ pub struct Mmap {
 // references — both sound because no code writes through the mapping and
 // the advisory lock serializes any concurrent resize (module contract).
 unsafe impl Send for Mmap {}
+// SAFETY: shared `&Mmap` references across threads are sound because the
+// mapped pages are never written through (`PROT_READ`, see `Send` above)
+// and the advisory lock serializes any concurrent resize (module contract).
 unsafe impl Sync for Mmap {}
 
 impl Mmap {
@@ -76,11 +76,11 @@ impl Mmap {
             // mappings; the caller's read()-backed path keeps every test
             // meaningful under `cargo +nightly miri`.
             let _ = file;
-            return None;
+            None
         }
         #[cfg(not(any(miri, feature = "miri")))]
         {
-            use std::os::unix::io::RawFd;
+            use std::os::unix::io::{AsRawFd, RawFd};
             let fd: RawFd = file.as_raw_fd();
             let page = unsafe {
                 // SAFETY: `mmap` of `len` bytes from an open fd with
@@ -112,6 +112,17 @@ impl Mmap {
         // SAFETY: `ptr` points at `len` mapped, readable bytes for the
         // lifetime of `self`; the projection stays within the mapping.
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl std::fmt::Debug for Mmap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The raw address is deliberately redacted (diagnostics must not
+        // leak mapping addresses); `finish_non_exhaustive` marks the
+        // omission.
+        f.debug_struct("Mmap")
+            .field("len", &self.len)
+            .finish_non_exhaustive()
     }
 }
 
@@ -157,7 +168,7 @@ pub fn unlock(file: &File) -> bool {
 /// `Cache::flush` remains the authoritative durability point).
 ///
 /// // rationale: directory-entry durability after `create`/`rename` needs
-/// `fsync` on an O_DIRECTORY fd (POSIX); no std surface exists. The fd
+/// `fsync` on an `O_DIRECTORY` fd (POSIX); no std surface exists. The fd
 /// is opened, synced and closed here; nothing escapes.
 pub fn fsync_directory(path: &Path) {
     use std::ffi::CString;
