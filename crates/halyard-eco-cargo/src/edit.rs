@@ -11,9 +11,9 @@
 //! 1. **Validates** every patch against a span-carrying `toml_edit` parse
 //!    of the manifest. A patch span must match exactly one *editable
 //!    slot*: the requirement value of a dependency row in a dep-kind
-//!    section ([`dependencies`], [`dev-dependencies`],
-//!    [`build-dependencies`], [`workspace.dependencies`],
-//!    [`target.<cfg>.…`]), the own `[package].version` value, or the
+//!    section (`dependencies`, `dev-dependencies`,
+//!    `build-dependencies`, `workspace.dependencies`,
+//!    `target.<cfg>.…`), the own `[package].version` value, or the
 //!    inherited `[workspace.package].version` value.
 //! 2. **Classifies** the row exactly like the planner's rewriter
 //!    ([`halyard_core::rewrite::rewrite_requirement`]): plain semver
