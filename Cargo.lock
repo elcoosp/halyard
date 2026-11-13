@@ -1381,6 +1381,7 @@ dependencies = [
  "halyard-config",
  "halyard-core",
  "halyard-discover",
+ "halyard-eco-cargo",
  "halyard-edit",
  "halyard-git",
  "halyard-test-support",
@@ -1457,6 +1458,7 @@ dependencies = [
  "insta",
  "proptest",
  "semver",
+ "tempfile",
  "toml_edit",
 ]
 
