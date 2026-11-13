@@ -74,13 +74,24 @@ impl Csr {
         let mut offsets = Vec::with_capacity(n + 1);
         let mut targets = Vec::with_capacity(edges.len());
         let mut kinds = Vec::with_capacity(edges.len());
-        let mut cursor = 0usize;
-        for node in 0..=n {
-            while cursor < edges.len() && edges[cursor].0 < node {
-                targets.push(edges[cursor].1);
-                kinds.push(edges[cursor].2);
-                cursor += 1;
+        // Node `i`'s offset counts targets whose source id is `< i`, so
+        // each edge closes out the nodes it comes after. Sorted `from`
+        // values are strictly non-decreasing, hence one pass suffices.
+        let mut node = 0usize;
+        for (from, to, kind) in edges {
+            // A source id >= n was never consumed by the node scan either;
+            // skipping it keeps `offsets` at exactly `n + 1` entries.
+            if from >= n {
+                continue;
             }
+            while node <= from {
+                offsets.push(u32::try_from(targets.len()).unwrap_or(u32::MAX));
+                node += 1;
+            }
+            targets.push(to);
+            kinds.push(kind);
+        }
+        while offsets.len() < n + 1 {
             offsets.push(u32::try_from(targets.len()).unwrap_or(u32::MAX));
         }
         Self {
@@ -162,9 +173,15 @@ impl WorkspaceGraph {
     /// foreign id.
     pub fn out_edges(&self, id: PkgId) -> Option<Vec<(PkgId, DepKind)>> {
         let bounds = self.out.bounds(id.to_usize())?;
+        // `kinds` is parallel to `targets` by construction, so both slice
+        // lookups always succeed for valid bounds.
+        let targets = self.out.targets.get(bounds.start..bounds.end)?;
+        let kinds = self.out.kinds.get(bounds.start..bounds.end)?;
         Some(
-            (bounds)
-                .map(|i| (self.out.targets[i], self.out.kinds[i]))
+            targets
+                .iter()
+                .zip(kinds.iter())
+                .map(|(target, kind)| (*target, *kind))
                 .collect(),
         )
     }
@@ -181,35 +198,49 @@ impl WorkspaceGraph {
         // A node is ready when every package it depends on (non-dev) has
         // already been emitted.
         let mut pending = vec![0u32; n];
-        for node in 0..n {
+        for (node, slot) in pending.iter_mut().enumerate() {
             if let Some(bounds) = self.out.bounds(node) {
-                for i in bounds {
-                    if self.out.kinds[i] != DepKind::Dev {
-                        pending[node] += 1;
-                    }
-                }
+                // `kinds` is parallel to `targets`, so the slice always
+                // covers `bounds`; the `&[]` fallback is unreachable.
+                let kinds = self.out.kinds.get(bounds.start..bounds.end).unwrap_or(&[]);
+                *slot = u32::try_from(kinds.iter().filter(|kind| **kind != DepKind::Dev).count())
+                    .unwrap_or(u32::MAX);
             }
         }
-        let mut ready: std::collections::BTreeSet<u32> = (0..n as u32)
-            .filter(|v| pending[*v as usize] == 0)
+        let mut ready: std::collections::BTreeSet<u32> = pending
+            .iter()
+            .enumerate()
+            .filter(|&(_, count)| *count == 0)
+            .map(|(node, _)| u32::try_from(node).unwrap_or(u32::MAX))
             .collect();
         let mut order = Vec::with_capacity(n);
         let mut seen = vec![false; n];
         while let Some(&v) = ready.first() {
             ready.remove(&v);
             let v = v as usize;
-            seen[v] = true;
-            order.push(PkgId::new(v as u32));
+            // `v` indexes `pending`, so it is inside every per-node vector.
+            if let Some(flag) = seen.get_mut(v) {
+                *flag = true;
+            }
+            order.push(PkgId::new(u32::try_from(v).unwrap_or(u32::MAX)));
             // Emitting v unblocks every dependent u (u depends on v).
             if let Some(bounds) = self.in_.bounds(v) {
                 for i in bounds {
-                    if self.in_.kinds[i] == DepKind::Dev {
+                    if self.in_.kinds.get(i) == Some(&DepKind::Dev) {
                         continue;
                     }
-                    let u = self.in_.targets[i].to_usize();
-                    pending[u] -= 1;
-                    if pending[u] == 0 {
-                        ready.insert(u as u32);
+                    let Some(target) = self.in_.targets.get(i) else {
+                        continue;
+                    };
+                    let u = target.to_usize();
+                    // `u` is a valid package id, so the slot exists; the
+                    // mirrored edge construction makes each non-dev in-edge
+                    // decrement its pending count exactly once.
+                    if let Some(count) = pending.get_mut(u) {
+                        *count -= 1;
+                        if *count == 0 {
+                            ready.insert(u32::try_from(u).unwrap_or(u32::MAX));
+                        }
                     }
                 }
             }
@@ -228,8 +259,10 @@ impl WorkspaceGraph {
     /// appear here as ordinary components without failing
     /// [`Self::topo_order`].
     pub fn sccs(&self) -> Vec<Vec<PkgId>> {
-        let n = self.count;
+        // Sentinel index meaning "not yet visited"; the counter only
+        // reaches node count, so `u32::MAX` is never a real index.
         const UNVISITED: u32 = u32::MAX;
+        let n = self.count;
         let mut index = vec![UNVISITED; n];
         let mut low = vec![0u32; n];
         let mut on_stack = vec![false; n];
@@ -237,14 +270,21 @@ impl WorkspaceGraph {
         let mut stack: Vec<usize> = Vec::new();
         let mut components: Vec<Vec<PkgId>> = Vec::new();
         for start in 0..n {
-            if index[start] != UNVISITED {
+            // `start < n` bounds every per-node vector access below.
+            if index.get(start).copied() != Some(UNVISITED) {
                 continue;
             }
-            index[start] = counter;
-            low[start] = counter;
+            if let Some(slot) = index.get_mut(start) {
+                *slot = counter;
+            }
+            if let Some(slot) = low.get_mut(start) {
+                *slot = counter;
+            }
             counter += 1;
             stack.push(start);
-            on_stack[start] = true;
+            if let Some(flag) = on_stack.get_mut(start) {
+                *flag = true;
+            }
             // Frame = (node, next out-edge slot to visit).
             let mut frames: Vec<(usize, usize)> = vec![(start, 0)];
             while let Some(frame) = frames.last_mut() {
@@ -252,33 +292,57 @@ impl WorkspaceGraph {
                 let bounds = self.out.bounds(v).unwrap_or(0..0);
                 if slot < bounds.len() {
                     frame.1 += 1;
-                    let w = self.out.targets[bounds.start + slot].to_usize();
-                    if index[w] == UNVISITED {
-                        index[w] = counter;
-                        low[w] = counter;
+                    // `slot < bounds.len()` bounds the target lookup.
+                    let Some(target) = self.out.targets.get(bounds.start + slot) else {
+                        continue;
+                    };
+                    let w = target.to_usize();
+                    if index.get(w).copied() == Some(UNVISITED) {
+                        if let Some(slot) = index.get_mut(w) {
+                            *slot = counter;
+                        }
+                        if let Some(slot) = low.get_mut(w) {
+                            *slot = counter;
+                        }
                         counter += 1;
                         stack.push(w);
-                        on_stack[w] = true;
+                        if let Some(flag) = on_stack.get_mut(w) {
+                            *flag = true;
+                        }
                         frames.push((w, 0));
-                    } else if on_stack[w] {
-                        low[v] = low[v].min(index[w]);
+                    } else if on_stack.get(w).copied() == Some(true) {
+                        // `w` is on the DFS stack: an ancestor of (or equal
+                        // to) `v`, so its index caps `v`'s low-link.
+                        if let (Some(low_v), Some(index_w)) = (low.get_mut(v), index.get(w)) {
+                            *low_v = (*low_v).min(*index_w);
+                        }
                     }
                 } else {
                     frames.pop();
-                    if let Some(parent) = frames.last_mut() {
-                        low[parent.0] = low[parent.0].min(low[v]);
+                    if let Some(parent) = frames.last_mut()
+                        && let Some(low_v) = low.get(v).copied()
+                        && let Some(low_p) = low.get_mut(parent.0)
+                    {
+                        // Merge `v`'s low-link into its parent's.
+                        *low_p = (*low_p).min(low_v);
                     }
-                    if low[v] == index[v] {
+                    let low_v = low.get(v).copied();
+                    if low_v.is_some() && low_v == index.get(v).copied() {
                         let mut component: Vec<PkgId> = Vec::new();
                         while let Some(w) = stack.pop() {
-                            on_stack[w] = false;
-                            component.push(PkgId::new(w as u32));
+                            if let Some(flag) = on_stack.get_mut(w) {
+                                *flag = false;
+                            }
+                            component.push(PkgId::new(u32::try_from(w).unwrap_or(u32::MAX)));
                             if w == v {
                                 break;
                             }
                         }
                         component.sort();
-                        let self_loop = component.len() == 1 && self.self_loop(component[0]);
+                        // A lone component member is non-trivial exactly
+                        // when it carries an out-edge to itself.
+                        let self_loop = component.len() == 1
+                            && component.first().is_some_and(|id| self.self_loop(*id));
                         if component.len() > 1 || self_loop {
                             components.push(component);
                         }
@@ -300,40 +364,59 @@ impl WorkspaceGraph {
     /// (DFS from the smallest remaining id, first back-edge wins).
     fn find_cycle(&self, ordered: &[bool]) -> Vec<PkgId> {
         let n = self.count;
-        let remaining: Vec<usize> = (0..n).filter(|v| !ordered[*v]).collect();
-        let start = match remaining.first() {
-            Some(&s) => s,
-            None => return Vec::new(),
+        // `ordered` is sized to `n` by the caller, so this scan visits the
+        // same ids as a `0..n` range loop while staying bounds-checked.
+        let remaining: Vec<usize> = ordered
+            .iter()
+            .enumerate()
+            .filter(|&(_, &done)| !done)
+            .map(|(node, _)| node)
+            .collect();
+        let Some(start) = remaining.first().copied() else {
+            return Vec::new();
         };
         let mut on_path: Vec<bool> = vec![false; n];
         let mut path: Vec<usize> = Vec::new();
         // Iterative DFS with explicit child cursors.
         let mut frames: Vec<(usize, usize)> = vec![(start, 0)];
         path.push(start);
-        on_path[start] = true;
+        // `start < n` bounds the slot.
+        if let Some(flag) = on_path.get_mut(start) {
+            *flag = true;
+        }
         while let Some(frame) = frames.last_mut() {
             let (v, slot) = *frame;
             let bounds = self.out.bounds(v).unwrap_or(0..0);
             if slot < bounds.len() {
                 frame.1 += 1;
-                let w = self.out.targets[bounds.start + slot].to_usize();
-                if on_path[w] {
+                // `slot < bounds.len()` bounds the target lookup.
+                let Some(target) = self.out.targets.get(bounds.start + slot) else {
+                    continue;
+                };
+                let w = target.to_usize();
+                if on_path.get(w).copied() == Some(true) {
                     // Cycle: from the first occurrence of w on the path.
                     let pos = path.iter().position(|x| *x == w).unwrap_or(0);
-                    let cycle = &path[pos..];
-                    let mut out: Vec<PkgId> = cycle.iter().map(|x| PkgId::new(*x as u32)).collect();
-                    out.push(PkgId::new(w as u32));
+                    // `pos` is inside `path`, so the tail slice always exists.
+                    let cycle = path.get(pos..).unwrap_or(&[]);
+                    let mut out: Vec<PkgId> = cycle
+                        .iter()
+                        .map(|x| PkgId::new(u32::try_from(*x).unwrap_or(u32::MAX)))
+                        .collect();
+                    out.push(PkgId::new(u32::try_from(w).unwrap_or(u32::MAX)));
                     return out;
                 }
-                if !ordered[w] {
+                if ordered.get(w) == Some(&false) {
                     path.push(w);
-                    on_path[w] = true;
+                    if let Some(flag) = on_path.get_mut(w) {
+                        *flag = true;
+                    }
                     frames.push((w, 0));
                 }
             } else {
                 frames.pop();
-                if let Some(last) = path.pop() {
-                    on_path[last] = false;
+                if let Some(flag) = path.pop().and_then(|last| on_path.get_mut(last)) {
+                    *flag = false;
                 }
             }
         }
@@ -343,12 +426,7 @@ impl WorkspaceGraph {
     /// Renders a package-id path as `a -> b -> a`.
     fn render(&self, path: &[PkgId]) -> String {
         path.iter()
-            .map(|id| {
-                self.names
-                    .get(id.to_usize())
-                    .map(String::as_str)
-                    .unwrap_or("?")
-            })
+            .map(|id| self.names.get(id.to_usize()).map_or("?", String::as_str))
             .collect::<Vec<&str>>()
             .join(" -> ")
     }
@@ -389,10 +467,10 @@ mod tests {
         }
         for ((_, deps), index) in specs.iter().zip(0u32..) {
             let mut edges = Vec::new();
-            for (dep_index, kind) in deps.iter() {
+            for &(dep_index, kind) in *deps {
                 edges.push(DepEdge {
-                    to: PkgId::new(*dep_index as u32),
-                    kind: *kind,
+                    to: PkgId::new(u32::try_from(dep_index).unwrap_or(u32::MAX)),
+                    kind,
                     req: ReqSpec::PathOnly,
                     site: ManifestSite {
                         file: RelPath::new("Cargo.toml").unwrap(),
@@ -411,19 +489,33 @@ mod tests {
 
     #[test]
     fn csr_construction_and_neighbors() {
-        let ws = ws_from(&[("a", &[(1, DepKind::Normal)]), ("b", &[(0, DepKind::Dev), (2, DepKind::Normal)]), ("c", &[])]);
+        let ws = ws_from(&[
+            ("a", &[(1, DepKind::Normal)]),
+            ("b", &[(0, DepKind::Dev), (2, DepKind::Normal)]),
+            ("c", &[]),
+        ]);
         let g = WorkspaceGraph::build(&ws);
         assert_eq!(g.len(), 3);
         assert_eq!(g.out_neighbors(PkgId::new(0)).unwrap(), &[PkgId::new(1)]);
         assert_eq!(g.in_neighbors(PkgId::new(2)).unwrap(), &[PkgId::new(1)]);
         let edges = g.out_edges(PkgId::new(1)).unwrap();
-        assert_eq!(edges, vec![(PkgId::new(0), DepKind::Dev), (PkgId::new(2), DepKind::Normal)]);
+        assert_eq!(
+            edges,
+            vec![
+                (PkgId::new(0), DepKind::Dev),
+                (PkgId::new(2), DepKind::Normal)
+            ]
+        );
         assert!(g.out_neighbors(PkgId::new(9)).is_none());
     }
 
     #[test]
     fn topo_is_total_order_on_dags() {
-        let ws = ws_from(&[("a", &[(1, DepKind::Normal)]), ("b", &[(2, DepKind::Normal)]), ("c", &[])]);
+        let ws = ws_from(&[
+            ("a", &[(1, DepKind::Normal)]),
+            ("b", &[(2, DepKind::Normal)]),
+            ("c", &[]),
+        ]);
         let g = WorkspaceGraph::build(&ws);
         let order = g.topo_order().unwrap();
         assert_eq!(order, vec![PkgId::new(2), PkgId::new(1), PkgId::new(0)]);
@@ -434,7 +526,11 @@ mod tests {
 
     #[test]
     fn dev_only_cycle_is_allowed_by_topo_and_grouped_by_scc() {
-        let ws = ws_from(&[("a", &[(1, DepKind::Dev)]), ("b", &[(0, DepKind::Dev)]), ("c", &[])]);
+        let ws = ws_from(&[
+            ("a", &[(1, DepKind::Dev)]),
+            ("b", &[(0, DepKind::Dev)]),
+            ("c", &[]),
+        ]);
         let g = WorkspaceGraph::build(&ws);
         assert!(g.topo_order().is_ok());
         let sccs = g.sccs();
@@ -443,12 +539,15 @@ mod tests {
 
     #[test]
     fn normal_cycle_errors_with_printed_path() {
-        let ws = ws_from(&[("a", &[(1, DepKind::Normal)]), ("b", &[(0, DepKind::Normal)])]);
+        let ws = ws_from(&[
+            ("a", &[(1, DepKind::Normal)]),
+            ("b", &[(0, DepKind::Normal)]),
+        ]);
         let g = WorkspaceGraph::build(&ws);
         let err = g.topo_order().unwrap_err();
         assert_eq!(err.code(), "E-GRAPH-CYCLE");
-        let GraphError::Cycle { path, rendered } = &err else {
-            panic!("expected Cycle");
+        let (path, rendered) = match &err {
+            GraphError::Cycle { path, rendered } => (path, rendered),
         };
         assert_eq!(path.first(), path.last(), "cycle path is closed");
         assert_eq!(rendered, "a -> b -> a");
@@ -472,7 +571,9 @@ mod tests {
         let sccs = g.sccs();
         assert_eq!(sccs.len(), 2);
         assert!(sccs.contains(&vec![PkgId::new(0), PkgId::new(1)]));
-        assert!(sccs.contains(&vec![PkgId::new(2), PkgId::new(3)]));
+        // d=3 and e=4 form the real normal-edge cycle (`skip` = 2 is
+        // isolated and appears in no non-trivial component).
+        assert!(sccs.contains(&vec![PkgId::new(3), PkgId::new(4)]));
     }
 
     #[test]
@@ -490,7 +591,7 @@ mod tests {
         let g = WorkspaceGraph::build(&ws);
         assert!(g.is_empty());
         assert_eq!(g.topo_order().unwrap(), Vec::<PkgId>::new());
-        assert!(g.sccs().is_empty());
+        assert_eq!(g.sccs(), Vec::<Vec<PkgId>>::new());
     }
 
     #[test]
@@ -507,8 +608,10 @@ mod tests {
             };
             specs.push((format!("p{i}"), deps));
         }
-        let refs: Vec<(&str, &[(usize, DepKind)])> =
-            specs.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+        let refs: Vec<(&str, &[(usize, DepKind)])> = specs
+            .iter()
+            .map(|(n, d)| (n.as_str(), d.as_slice()))
+            .collect();
         let ws = ws_from(&refs);
         let g = WorkspaceGraph::build(&ws);
         assert_eq!(g.topo_order().unwrap().len(), 2000);
@@ -523,13 +626,15 @@ mod tests {
             let next = (i + 1) % 2000;
             specs.push((format!("p{i}"), vec![(next, DepKind::Normal)]));
         }
-        let refs: Vec<(&str, &[(usize, DepKind)])> =
-            specs.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+        let refs: Vec<(&str, &[(usize, DepKind)])> = specs
+            .iter()
+            .map(|(n, d)| (n.as_str(), d.as_slice()))
+            .collect();
         let ws = ws_from(&refs);
         let g = WorkspaceGraph::build(&ws);
         let err = g.topo_order().unwrap_err();
-        let GraphError::Cycle { path, .. } = err else {
-            panic!("expected Cycle");
+        let path = match err {
+            GraphError::Cycle { path, .. } => path,
         };
         assert_eq!(path.len(), 2001, "full cycle plus the closing node");
     }
