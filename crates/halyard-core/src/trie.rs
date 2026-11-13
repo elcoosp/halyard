@@ -95,20 +95,22 @@ impl Trie {
         }
         for segment in path.split('/') {
             let key = bstr::BString::from(segment);
-            let next = self.nodes[current]
-                .children
-                .get(&key)
+            // `current` is always a node created by an earlier iteration
+            // (or the root), so both lookups below succeed.
+            let next = self
+                .nodes
+                .get(current)
+                .and_then(|n| n.children.get(&key))
                 .copied();
-            let child = match next {
-                Some(child) => child,
-                None => {
-                    let child = self.nodes.len();
-                    self.nodes.push(TrieNode::default());
-                    self.nodes[current]
-                        .children
-                        .insert(key, child);
-                    child
+            let child = if let Some(child) = next {
+                child
+            } else {
+                let child = self.nodes.len();
+                self.nodes.push(TrieNode::default());
+                if let Some(n) = self.nodes.get_mut(current) {
+                    n.children.insert(key, child);
                 }
+                child
             };
             current = child;
         }
@@ -191,11 +193,11 @@ pub fn layout_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PkgId;
     use crate::package::{
         DepEdge, Ecosystem, GroupId, Package, PathFilter, RelPath, TagTemplate, VersionSource,
         Workspace,
     };
-    use crate::PkgId;
 
     /// Registers one package with the given name/root.
     fn push_pkg(ws: &mut Workspace, name: &str, root: &str, include: Vec<String>) {
@@ -235,11 +237,14 @@ mod tests {
         let core = trie.child(crates, b"core").expect("core node");
         let roots = trie.roots_here(core).expect("core node present");
         assert!(roots.get(PkgId::new(0)), "core is rooted at crates/core");
-        assert!(!roots.get(PkgId::new(1)), "cli is not rooted at crates/core");
+        assert!(
+            !roots.get(PkgId::new(1)),
+            "cli is not rooted at crates/core"
+        );
         // Shared paths are root-level leaves.
         let lock = trie.child(Trie::ROOT, b"Cargo.lock").expect("shared lock");
         assert!(trie.is_shared(lock));
-        assert!(trie.roots_here(lock).is_some_and(|r| r.is_empty()));
+        assert!(trie.roots_here(lock).is_some_and(SmallBitset::is_empty));
         // Foreign subtrees are prunable: no node for `docs`'s children and
         // no node under an unrelated segment.
         assert!(trie.child(Trie::ROOT, b"unrelated").is_none());
@@ -258,9 +263,37 @@ mod tests {
         let core = trie.child(crates, b"core").expect("core node");
         assert!(trie.roots_here(core).is_some_and(|r| r.get(PkgId::new(1))));
         // A nested root does not change the outer root's own record.
-        assert!(trie
-            .roots_here(Trie::ROOT)
-            .is_some_and(|r| !r.get(PkgId::new(1))));
+        assert!(
+            trie.roots_here(Trie::ROOT)
+                .is_some_and(|r| !r.get(PkgId::new(1)))
+        );
+    }
+
+    /// Flattens the trie to `path → is_shared` in sorted segment order.
+    fn paths(trie: &Trie) -> std::collections::BTreeMap<String, bool> {
+        fn walk(
+            trie: &Trie,
+            node: usize,
+            path: &str,
+            out: &mut std::collections::BTreeMap<String, bool>,
+        ) {
+            out.insert(path.to_owned(), trie.is_shared(node));
+            let Some(n) = trie.nodes.get(node) else {
+                return;
+            };
+            // `children` is a BTreeMap: segments render in sorted order.
+            for (name, child) in &n.children {
+                let sub = if path.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{path}/{name}")
+                };
+                walk(trie, *child, &sub, out);
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        walk(trie, Trie::ROOT, "", &mut out);
+        out
     }
 
     #[test]
@@ -276,31 +309,6 @@ mod tests {
         // the two workspaces. What must be identical is the path
         // structure; the per-workspace determinism (same workspace ⇒
         // identical trie, I3) is asserted separately below.
-        fn paths(trie: &Trie) -> std::collections::BTreeMap<String, bool> {
-            fn walk(
-                trie: &Trie,
-                node: usize,
-                path: &str,
-                out: &mut std::collections::BTreeMap<String, bool>,
-            ) {
-                out.insert(path.to_owned(), trie.is_shared(node));
-                let Some(n) = trie.nodes.get(node) else {
-                    return;
-                };
-                // `children` is a BTreeMap: segments render in sorted order.
-                for (name, child) in &n.children {
-                    let sub = if path.is_empty() {
-                        name.to_string()
-                    } else {
-                        format!("{path}/{name}")
-                    };
-                    walk(trie, *child, &sub, out);
-                }
-            }
-            let mut out = std::collections::BTreeMap::new();
-            walk(trie, Trie::ROOT, "", &mut out);
-            out
-        }
         assert_eq!(
             paths(&build_trie(&a)),
             paths(&build_trie(&b)),
