@@ -302,19 +302,26 @@ halyard/
 
 ### 7.3 Ecosystem adapter trait
 
+As-built signature set (M3.2; the M1.9-era sketch differed — the edit
+subset routes per-file patches rather than a whole-workspace pass, which
+keeps the adapters pure and testable):
+
 ```rust
 pub trait EcosystemAdapter: Send + Sync {
     fn id(&self) -> &'static str;
     /// Identify member manifests given the repo's committed tree or FS. Pure parse, no process spawn.
     fn discover(&self, ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError>;
-    /// Produce byte patches for a version change and all dependent requirement updates.
-    fn edit_versions(&self, ws: &Workspace, changes: &[VersionChange], out: &mut EditSet) -> Result<(), EditError>;
-    /// Cheap in-memory lockfile patch; return `NeedsNative` if fidelity can't be guaranteed.
-    fn patch_lockfile(&self, ws: &Workspace, changes: &[VersionChange], out: &mut EditSet) -> LockfileOutcome;
-    /// Native refresh fallback (effect step; spawns tool).
-    fn refresh_lockfile_native(&self, ws_root: &Path) -> Result<(), EffectError>;
-    fn publish(&self, pkg: &Package, opts: &PublishOpts) -> Result<PublishOutcome, PublishError>;
-    fn published(&self, pkg: &Package, v: &Version) -> Result<bool, RegistryError>; // idempotent resume
+    /// Re-apply the plan's byte patches for ONE manifest semantically (M3.1/M3.3).
+    fn edit_versions(&self, file: &RelPath, content: &[u8], patches: &[PlanPatch]) -> Result<EditOutcome, EditFailure>;
+    /// Patch ONE lockfile for the plan's version moves (M3.2, §9.2); decline to
+    /// `NeedsNative` when cargo-identical bytes cannot be guaranteed.
+    fn patch_lockfile(&self, file: &RelPath, content: &[u8], changes: &[LockfileVersionChange])
+        -> Result<LockfileOutcome, LockfileFailure>;
+    /// Native refresh fallback (effect step; spawns the ecosystem tool; the
+    /// caller verifies only workspace members moved, §9.2 rule 4).
+    fn refresh_lockfile_native(&self, ws_root: &Path) -> Result<(), NativeRefreshError>;
+    // `publish`/`published` (§13) join the trait with their engines in M5:
+    // a trait method without an end-to-end implementation would be a stub.
 }
 ```
 Year-2 plugin system (WASM component model, WIT interface mirroring this trait) lets third parties ship adapters without recompiling.
