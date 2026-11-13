@@ -1,0 +1,14 @@
+---
+source: crates/halyard-changelog/src/lib.rs
+assertion_line: 505
+expression: out
+---
+## [0.2.0]
+
+### ⚠ BREAKING CHANGES
+
+- reshape contract
+
+### feat
+
+- grow surface
