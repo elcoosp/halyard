@@ -238,7 +238,7 @@ fn apply_plan_patches_the_root_lockfile_from_plan_releases() -> Result<(), BoxEr
     let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
     // The lockfile summary is its own report row: member version row +
     // disambiguated entry rewritten, foreign rows untouched.
-    let lock = report.lockfile.as_ref().ok_or("lockfile summary present")?;
+    let lock = report.lockfiles.first().ok_or("lockfile summary present")?;
     assert_eq!(lock.file.as_str(), "Cargo.lock");
     assert_eq!(lock.applied, 2);
     assert_eq!(lock.skipped, 0);
@@ -270,7 +270,7 @@ fn apply_plan_reports_needs_native_and_leaves_the_lockfile_untouched() -> Result
     write_files(tmp.path(), &files)?;
 
     let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
-    let lock = report.lockfile.as_ref().ok_or("lockfile summary present")?;
+    let lock = report.lockfiles.first().ok_or("lockfile summary present")?;
     let reason = lock
         .native_reason
         .as_ref()
@@ -324,11 +324,188 @@ fn apply_plan_without_releases_never_touches_a_lockfile() -> Result<(), BoxError
 
     let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
     assert!(
-        report.lockfile.is_none(),
+        report.lockfiles.is_empty(),
         "no version moves → no lockfile stage: {:?}",
-        report.lockfile
+        report.lockfiles
     );
     let on_disk = std::fs::read_to_string(tmp.path().join("Cargo.lock"))?;
     assert_eq!(on_disk, ROOT_LOCKFILE);
+    Ok(())
+}
+
+/// The M3.4 pnpm fixture: an anonymous root package.json hosting a pnpm
+/// workspace, a member moving (`ui` 0.4.1 → 0.5.0) and a dependent member
+/// (`app`) whose plain-semver requirement the plan rewrites.
+const PNPM_ROOT_JSON: &str = r#"{"name":"pnpm-root","private":true}
+"#;
+const PNPM_WORKSPACE_YAML: &str = "packages:\n  - 'pkgs/*'\n";
+const PNPM_UI_JSON: &str = r#"{"name":"ui","version":"0.4.1"}
+"#;
+const PNPM_APP_JSON: &str = r#"{"name":"app","version":"1.0.0","dependencies":{"ui":"^0.4.1"}}
+"#;
+const PNPM_LOCKFILE: &str = "lockfileVersion: '9.0'\n\nimporters:\n\n  packages/app:\n    dependencies:\n      ui:\n        specifier: ^0.4.1\n        version: 0.4.1(link:../ui)\n\n  packages/ui:\n";
+
+fn pnpm_files() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("package.json", PNPM_ROOT_JSON),
+        ("pnpm-workspace.yaml", PNPM_WORKSPACE_YAML),
+        ("pkgs/ui/package.json", PNPM_UI_JSON),
+        ("pkgs/app/package.json", PNPM_APP_JSON),
+    ]
+}
+
+fn discovered_pnpm() -> Result<(Workspace, StaticFiles), BoxError> {
+    let files = pnpm_files();
+    let mut ctx = DiscoverCtx::new();
+    for (path, body) in &files {
+        if !ctx.insert_file(path, body.as_bytes().to_vec()) {
+            return Err(format!("ctx rejected {path}").into());
+        }
+    }
+    let discovery = halyard_discover::discover_from_ctx(&ctx, &DiscoverInput::default())?;
+    Ok((discovery.workspace, files))
+}
+
+/// The npm plan for the pnpm fixture: ui's own version site plus app's
+/// requirement rewrite, both located through discovery's edit sites.
+fn npm_plan_for() -> Result<Plan, BoxError> {
+    // The plan's npm patches are inner JSON spans (no quotes): the ui
+    // version literal and the app requirement literal, located by their
+    // fixture bytes (the wire contract the planner emits, M3.3). Plain
+    // semver deps on members are not proven-internal at discovery, so
+    // the spans come from the manifest bytes rather than dep edges.
+    let find_span = |haystack: &'static str, needle: &str| -> Result<(u32, u32), BoxError> {
+        let start = usize::try_from(
+            haystack
+                .find(needle)
+                .ok_or_else(|| format!("{needle:?} not in fixture"))? as u64,
+        )?;
+        Ok((u32::try_from(start)?, u32::try_from(start + needle.len())?))
+    };
+    let (version_start, version_end) = find_span(PNPM_UI_JSON, "0.4.1")?;
+    let (dep_start, dep_end) = find_span(PNPM_APP_JSON, "^0.4.1")?;
+    let new_req =
+        match rewrite_requirement("^0.4.1", &Version::new(0, 5, 0), UpperBoundPolicy::Widen)? {
+            RewriteOutcome::Rewritten(text) => text,
+            other @ RewriteOutcome::Unchanged { .. } => {
+                return Err(format!("expected a rewrite, got {other:?}").into());
+            }
+        };
+    Ok(Plan {
+        schema: PLAN_SCHEMA_V1.to_owned(),
+        base_branch: "main".to_owned(),
+        head: "b".repeat(40),
+        plan_hash: "blake3:test-npm".to_owned(),
+        releases: vec![PlanRelease {
+            package: "ui".to_owned(),
+            ecosystem: "npm".to_owned(),
+            from: "0.4.1".to_owned(),
+            to: "0.5.0".to_owned(),
+            bump: halyard_core::plan::Bump::Patch,
+            tag: "ui-v0.5.0".to_owned(),
+            reasons: Vec::new(),
+            changelog: None,
+            publish: None,
+        }],
+        edits: vec![
+            PlanEdit {
+                file: "pkgs/ui/package.json".to_owned(),
+                patches: vec![PlanPatch {
+                    start: version_start,
+                    end: version_end,
+                    text: "0.5.0".to_owned(),
+                }],
+            },
+            PlanEdit {
+                file: "pkgs/app/package.json".to_owned(),
+                patches: vec![PlanPatch {
+                    start: dep_start,
+                    end: dep_end,
+                    text: new_req,
+                }],
+            },
+        ],
+        order: Vec::new(),
+        skipped: Vec::new(),
+    })
+}
+
+#[test]
+fn apply_plan_patches_the_pnpm_lockfile_importers() -> Result<(), BoxError> {
+    let (ws, files) = discovered_pnpm()?;
+    let plan = npm_plan_for()?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    let mut files = files;
+    files.push(("pnpm-lock.yaml", PNPM_LOCKFILE));
+    write_files(tmp.path(), &files)?;
+
+    let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    // Both manifests applied; the pnpm lockfile is its own report row.
+    assert_eq!(report.files.len(), 2);
+    let lock = report.lockfiles.first().ok_or("lockfile row present")?;
+    assert_eq!(lock.file.as_str(), "pnpm-lock.yaml");
+    assert_eq!(lock.ecosystem, "npm");
+    assert_eq!(lock.applied, 2, "specifier + link-ref version");
+    assert_eq!(lock.skipped, 0);
+    assert_eq!(lock.native_reason, None, "patcher guarantees the bytes");
+    let patched = std::fs::read_to_string(tmp.path().join("pnpm-lock.yaml"))?;
+    assert!(patched.contains("specifier: ^0.5.0"), "{patched}");
+    assert!(patched.contains("version: 0.5.0(link:../ui)"), "{patched}");
+    // The member's own manifest moved too.
+    let ui = std::fs::read_to_string(tmp.path().join("pkgs/ui/package.json"))?;
+    assert!(ui.contains("0.5.0"), "{ui}");
+    Ok(())
+}
+
+#[test]
+fn pnpm_lockfile_reapply_is_idempotent() -> Result<(), BoxError> {
+    let (ws, files) = discovered_pnpm()?;
+    let plan = npm_plan_for()?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    let mut files = files;
+    files.push(("pnpm-lock.yaml", PNPM_LOCKFILE));
+    write_files(tmp.path(), &files)?;
+
+    let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    let once = std::fs::read_to_string(tmp.path().join("pnpm-lock.yaml"))?;
+    let second: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    let lock = second.lockfiles.first().ok_or("lockfile row present")?;
+    assert_eq!(lock.applied, 0, "rows already at target are skipped");
+    assert_eq!(lock.skipped, 2, "specifier + link-ref version");
+    let again = std::fs::read_to_string(tmp.path().join("pnpm-lock.yaml"))?;
+    assert_eq!(again, once, "re-apply is byte-identical (idempotence)");
+    let _ = report;
+    Ok(())
+}
+
+#[test]
+fn pnpm_lockfile_resolution_keys_decline_to_native() -> Result<(), BoxError> {
+    let (ws, files) = discovered_pnpm()?;
+    let plan = npm_plan_for()?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    // A registry-resolved member (a packages: key) cannot be patched
+    // byte-safely: the whole pass declines (§9.3).
+    let with_key = "lockfileVersion: '9.0'\n\nimporters:\n\n  packages/app:\n    dependencies:\n      ui:\n        specifier: ^0.4.1\n        version: 0.4.1\n\npackages:\n\n  /ui@0.4.1:\n    resolution: {integrity: sha512-bbbb}\n";
+    let mut files = files;
+    files.push(("pnpm-lock.yaml", with_key));
+    write_files(tmp.path(), &files)?;
+
+    let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    let lock = report.lockfiles.first().ok_or("lockfile row present")?;
+    let reason = lock
+        .native_reason
+        .as_ref()
+        .ok_or("native refresh required")?;
+    assert!(reason.contains("resolution"), "reason explains: {reason}");
+    // The lockfile bytes are untouched; the manifests still applied.
+    let on_disk = std::fs::read_to_string(tmp.path().join("pnpm-lock.yaml"))?;
+    assert_eq!(on_disk, with_key);
+    assert_eq!(report.files.len(), 2);
     Ok(())
 }
