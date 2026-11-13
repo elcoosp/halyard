@@ -2,13 +2,13 @@
 //! ([`refs`]), the painter walk ([`walk`]), the trie-guided tree diff
 //! ([`tree_diff`], §8.4), the merge policy ([`merge`], §8.5) and the
 //! persistent cache wiring (§8.7), assembled into a [`GitHistory`] that
-//! satisfies the planner's [`HistoryProvider`](halyard_core::HistoryProvider)
+//! satisfies the planner's `HistoryProvider`
 //! seam.
 //!
 //! This crate is imperative-shell territory: it owns `gix` access, ODB
 //! reads and shallow-clone detection. It performs **no subprocess** (no
 //! `git` binary, invariant I6) and no network (I5). The planner consumes
-//! only the materialized [`HistoryDigest`](halyard_core::HistoryDigest);
+//! only the materialized [`HistoryDigest`];
 //! the cache is consulted *before* the tree diff and never leaks into
 //! `halyard-core` (planner purity, §4).
 //!
