@@ -22,7 +22,10 @@ pub use fixture::{CommitSpec, GitFixture};
 // §7.1: the mock forge. The [`Forge`] trait and the deterministic
 // [`MemoryForge`] reference adapter are defined in `halyard-forge`
 // (ADR-0011); test-support is the fixture-facing home — E2E suites
-// (M4.2's §15.1 lane) import forge and git fixtures from one crate.
+// (M4.2's §15.1 lane) import forge and git fixtures from one crate. The
+// §11.1 machine types are re-exported alongside so an E2E suite drives
+// the whole Release-PR lifecycle through this single import path.
 pub use halyard_forge::{
-    BranchName, CallRecord, Forge, ForgeError, MemoryForge, PrSpec, ReleaseSpec,
+    BranchName, CallRecord, Forge, ForgeError, MachineEffect, MachineInput, MachineReport,
+    MemoryForge, PrSpec, ReleaseSpec, run_release_machine,
 };
