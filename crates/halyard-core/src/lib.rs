@@ -21,7 +21,7 @@
 //! * [`history`] — `RelevantCommit`, `HistoryDigest`, the
 //!   `HistoryProvider` seam and `ReleaseRefs` (§5.7, §8.2).
 //! * [`canonical`] — canonical JSON + `plan_hash` (§5.8, I3).
-//! * [`plan`] — the `halyard-plan/v1` wire format (§5.8).
+//! * the `plan` module — the `halyard-plan/v1` wire format (§5.8).
 //! * [`bump`] — bump application + commit mapping, canonical (ADR-0008).
 //! * [`rewrite`] — the appendix-A.2 requirement rewriter (ADR-0008).
 //! * [`planner`] — the pure `plan()` (M1.9, §4, A.1; ADR-0007).
