@@ -6,10 +6,10 @@
 //! consumed read-only by `halyard-git`'s lockstep tree walk:
 //!
 //! * every package root path becomes a chain of nodes; the node at the
-//!   root path carries the package's id ([`TrieNode::roots_here`]);
+//!   root path carries the package's id (`TrieNode::roots_here`);
 //! * global/shared files (root `Cargo.toml`, `Cargo.lock`,
 //!   `pnpm-workspace.yaml`, §8.4) become leaf nodes marked
-//!   [`TrieNode::shared`];
+//!   `TrieNode::shared`;
 //! * nodes only carry children that lie on some package root or shared
 //!   path, so the tree diff can prune every subtree that is outside any
 //!   package (e.g. `docs/`, `.github/`) without opening it.
