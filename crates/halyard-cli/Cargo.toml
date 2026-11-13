@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `halyard` command line (M1.10): plan, explain, status, graph, doctor, schema, completions"
+description = "The `halyard` command line: plan, apply, check, explain, status, graph, doctor, schema, completions"
 
 [[bin]]
 name = "halyard"
@@ -25,6 +25,15 @@ halyard-eco-cargo = { workspace = true }
 # calls the pnpm verifier from the adapter crate that owns the grammar.
 halyard-eco-npm = { workspace = true }
 halyard-git = { workspace = true }
+# M4.2b step 1 (`pr --dry`): the shell drives the §11.1 machine over the
+# dry-run adapter (halyard-forge) and renders the §11.3 body through the
+# changelog renderer.
+halyard-forge = { workspace = true }
+halyard-changelog = { workspace = true }
+# M4.3 `check` (§11.6): the title-lint seam — the engine lives in the
+# parser leaf (policy injected via `TitleBumpRule`), the CLI binds the
+# resolved `PlanConfig` mapping and renders the verdicts.
+halyard-conventional = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 miette = { version = "7", features = ["fancy"] }
