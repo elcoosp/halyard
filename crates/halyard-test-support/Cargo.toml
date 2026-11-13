@@ -13,6 +13,10 @@ tempfile = { workspace = true }
 # (M1.5). Test-support only; never a runtime dependency.
 serde_json = { workspace = true }
 halyard-core = { workspace = true }
+# §7.1: the mock forge is surfaced here as a re-export — the [`Forge`]
+# trait and its reference adapter are defined in `halyard-forge`;
+# test-support is the fixture-facing home E2E suites import from.
+halyard-forge = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
