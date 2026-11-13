@@ -10,7 +10,7 @@
 //!
 //! 1. **Direct bumps** — per package, the strongest bump implied by its
 //!    conventional commits (configurable type mapping, breaking → major,
-//!    0.x remap via [`apply_bump`](crate::bump::apply_bump)). A
+//!    0.x remap via [`apply_bump`]). A
 //!    `Release-As: <version>` trailer forces the version outright (§10.1
 //!    precedence).
 //! 2. **Group normalization** — `Fixed`/`Linked` policies and lockstep
@@ -22,7 +22,7 @@
 //!    version or when `cascade = "always"` fires for a normal edge of a
 //!    publishable crate.
 //! 4. **Rewrites + materialization** — unsatisfied requirements are
-//!    rewritten through [`rewrite_requirement`](crate::rewrite::rewrite_requirement)
+//!    rewritten through [`rewrite_requirement`]
 //!    (appendix A.2), then versions, tags, changelog previews, byte edits,
 //!    publish decisions and the skipped list are emitted; the document is
 //!    hashed ([`plan_hash`](crate::canonical::plan_hash)).
