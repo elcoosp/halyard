@@ -1,0 +1,29 @@
+---
+source: crates/halyard-changelog/tests/pr_body.rs
+expression: body
+---
+## 🚀 Release plan
+
+| Package | Current | Next | Bump | Why |
+|---|---|---|---|---|
+| `core` | 0.4.1 | **0.5.0** | minor | `feat` (ab12cd3) |
+
+> Skipped: `docs` (no_changes)
+
+<details><summary>Changelog preview</summary>
+
+## 0.5.0
+
+### ⚠ BREAKING CHANGES
+
+- reshape contract
+
+### Features
+
+- grow surface
+
+</details>
+
+> Override: add `Release-As: 2.0.0` to a commit on `main`, or edit labels. Run `halyard explain <package>` locally.
+
+<!-- halyard:plan v1 blake3:f1568d10ab21887afa7298810b46c3a65809d806099ec3c6e466abee1037f2b0 dVFNj9MwEP0rkXttg5O0TtLbgpaCQIsER4qqsT1OoiZ2ZKeLqqp/hBO/jV/CuNmP0x6f3zy/92YuTELAg/RgVcu2bIDOsiVD3U2BbX/+WrIWQRNRm1yBKIlzXqOfubEHe2ghRKXs4YjF1mQbUemMg8yzqirBQJnXVZVxuRaqALGpeK0rLnhdoyqUwLUQIBEzXpQml5wMPPZIoaL/hcnTMMZcnXWeONWCbbB3DdteGNrJnw9DjLdYJDzdpHxv93ZB4N+fv8n77/d3Xz4/7JIPn+4edvc/IrdKPIYWRkyUIzWo6VnxEWE6ETlPNd79TsLJG1C4jxsxXY/kM3/19dsuJdsrLUq5cA4TDsQp8I2Lo95FyNN1mhEcQR2hiWLlPN76QXD2qR6BY2epjoE+4JIRiH0MpYm77iIAmeVKF2s0G1FWNX8Lk2A6j7PTMHQTu9KNJmierFePtxXFKXfLF0EcCarFAeiphf4MXq/iXd89xvDh2I0j6lvW1yLaqfBShLB1h/kwgf67/gc= -->
