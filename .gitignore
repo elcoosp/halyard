@@ -20,6 +20,12 @@ Cargo.lock.bak
 /flamegraph*
 docs/prompt.md
 
+# Crash dumps from the cache kill-during-write tests (a SIGKILLed child
+# can leave a core file in the working directory; the dump is session
+# residue, never source)
+/core
+crates/*/core
+
 # cargo-fuzz artifacts
 /fuzz/target
 fuzz/Cargo.lock
