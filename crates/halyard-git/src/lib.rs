@@ -32,12 +32,12 @@ pub use gix;
 
 use std::path::Path;
 
-use gix::hash::ObjectId;
-use halyard_core::history::{AuthorRef, BaseRef, HistoryDigest, RelevantCommit};
 use bstr::ByteSlice as _;
+use gix::hash::ObjectId;
+use halyard_cache::{CacheKey, CacheRecord};
+use halyard_core::history::{AuthorRef, BaseRef, HistoryDigest, RelevantCommit};
 use halyard_core::trie::build_trie;
 use halyard_core::{BString, HistoryProvider, Oid, SmallBitset};
-use halyard_cache::{CacheKey, CacheRecord};
 
 /// Git-engine failures (§15.4 `E-GIT-*`; each variant has a page under
 /// `docs/errors/`).
@@ -116,8 +116,8 @@ impl std::error::Error for GitError {}
 pub(crate) fn map_git_err(code: &'static str, message: String) -> GitError {
     match code {
         "E-GIT-REF" => GitError::RefScan { message },
-        "E-GIT-OBJECT" => GitError::Object { message },
-        // The builder only forwards the two codes above.
+        // The builder only forwards the two codes above; everything else
+        // reads as an object error.
         _ => GitError::Object { message },
     }
 }
@@ -218,7 +218,7 @@ impl GitHistory {
         if is_shallow(&repo) {
             return Err(GitError::Shallow { path: repo_path });
         }
-        let head = repo.head_id().ok().map(|id| id.detach());
+        let head = repo.head_id().ok().map(gix::Id::detach);
         let Some(head) = head else {
             return Err(GitError::Head { path: repo_path });
         };
@@ -226,9 +226,18 @@ impl GitHistory {
         let (base_refs, _tags) = refs::resolve_bases(&repo, head, ws, &mut generations)?;
         let base_oids: Vec<Option<ObjectId>> = base_refs
             .iter()
-            .map(|base| base.as_ref().and_then(|b| ObjectId::from_hex(b.oid.as_bytes()).ok()))
+            .map(|base| {
+                base.as_ref()
+                    .and_then(|b| ObjectId::from_hex(b.oid.as_bytes()).ok())
+            })
             .collect();
-        let painted = walk::paint(&repo, head, &base_oids, options.initial_max_commits, &mut generations)?;
+        let painted = walk::paint(
+            &repo,
+            head,
+            &base_oids,
+            options.initial_max_commits,
+            &mut generations,
+        )?;
         // The persistent cache travels separately from the frozen options
         // shape: assemble needs `&mut` for inserts while `options` stays
         // shared.
@@ -246,15 +255,18 @@ impl GitHistory {
             ws.packages().iter().map(|p| p.include.clone()).collect();
         let mut differ = tree_diff::TreeDiffer::new(&repo, trie, roots, filters);
 
+        let mut ids = BuildIds {
+            policy: options.merge_policy,
+            layout_hash: &options.layout_hash,
+            config_hash: &options.config_hash,
+            cache: &mut cache,
+        };
         let (digest, merge_stats) = assemble(
             &repo,
             &painted,
             &base_refs,
             &mut differ,
-            options.merge_policy,
-            &options.layout_hash,
-            &options.config_hash,
-            &mut cache,
+            &mut ids,
             &mut generations,
         )?;
         let tree_diff_stats = *differ.stats();
@@ -301,8 +313,10 @@ fn is_shallow(repo: &gix::Repository) -> bool {
 fn core_oid_of(oid: ObjectId) -> Oid {
     let hex = oid.to_string();
     Oid::from_hex(hex.as_bytes()).unwrap_or_else(|| {
+        // Unreachable for gix-produced oids; the static fallback hex is
+        // 40-char valid hex, validated by the module tests.
         Oid::from_hex(b"0000000000000000000000000000000000000000")
-            .unwrap_or_else(|| Oid::from_hex(b"1111111111111111111111111111111111111111").expect("static hex is valid"))
+            .unwrap_or_else(|| unreachable!("static fallback hex is valid"))
     })
 }
 
@@ -330,6 +344,24 @@ fn intersect(a: &SmallBitset, b: &SmallBitset) -> SmallBitset {
     out
 }
 
+/// Per-candidate extras the merge policy may not see (kept alongside the
+/// [`merge::Candidate`] list; `origin` in the candidate links back here).
+struct Extra {
+    subject_end: u32,
+    body_start: u32,
+    author: AuthorRef,
+    new_for: SmallBitset,
+}
+
+/// The cache/identity inputs of one build (bundled so [`assemble`]'s
+/// signature stays readable).
+struct BuildIds<'a> {
+    policy: merge::MergePolicy,
+    layout_hash: &'a str,
+    config_hash: &'a str,
+    cache: &'a mut Option<halyard_cache::Cache>,
+}
+
 /// Assembles the [`HistoryDigest`] from the painted walk (§5.7): every
 /// emitted commit is read once, its message parsed through
 /// `halyard-conventional`, gated by the merge policy (§8.5), attributed
@@ -340,37 +372,55 @@ fn intersect(a: &SmallBitset, b: &SmallBitset) -> SmallBitset {
 /// # Errors
 ///
 /// [`GitError::Object`] when a commit or tree cannot be read.
-#[allow(clippy::too_many_lines)]
 fn assemble(
     repo: &gix::Repository,
     painted: &walk::PaintResult,
     base_refs: &[Option<BaseRef>],
     differ: &mut tree_diff::TreeDiffer<'_>,
-    policy: merge::MergePolicy,
-    layout_hash: &str,
-    config_hash: &str,
-    cache: &mut Option<halyard_cache::Cache>,
+    ids: &mut BuildIds<'_>,
     generations: &mut refs::Generations<'_>,
 ) -> Result<(HistoryDigest, merge::MergeStats), GitError> {
-    // Parsed, policy-gated candidates plus the per-candidate extras (the
-    // merge policy may remove entries; `origin` links a kept candidate
-    // back to its extras slot).
-    let mut candidates: Vec<merge::Candidate> = Vec::new();
-    struct Extra {
-        subject_end: u32,
-        body_start: u32,
-        author: AuthorRef,
-        new_for: SmallBitset,
+    let (candidates, extras) = collect_candidates(repo, painted)?;
+    let (kept, merge_stats) = merge::apply_policy(candidates, ids.policy);
+    let commits = build_commits(repo, &kept, &extras, differ, ids, generations)?;
+    // Per-package lists from the commit bitsets (one pass, walk order
+    // preserved).
+    let mut per_pkg: Vec<Vec<usize>> = vec![Vec::new(); base_refs.len()];
+    for (index, commit) in commits.iter().enumerate() {
+        for id in commit.touched.iter() {
+            if let Some(list) = per_pkg.get_mut(id.to_usize()) {
+                list.push(index);
+            }
+        }
     }
+    Ok((
+        HistoryDigest {
+            commits,
+            per_pkg,
+            bases: base_refs.to_vec(),
+        },
+        merge_stats,
+    ))
+}
+
+/// Reads every painted commit once and builds the (parsed, unfiltered)
+/// candidates with their per-candidate extras (§5.7).
+///
+/// # Errors
+///
+/// [`GitError::Object`] when a commit cannot be read.
+fn collect_candidates(
+    repo: &gix::Repository,
+    painted: &walk::PaintResult,
+) -> Result<(Vec<merge::Candidate>, Vec<Extra>), GitError> {
+    let mut candidates: Vec<merge::Candidate> = Vec::new();
     let mut extras: Vec<Extra> = Vec::new();
 
     for emitted in &painted.commits {
-        let commit = repo
-            .find_commit(emitted.oid)
-            .map_err(|e| {
-                let oid = emitted.oid;
-                map_git_err("E-GIT-OBJECT", format!("cannot read commit {oid}: {e}"))
-            })?;
+        let commit = repo.find_commit(emitted.oid).map_err(|e| {
+            let oid = emitted.oid;
+            map_git_err("E-GIT-OBJECT", format!("cannot read commit {oid}: {e}"))
+        })?;
         let raw_message = commit.message_raw().map_err(|e| {
             let oid = emitted.oid;
             map_git_err("E-GIT-OBJECT", format!("cannot read message of {oid}: {e}"))
@@ -399,7 +449,7 @@ fn assemble(
             oid: BString::from(core_oid_of(emitted.oid).as_bytes()),
             parsed,
             message: BString::from(raw_message),
-            is_merge: commit.parent_ids().skip(1).next().is_some(),
+            is_merge: commit.parent_ids().nth(1).is_some(),
         });
         extras.push(Extra {
             subject_end: u32::try_from(subject_end).unwrap_or(u32::MAX),
@@ -411,10 +461,26 @@ fn assemble(
             new_for: emitted.new_for.clone(),
         });
     }
+    Ok((candidates, extras))
+}
 
-    let (kept, merge_stats) = merge::apply_policy(candidates, policy);
+/// Attributes the kept candidates (§8.4 tree diff with the §8.7 cache
+/// consulted first) and intersects the attribution with the painted
+/// window (§5.7).
+///
+/// # Errors
+///
+/// [`GitError::Object`] when a commit or tree cannot be read.
+fn build_commits(
+    repo: &gix::Repository,
+    kept: &[merge::Candidate],
+    extras: &[Extra],
+    differ: &mut tree_diff::TreeDiffer<'_>,
+    ids: &mut BuildIds<'_>,
+    generations: &mut refs::Generations<'_>,
+) -> Result<Vec<RelevantCommit>, GitError> {
     let mut commits: Vec<RelevantCommit> = Vec::new();
-    for candidate in &kept {
+    for candidate in kept {
         let extra = extras.get(candidate.origin).ok_or_else(|| {
             map_git_err(
                 "E-GIT-OBJECT",
@@ -424,43 +490,42 @@ fn assemble(
         // §8.7 (M2.5): the cache is consulted BEFORE the tree diff; a hit
         // skips the tree comparison entirely and must produce the same
         // attribution the diff would (determinism test asserts this).
-        let cache_key = CacheKey::compute(candidate.oid.as_bytes(), layout_hash, config_hash);
-        let cached = cache.as_ref().and_then(|c| c.get(&cache_key));
-        let attributed = match cached {
-            Some(record) => intersect(&record.touched, &extra.new_for),
-            None => {
-                // Tree oid of the commit and its first parent (§8.4:
-                // first-parent diffing).
-                let oid = ObjectId::from_hex(candidate.oid.as_bytes())
-                    .map_err(|e| map_git_err("E-GIT-OBJECT", format!("bad oid hex: {e}")))?;
-                let tree_c = commit_tree_id(repo, oid)?;
-                let first_parent = repo
-                    .find_commit(oid)
-                    .ok()
-                    .and_then(|c| c.parent_ids().next())
-                    .map(gix::Id::detach);
-                let tree_p = match first_parent {
-                    Some(parent) => Some(commit_tree_id(repo, parent)?),
-                    None => None,
-                };
-                let position = generations.position(oid);
-                let filtered = differ.diff_commit_at(tree_c, tree_p, position)?;
-                if let Some(cache) = cache.as_mut() {
-                    cache
-                        .insert(
-                            cache_key,
-                            CacheRecord {
-                                touched: filtered.clone(),
-                                subject_end: extra.subject_end,
-                                body_start: extra.body_start,
-                            },
-                        )
-                        .map_err(|e| {
-                            map_git_err("E-GIT-OBJECT", format!("cache insert failed: {e}"))
-                        })?;
-                }
-                intersect(&filtered, &extra.new_for)
+        let cache_key =
+            CacheKey::compute(candidate.oid.as_bytes(), ids.layout_hash, ids.config_hash);
+        let attributed = if let Some(record) = ids.cache.as_ref().and_then(|c| c.get(&cache_key)) {
+            intersect(&record.touched, &extra.new_for)
+        } else {
+            // Tree oid of the commit and its first parent (§8.4:
+            // first-parent diffing).
+            let oid = ObjectId::from_hex(candidate.oid.as_bytes())
+                .map_err(|e| map_git_err("E-GIT-OBJECT", format!("bad oid hex: {e}")))?;
+            let tree_c = commit_tree_id(repo, oid)?;
+            let first_parent = repo
+                .find_commit(oid)
+                .ok()
+                .and_then(|c| c.parent_ids().next())
+                .map(gix::Id::detach);
+            let tree_p = match first_parent {
+                Some(parent) => Some(commit_tree_id(repo, parent)?),
+                None => None,
+            };
+            let position = generations.position(oid);
+            let filtered = differ.diff_commit_at(tree_c, tree_p, position)?;
+            if let Some(cache) = ids.cache.as_mut() {
+                cache
+                    .insert(
+                        cache_key,
+                        CacheRecord {
+                            touched: filtered.clone(),
+                            subject_end: extra.subject_end,
+                            body_start: extra.body_start,
+                        },
+                    )
+                    .map_err(|e| {
+                        map_git_err("E-GIT-OBJECT", format!("cache insert failed: {e}"))
+                    })?;
             }
+            intersect(&filtered, &extra.new_for)
         };
         // §8.4: a commit that touches no package path (e.g. docs-only in
         // a multi-package repo) carries no attribution and leaves the
@@ -468,8 +533,10 @@ fn assemble(
         if attributed.is_empty() {
             continue;
         }
-        let oid = Oid::from_hex(candidate.oid.as_bytes())
-            .unwrap_or_else(|| Oid::from_hex(b"0000000000000000000000000000000000000000").expect("static hex is valid"));
+        let oid = Oid::from_hex(candidate.oid.as_bytes()).unwrap_or_else(|| {
+            Oid::from_hex(b"0000000000000000000000000000000000000000")
+                .unwrap_or_else(|| unreachable!("static fallback hex is valid"))
+        });
         commits.push(RelevantCommit {
             oid,
             subject: BString::from(
@@ -500,22 +567,5 @@ fn assemble(
             touched: attributed,
         });
     }
-    // Per-package lists from the commit bitsets (one pass, walk order
-    // preserved).
-    let mut per_pkg: Vec<Vec<usize>> = vec![Vec::new(); base_refs.len()];
-    for (index, commit) in commits.iter().enumerate() {
-        for id in commit.touched.iter() {
-            if let Some(list) = per_pkg.get_mut(id.to_usize()) {
-                list.push(index);
-            }
-        }
-    }
-    Ok((
-        HistoryDigest {
-            commits,
-            per_pkg,
-            bases: base_refs.to_vec(),
-        },
-        merge_stats,
-    ))
+    Ok(commits)
 }
