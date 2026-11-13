@@ -1,5 +1,5 @@
 //! The adapter edit seam (§7.3 edit subset, M3): the outcome and failure
-//! types shared by every [`EcosystemAdapter::edit_versions`] implementation.
+//! types shared by every `EcosystemAdapter::edit_versions` implementation.
 //!
 //! The planner (M1.9) reduces a release to byte patches (§5.8 `edits`,
 //! §9.1) over the manifests as they exist at [`crate::plan::Plan::head`].
