@@ -21,13 +21,20 @@ fn ws_with(specs: &[(&str, &str)]) -> Workspace {
             id: PkgId::FIRST,
             name: ws.intern(name),
             ecosystem: Ecosystem::Cargo,
-            root: RelPath::new("Cargo.toml").unwrap(),
-            manifest: RelPath::new("Cargo.toml").unwrap(),
+            // Single-package fixtures live at the repository root (§6.1):
+            // the trie attributes every changed path to the package. The
+            // previous value ("Cargo.toml") attributed only commits that
+            // touched that exact path and silently emptied the digest.
+            root: RelPath::new("")
+                .unwrap_or_else(|| unreachable!("empty root is always a valid RelPath")),
+            manifest: RelPath::new("Cargo.toml")
+                .unwrap_or_else(|| unreachable!("root manifest path is always a valid RelPath")),
             version: Some(semver::Version::new(0, 1, 0)),
             version_source: VersionSource::Local,
             publishable: true,
             deps: Vec::<DepEdge>::new(),
-            tag_template: TagTemplate::parse(template).unwrap(),
+            tag_template: TagTemplate::parse(template)
+                .unwrap_or_else(|_| unreachable!("fixture templates are always valid")),
             changelog: None,
             version_site: None,
             include: PathFilter::new(Vec::new(), Vec::new()),
@@ -41,7 +48,8 @@ fn ws_with(specs: &[(&str, &str)]) -> Workspace {
 
 /// `git merge-base --is-ancestor tag HEAD` as ground truth.
 fn is_ancestor_git(fx: &GitFixture, tag: &str) -> bool {
-    fx.run_git(&["merge-base", "--is-ancestor", tag, "HEAD"]).is_ok()
+    fx.run_git(&["merge-base", "--is-ancestor", tag, "HEAD"])
+        .is_ok()
 }
 
 /// The peeled commit of a tag as reported by git.
@@ -56,11 +64,8 @@ fn rev_list_excluding(fx: &GitFixture, bases: &[Option<String>]) -> BTreeSet<Str
     for base in bases.iter().flatten() {
         revs.push(format!("^{base}"));
     }
-    let refs: Vec<&str> = revs.iter().map(String::as_str).collect();
-    fx.rev_list(&refs)
-        .unwrap_or_default()
-        .into_iter()
-        .collect()
+    let argv: Vec<&str> = revs.iter().map(String::as_str).collect();
+    fx.rev_list(&argv).unwrap_or_default().into_iter().collect()
 }
 
 #[test]
@@ -165,7 +170,10 @@ fn walk_matches_rev_list_ground_truth() {
     type Factory = fn() -> Result<GitFixture, halyard_test_support::FixtureError>;
     // (factory, packages with their tag templates).
     let cases: Vec<(Factory, Vec<(&str, &str)>)> = vec![
-        (scenarios::linear_single_package, vec![("app", "v{version}")]),
+        (
+            scenarios::linear_single_package,
+            vec![("app", "v{version}")],
+        ),
         (scenarios::merge_two_branches, vec![("app", "v{version}")]),
         (scenarios::octopus_merge, vec![("app", "v{version}")]),
         (scenarios::squash_style_history, vec![("app", "v{version}")]),
@@ -220,19 +228,19 @@ fn walk_matches_rev_list_ground_truth() {
                 halyard_conventional::parse(show.as_bytes()).is_some()
             })
             .collect();
-        let got: BTreeSet<String> = digest
-            .commits
-            .iter()
-            .map(|c| c.oid.to_string())
-            .collect();
+        let got: BTreeSet<String> = digest.commits.iter().map(|c| c.oid.to_string()).collect();
         assert_eq!(
-            got, expected_conventional,
+            got,
+            expected_conventional,
             "paint vs rev-list on {}",
             fx.root().display()
         );
         // Determinism: the full build twice, byte-identical digest.
         let again = GitHistory::build(fx.root(), &ws, 10_000).unwrap();
-        assert_eq!(format!("{:?}", history.digest()), format!("{:?}", again.digest()));
+        assert_eq!(
+            format!("{:?}", history.digest()),
+            format!("{:?}", again.digest())
+        );
     }
 }
 
