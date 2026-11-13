@@ -109,7 +109,7 @@ fn protocol_and_star_requirements_are_never_rewritten() {
         let because = match outcome {
             RewriteOutcome::Unchanged { because } => because,
             other @ RewriteOutcome::Rewritten(_) => {
-                panic!("{req} must be unchanged, got {other:?}")
+                unreachable!("{req} must be unchanged, got {other:?}")
             }
         };
         assert_eq!(
@@ -149,7 +149,7 @@ fn single_comparator_rewrites_preserve_operator_and_precision() {
         match outcome {
             RewriteOutcome::Rewritten(text) => assert_eq!(&text, expected, "req {req:?}"),
             other @ RewriteOutcome::Unchanged { .. } => {
-                panic!("{req} expected rewritten, got {other:?}")
+                unreachable!("{req} expected rewritten, got {other:?}")
             }
         }
     }
