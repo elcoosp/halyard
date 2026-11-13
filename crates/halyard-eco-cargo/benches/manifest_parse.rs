@@ -51,12 +51,13 @@ cc = "1.0"
 fn parse_pair() {
     // Bench fixture constants must parse; a failure aborts the bench
     // loudly (bench fns are not `#[test]`, so the expect/unwrap lint
-    // allowance does not reach them).
-    let root = match toml_edit::ImDocument::parse(std::hint::black_box(ROOT_MANIFEST)) {
+    // allowance does not reach them). `Document` (the span-carrying
+    // parse) replaced the deprecated `ImDocument` alias (toml_edit 0.25).
+    let root = match toml_edit::Document::parse(std::hint::black_box(ROOT_MANIFEST)) {
         Ok(doc) => doc,
         Err(e) => unreachable!("root manifest parses: {e}"),
     };
-    let member = match toml_edit::ImDocument::parse(std::hint::black_box(MEMBER_MANIFEST)) {
+    let member = match toml_edit::Document::parse(std::hint::black_box(MEMBER_MANIFEST)) {
         Ok(doc) => doc,
         Err(e) => unreachable!("member manifest parses: {e}"),
     };
