@@ -8,9 +8,9 @@
 
 use std::collections::BTreeSet;
 
-use halyard_discover::{discover_from_ctx, DiscoverInput};
+use halyard_discover::{DiscoverInput, discover_from_ctx};
 use halyard_test_support::manifest_fixtures::{
-    build_cargo_fixture, cargo_metadata_expectation, workspace_expectation, CargoWorkspaceSpec,
+    CargoWorkspaceSpec, build_cargo_fixture, cargo_metadata_expectation, workspace_expectation,
 };
 
 /// The M1.5 corpus: 25 fixture workspaces covering the §6.3 surface.
@@ -28,9 +28,18 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "simple-glob",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/alpha", "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n"),
-            ("crates/beta", "[package]\nname = \"beta\"\nversion = \"0.2.0\"\n"),
-            ("crates/gamma", "[package]\nname = \"gamma\"\nversion = \"0.3.0\"\n"),
+            (
+                "crates/alpha",
+                "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/beta",
+                "[package]\nname = \"beta\"\nversion = \"0.2.0\"\n",
+            ),
+            (
+                "crates/gamma",
+                "[package]\nname = \"gamma\"\nversion = \"0.3.0\"\n",
+            ),
         ],
     },
     // 3. Explicit members + exclude.
@@ -38,8 +47,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "explicit-and-exclude",
         root: "[workspace]\nmembers = [\"crates/keep\", \"crates/drop\"]\nexclude = [\"crates/drop\"]\n",
         members: &[
-            ("crates/keep", "[package]\nname = \"keep\"\nversion = \"0.1.0\"\n"),
-            ("crates/drop", "[package]\nname = \"drop\"\nversion = \"0.1.0\"\n"),
+            (
+                "crates/keep",
+                "[package]\nname = \"keep\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/drop",
+                "[package]\nname = \"drop\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     },
     // 4. Virtual workspace (no root [package]).
@@ -47,8 +62,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "virtual-workspace",
         root: "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"1.0.0\"\n",
         members: &[
-            ("crates/vone", "[package]\nname = \"vone\"\nversion.workspace = true\n"),
-            ("crates/vtwo", "[package]\nname = \"vtwo\"\nversion.workspace = true\n"),
+            (
+                "crates/vone",
+                "[package]\nname = \"vone\"\nversion.workspace = true\n",
+            ),
+            (
+                "crates/vtwo",
+                "[package]\nname = \"vtwo\"\nversion.workspace = true\n",
+            ),
         ],
     },
     // 5. Version inheritance through [workspace.package].
@@ -56,8 +77,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "version-inheritance",
         root: "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"2.3.4\"\n",
         members: &[
-            ("crates/inh-a", "[package]\nname = \"inh-a\"\nversion.workspace = true\n"),
-            ("crates/inh-b", "[package]\nname = \"inh-b\"\nversion.workspace = true\n"),
+            (
+                "crates/inh-a",
+                "[package]\nname = \"inh-a\"\nversion.workspace = true\n",
+            ),
+            (
+                "crates/inh-b",
+                "[package]\nname = \"inh-b\"\nversion.workspace = true\n",
+            ),
         ],
     },
     // 6. [workspace.dependencies] + member `workspace = true`.
@@ -65,8 +92,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "workspace-deps",
         root: "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.dependencies]\nwscore = { path = \"crates/wscore\", version = \"0.4.0\" }\nserde = \"1.0\"\n",
         members: &[
-            ("crates/wscore", "[package]\nname = \"wscore\"\nversion = \"0.4.0\"\n"),
-            ("crates/wuser", "[package]\nname = \"wuser\"\nversion = \"0.1.0\"\n\n[dependencies]\nwscore = { workspace = true }\nserde = { workspace = true }\n"),
+            (
+                "crates/wscore",
+                "[package]\nname = \"wscore\"\nversion = \"0.4.0\"\n",
+            ),
+            (
+                "crates/wuser",
+                "[package]\nname = \"wuser\"\nversion = \"0.1.0\"\n\n[dependencies]\nwscore = { workspace = true }\nserde = { workspace = true }\n",
+            ),
         ],
     },
     // 7. Dependency renames (`package = "…"`, inline and table forms).
@@ -74,8 +107,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "renames",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/real", "[package]\nname = \"real\"\nversion = \"0.1.0\"\n"),
-            ("crates/user", "[package]\nname = \"user\"\nversion = \"0.1.0\"\n\n[dependencies]\naliased = { package = \"real\", version = \"0.1.0\", path = \"../real\" }\n"),
+            (
+                "crates/real",
+                "[package]\nname = \"real\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/user",
+                "[package]\nname = \"user\"\nversion = \"0.1.0\"\n\n[dependencies]\naliased = { package = \"real\", version = \"0.1.0\", path = \"../real\" }\n",
+            ),
         ],
     },
     // 8. [target.'cfg(..)'.dependencies] on an internal crate.
@@ -83,8 +122,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "target-deps",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/tcore", "[package]\nname = \"tcore\"\nversion = \"0.1.0\"\n"),
-            ("crates/tuser", "[package]\nname = \"tuser\"\nversion = \"0.1.0\"\n\n[target.'cfg(unix)'.dependencies]\ntcore = { path = \"../tcore\" }\n"),
+            (
+                "crates/tcore",
+                "[package]\nname = \"tcore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/tuser",
+                "[package]\nname = \"tuser\"\nversion = \"0.1.0\"\n\n[target.'cfg(unix)'.dependencies]\ntcore = { path = \"../tcore\" }\n",
+            ),
         ],
     },
     // 9. dev-dependencies on an internal crate.
@@ -92,8 +137,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "dev-deps",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/dcore", "[package]\nname = \"dcore\"\nversion = \"0.1.0\"\n"),
-            ("crates/duser", "[package]\nname = \"duser\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\ndcore = { path = \"../dcore\" }\n"),
+            (
+                "crates/dcore",
+                "[package]\nname = \"dcore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/duser",
+                "[package]\nname = \"duser\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\ndcore = { path = \"../dcore\" }\n",
+            ),
         ],
     },
     // 10. build-dependencies on an internal crate.
@@ -101,8 +152,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "build-deps",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/bcore", "[package]\nname = \"bcore\"\nversion = \"0.1.0\"\n"),
-            ("crates/buser", "[package]\nname = \"buser\"\nversion = \"0.1.0\"\n\n[build-dependencies]\nbcore = { path = \"../bcore\" }\n"),
+            (
+                "crates/bcore",
+                "[package]\nname = \"bcore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/buser",
+                "[package]\nname = \"buser\"\nversion = \"0.1.0\"\n\n[build-dependencies]\nbcore = { path = \"../bcore\" }\n",
+            ),
         ],
     },
     // 11. Optional dependency (internal, optional = true).
@@ -110,8 +167,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "optional-dep",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/ocore", "[package]\nname = \"ocore\"\nversion = \"0.1.0\"\n"),
-            ("crates/ouser", "[package]\nname = \"ouser\"\nversion = \"0.1.0\"\n\n[dependencies]\nocore = { path = \"../ocore\", optional = true }\n"),
+            (
+                "crates/ocore",
+                "[package]\nname = \"ocore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/ouser",
+                "[package]\nname = \"ouser\"\nversion = \"0.1.0\"\n\n[dependencies]\nocore = { path = \"../ocore\", optional = true }\n",
+            ),
         ],
     },
     // 12. Features with `dep:` references over an optional dep.
@@ -119,8 +182,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "dep-features",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/fcore", "[package]\nname = \"fcore\"\nversion = \"0.1.0\"\n"),
-            ("crates/fuser", "[package]\nname = \"fuser\"\nversion = \"0.1.0\"\n\n[dependencies]\nfcore = { path = \"../fcore\", optional = true }\n\n[features]\nfull = [\"dep:fcore\"]\n"),
+            (
+                "crates/fcore",
+                "[package]\nname = \"fcore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/fuser",
+                "[package]\nname = \"fuser\"\nversion = \"0.1.0\"\n\n[dependencies]\nfcore = { path = \"../fcore\", optional = true }\n\n[features]\nfull = [\"dep:fcore\"]\n",
+            ),
         ],
     },
     // 13. publish = false member.
@@ -128,33 +197,42 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "publish-false",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/priv", "[package]\nname = \"priv\"\nversion = \"0.1.0\"\npublish = false\n"),
-            ("crates/pub", "[package]\nname = \"pub\"\nversion = \"0.1.0\"\n"),
+            (
+                "crates/priv",
+                "[package]\nname = \"priv\"\nversion = \"0.1.0\"\npublish = false\n",
+            ),
+            (
+                "crates/pub",
+                "[package]\nname = \"pub\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     },
     // 14. publish = ["custom-registry"] member.
     CargoWorkspaceSpec {
         name: "publish-registry",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
-        members: &[
-            ("crates/other-reg", "[package]\nname = \"other-reg\"\nversion = \"0.1.0\"\npublish = [\"custom-registry\"]\n"),
-        ],
+        members: &[(
+            "crates/other-reg",
+            "[package]\nname = \"other-reg\"\nversion = \"0.1.0\"\npublish = [\"custom-registry\"]\n",
+        )],
     },
     // 15. package.metadata.halyard override (tag_style).
     CargoWorkspaceSpec {
         name: "metadata-halyard",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
-        members: &[
-            ("crates/meta", "[package]\nname = \"meta\"\nversion = \"0.1.0\"\n\n[package.metadata.halyard]\ntag_style = \"v{version}\"\n"),
-        ],
+        members: &[(
+            "crates/meta",
+            "[package]\nname = \"meta\"\nversion = \"0.1.0\"\n\n[package.metadata.halyard]\ntag_style = \"v{version}\"\n",
+        )],
     },
     // 16. Nested workspace → guidance error (asserted separately).
     CargoWorkspaceSpec {
         name: "nested-workspace",
         root: "[workspace]\nmembers = [\"sub/*\"]\n",
-        members: &[
-            ("sub/inner", "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\".\"]\n"),
-        ],
+        members: &[(
+            "sub/inner",
+            "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\".\"]\n",
+        )],
     },
     // 17. Member without a version (unpublishable + warning; cargo
     // metadata reports 0.0.0).
@@ -163,24 +241,38 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
             ("crates/nover", "[package]\nname = \"nover\"\n"),
-            ("crates/withver", "[package]\nname = \"withver\"\nversion = \"0.1.0\"\n"),
+            (
+                "crates/withver",
+                "[package]\nname = \"withver\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     },
     // 18. Root package + workspace (root is a member).
     CargoWorkspaceSpec {
         name: "root-package-workspace",
         root: "[package]\nname = \"rootpkg\"\nversion = \"0.5.0\"\n\n[workspace]\nmembers = [\"crates/*\"]\n",
-        members: &[
-            ("crates/leaf", "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n\n[dependencies]\nrootpkg = { path = \"..\" }\n"),
-        ],
+        members: &[(
+            "crates/leaf",
+            "[package]\nname = \"leaf\"\nversion = \"0.1.0\"\n\n[dependencies]\nrootpkg = { path = \"../..\" }\n",
+        )],
     },
     // 19. Deep glob (`crates/**`).
     CargoWorkspaceSpec {
         name: "deep-glob",
         root: "[workspace]\nmembers = [\"crates/**\"]\n",
         members: &[
-            ("crates/level0", "[package]\nname = \"level0\"\nversion = \"0.1.0\"\n"),
-            ("crates/nested/level1", "[package]\nname = \"level1\"\nversion = \"0.1.0\"\n"),
+            (
+                "crates/level0",
+                "[package]\nname = \"level0\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/nested",
+                "[package]\nname = \"nested\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/nested/level1",
+                "[package]\nname = \"level1\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     },
     // 20. Path dependency (versionless) into the workspace.
@@ -188,8 +280,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "path-dep",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/pcore", "[package]\nname = \"pcore\"\nversion = \"0.1.0\"\n"),
-            ("crates/puser", "[package]\nname = \"puser\"\nversion = \"0.1.0\"\n\n[dependencies]\npcore = { path = \"../pcore\" }\n"),
+            (
+                "crates/pcore",
+                "[package]\nname = \"pcore\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/puser",
+                "[package]\nname = \"puser\"\nversion = \"0.1.0\"\n\n[dependencies]\npcore = { path = \"../pcore\" }\n",
+            ),
         ],
     },
     // 21. default-members present (member set still includes all).
@@ -197,8 +295,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "default-members",
         root: "[workspace]\nmembers = [\"crates/*\"]\ndefault-members = [\"crates/one\"]\n",
         members: &[
-            ("crates/one", "[package]\nname = \"one\"\nversion = \"0.1.0\"\n"),
-            ("crates/two", "[package]\nname = \"two\"\nversion = \"0.1.0\"\n"),
+            (
+                "crates/one",
+                "[package]\nname = \"one\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/two",
+                "[package]\nname = \"two\"\nversion = \"0.1.0\"\n",
+            ),
         ],
     },
     // 22. Mixed inheritance: one inherited, one local version.
@@ -206,17 +310,24 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "mixed-inheritance",
         root: "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"3.1.4\"\n",
         members: &[
-            ("crates/inherited", "[package]\nname = \"inherited\"\nversion.workspace = true\n"),
-            ("crates/local", "[package]\nname = \"local\"\nversion = \"9.9.9\"\n"),
+            (
+                "crates/inherited",
+                "[package]\nname = \"inherited\"\nversion.workspace = true\n",
+            ),
+            (
+                "crates/local",
+                "[package]\nname = \"local\"\nversion = \"9.9.9\"\n",
+            ),
         ],
     },
     // 23. External registry deps only (no internal edges).
     CargoWorkspaceSpec {
         name: "external-deps",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
-        members: &[
-            ("crates/ext", "[package]\nname = \"ext\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1.0\"\nlibc = { version = \"0.2\", optional = true }\n"),
-        ],
+        members: &[(
+            "crates/ext",
+            "[package]\nname = \"ext\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1.0\"\nlibc = { version = \"0.2\", optional = true }\n",
+        )],
     },
     // 24. Dev-cycle: a dev-depends on b while b depends on a (legal in
     // cargo; §6.6 exemption).
@@ -224,8 +335,14 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "dev-cycle",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/cyc-a", "[package]\nname = \"cyc-a\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\ncyc-b = { path = \"../cyc-b\" }\n"),
-            ("crates/cyc-b", "[package]\nname = \"cyc-b\"\nversion = \"0.1.0\"\n\n[dependencies]\ncyc-a = { path = \"../cyc-a\" }\n"),
+            (
+                "crates/cyc-a",
+                "[package]\nname = \"cyc-a\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\ncyc-b = { path = \"../cyc-b\" }\n",
+            ),
+            (
+                "crates/cyc-b",
+                "[package]\nname = \"cyc-b\"\nversion = \"0.1.0\"\n\n[dependencies]\ncyc-a = { path = \"../cyc-a\" }\n",
+            ),
         ],
     },
     // 25. Five-crate glob: deterministic ordering + versions.
@@ -233,11 +350,26 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
         name: "glob-five",
         root: "[workspace]\nmembers = [\"crates/*\"]\n",
         members: &[
-            ("crates/e1", "[package]\nname = \"e1\"\nversion = \"1.0.0\"\n"),
-            ("crates/e2", "[package]\nname = \"e2\"\nversion = \"2.0.0\"\n"),
-            ("crates/e3", "[package]\nname = \"e3\"\nversion = \"3.0.0\"\n"),
-            ("crates/e4", "[package]\nname = \"e4\"\nversion = \"4.0.0\"\n"),
-            ("crates/e5", "[package]\nname = \"e5\"\nversion = \"5.0.0\"\n"),
+            (
+                "crates/e1",
+                "[package]\nname = \"e1\"\nversion = \"1.0.0\"\n",
+            ),
+            (
+                "crates/e2",
+                "[package]\nname = \"e2\"\nversion = \"2.0.0\"\n",
+            ),
+            (
+                "crates/e3",
+                "[package]\nname = \"e3\"\nversion = \"3.0.0\"\n",
+            ),
+            (
+                "crates/e4",
+                "[package]\nname = \"e4\"\nversion = \"4.0.0\"\n",
+            ),
+            (
+                "crates/e5",
+                "[package]\nname = \"e5\"\nversion = \"5.0.0\"\n",
+            ),
         ],
     },
 ];
@@ -245,11 +377,11 @@ static CARGO_FIXTURES: &[CargoWorkspaceSpec] = &[
 /// Runs discovery on a materialized fixture and compares with `cargo
 /// metadata`. Returns the discovery result for extra assertions.
 fn differential(spec: &CargoWorkspaceSpec) -> halyard_discover::Discovery {
-    let fixture = build_cargo_fixture(spec).expect("fixture builds");
+    let fixture = build_cargo_fixture(spec).unwrap_or_else(|e| unreachable!("fixture builds: {e}"));
     let discovery = halyard_discover::discover_repo(fixture.root(), &DiscoverInput::default())
-        .unwrap_or_else(|e| panic!("{}: discovery failed: {e}", spec.name));
+        .unwrap_or_else(|e| unreachable!("{}: discovery failed: {e}", spec.name));
     let expected = cargo_metadata_expectation(fixture.root())
-        .unwrap_or_else(|e| panic!("{}: cargo metadata failed: {e}", spec.name));
+        .unwrap_or_else(|e| unreachable!("{}: cargo metadata failed: {e}", spec.name));
     let ours = workspace_expectation(&discovery.workspace);
     assert_eq!(
         ours.members, expected.members,
@@ -264,29 +396,37 @@ fn differential(spec: &CargoWorkspaceSpec) -> halyard_discover::Discovery {
     discovery
 }
 
+/// One fixture from the table (`unreachable!` keeps the
+/// `indexing_slicing` lint intact in the test harness too).
+fn fixture(index: usize) -> &'static CargoWorkspaceSpec {
+    CARGO_FIXTURES
+        .get(index)
+        .unwrap_or_else(|| unreachable!("fixture index {index}"))
+}
+
 #[test]
 fn differential_01_single_pkg() {
-    differential(&CARGO_FIXTURES[0]);
+    differential(fixture(0));
 }
 
 #[test]
 fn differential_02_simple_glob() {
-    differential(&CARGO_FIXTURES[1]);
+    differential(fixture(1));
 }
 
 #[test]
 fn differential_03_explicit_and_exclude() {
-    differential(&CARGO_FIXTURES[2]);
+    differential(fixture(2));
 }
 
 #[test]
 fn differential_04_virtual_workspace() {
-    differential(&CARGO_FIXTURES[3]);
+    differential(fixture(3));
 }
 
 #[test]
 fn differential_05_version_inheritance() {
-    let discovery = differential(&CARGO_FIXTURES[4]);
+    let discovery = differential(fixture(4));
     for pkg in discovery.workspace.packages() {
         assert!(matches!(
             pkg.version_source,
@@ -297,51 +437,52 @@ fn differential_05_version_inheritance() {
 
 #[test]
 fn differential_06_workspace_deps() {
-    differential(&CARGO_FIXTURES[5]);
+    differential(fixture(5));
 }
 
 #[test]
 fn differential_07_renames() {
-    differential(&CARGO_FIXTURES[6]);
+    differential(fixture(6));
 }
 
 #[test]
 fn differential_08_target_deps() {
-    differential(&CARGO_FIXTURES[7]);
+    differential(fixture(7));
 }
 
 #[test]
 fn differential_09_dev_deps() {
-    differential(&CARGO_FIXTURES[8]);
+    differential(fixture(8));
 }
 
 #[test]
 fn differential_10_build_deps() {
-    differential(&CARGO_FIXTURES[9]);
+    differential(fixture(9));
 }
 
 #[test]
 fn differential_11_optional_dep() {
-    let discovery = differential(&CARGO_FIXTURES[10]);
+    let discovery = differential(fixture(10));
     let user = discovery
         .workspace
         .find_by_name("ouser")
         .and_then(|id| discovery.workspace.package(id))
         .expect("ouser");
-    assert!(user
-        .deps
-        .iter()
-        .any(|d| matches!(d.kind, halyard_core::package::DepKind::Optional)));
+    assert!(
+        user.deps
+            .iter()
+            .any(|d| matches!(d.kind, halyard_core::package::DepKind::Optional))
+    );
 }
 
 #[test]
 fn differential_12_dep_features() {
-    differential(&CARGO_FIXTURES[11]);
+    differential(fixture(11));
 }
 
 #[test]
 fn differential_13_publish_false() {
-    let discovery = differential(&CARGO_FIXTURES[12]);
+    let discovery = differential(fixture(12));
     let priv_pkg = discovery
         .workspace
         .find_by_name("priv")
@@ -358,32 +499,35 @@ fn differential_13_publish_false() {
 
 #[test]
 fn differential_14_publish_registry() {
-    differential(&CARGO_FIXTURES[13]);
+    differential(fixture(13));
 }
 
 #[test]
 fn differential_15_metadata_halyard() {
-    let discovery = differential(&CARGO_FIXTURES[14]);
+    let discovery = differential(fixture(14));
     let meta = discovery
         .workspace
         .find_by_name("meta")
         .and_then(|id| discovery.workspace.package(id))
-        .expect("meta");
+        .unwrap_or_else(|| unreachable!("meta"));
     assert_eq!(meta.tag_template.as_str(), "v{version}");
 }
 
 #[test]
 fn differential_16_nested_workspace_errors_with_guidance() {
-    let fixture = build_cargo_fixture(&CARGO_FIXTURES[15]).expect("fixture builds");
-    let err = halyard_discover::discover_repo(fixture.root(), &DiscoverInput::default())
-        .expect_err("nested workspace must error");
+    let fixture =
+        build_cargo_fixture(fixture(15)).unwrap_or_else(|e| unreachable!("fixture builds: {e}"));
+    let Err(err) = halyard_discover::discover_repo(fixture.root(), &DiscoverInput::default())
+    else {
+        unreachable!("nested workspace must error");
+    };
     assert_eq!(err.code(), "E-DISC-NESTED-WS");
     assert!(err.to_string().contains("split the repo"));
 }
 
 #[test]
 fn differential_17_member_no_version_warns_and_unpublishable() {
-    let discovery = differential(&CARGO_FIXTURES[16]);
+    let discovery = differential(fixture(16));
     let nover = discovery
         .workspace
         .find_by_name("nover")
@@ -391,82 +535,88 @@ fn differential_17_member_no_version_warns_and_unpublishable() {
         .expect("nover");
     assert!(nover.version.is_none());
     assert!(!nover.publishable);
-    assert!(discovery
-        .warnings
-        .iter()
-        .any(|w| w.code == "no-version" && w.subject == "nover"));
+    assert!(
+        discovery
+            .warnings
+            .iter()
+            .any(|w| w.code == "no-version" && w.subject == "nover")
+    );
 }
 
 #[test]
 fn differential_18_root_package_is_member() {
-    let discovery = differential(&CARGO_FIXTURES[17]);
+    let discovery = differential(fixture(17));
     assert!(discovery.workspace.find_by_name("rootpkg").is_some());
     assert!(discovery.workspace.find_by_name("leaf").is_some());
 }
 
 #[test]
 fn differential_19_deep_glob() {
-    differential(&CARGO_FIXTURES[18]);
+    differential(fixture(18));
 }
 
 #[test]
 fn differential_20_path_dep() {
-    differential(&CARGO_FIXTURES[19]);
+    differential(fixture(19));
 }
 
 #[test]
 fn differential_21_default_members_still_full_set() {
-    differential(&CARGO_FIXTURES[20]);
+    differential(fixture(20));
 }
 
 #[test]
 fn differential_22_mixed_inheritance() {
-    let discovery = differential(&CARGO_FIXTURES[21]);
+    let discovery = differential(fixture(21));
     let inherited = discovery
         .workspace
         .find_by_name("inherited")
         .and_then(|id| discovery.workspace.package(id))
-        .expect("inherited");
+        .unwrap_or_else(|| unreachable!("inherited"));
     assert_eq!(
-        inherited.version.as_ref().map(|v| v.to_string()).as_deref(),
+        inherited
+            .version
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
         Some("3.1.4")
     );
     let local = discovery
         .workspace
         .find_by_name("local")
         .and_then(|id| discovery.workspace.package(id))
-        .expect("local");
+        .unwrap_or_else(|| unreachable!("local"));
     assert_eq!(
-        local.version.as_ref().map(|v| v.to_string()).as_deref(),
+        local.version.as_ref().map(ToString::to_string).as_deref(),
         Some("9.9.9")
     );
 }
 
 #[test]
 fn differential_23_external_deps_have_no_internal_edges() {
-    let discovery = differential(&CARGO_FIXTURES[22]);
+    let discovery = differential(fixture(22));
     let ext = discovery
         .workspace
         .find_by_name("ext")
         .and_then(|id| discovery.workspace.package(id))
-        .expect("ext");
+        .unwrap_or_else(|| unreachable!("ext"));
     assert!(ext.deps.is_empty(), "external deps stay external");
 }
 
 #[test]
 fn differential_24_dev_cycle_discovers_and_groups() {
-    let discovery = differential(&CARGO_FIXTURES[23]);
+    let discovery = differential(fixture(23));
     let sccs = discovery.graph.sccs();
     assert_eq!(sccs.len(), 1, "dev cycle is one SCC");
-    assert_eq!(sccs[0].len(), 2);
+    assert_eq!(sccs.first().map_or(0, Vec::len), 2);
     // Topo must NOT fail: the cycle is dev-only (§6.6).
     assert!(discovery.graph.topo_order().is_ok());
 }
 
 #[test]
 fn differential_25_glob_five_deterministic() {
-    let first = differential(&CARGO_FIXTURES[24]);
-    let second = differential(&CARGO_FIXTURES[24]);
+    let first = differential(fixture(24));
+    let second = differential(fixture(24));
     let dump_a = workspace_dump(&first.workspace);
     let dump_b = workspace_dump(&second.workspace);
     assert_eq!(dump_a, dump_b, "identical fixtures -> identical dumps (I3)");
@@ -482,15 +632,17 @@ fn workspace_dump(ws: &halyard_core::package::Workspace) -> String {
             .deps
             .iter()
             .filter_map(|d| {
-                ws.package(d.to).and_then(|t| interner.get(t.name)).map(|n| {
-                    format!("{n}({:?})", d.kind)
-                })
+                ws.package(d.to)
+                    .and_then(|t| interner.get(t.name))
+                    .map(|n| format!("{n}({:?})", d.kind))
             })
             .collect();
         rows.push(format!(
             "{name}|{}|{}|{}|{}",
             pkg.root.as_str(),
-            pkg.version.as_ref().map_or("none".into(), |v| v.to_string()),
+            pkg.version
+                .as_ref()
+                .map_or("none".to_owned(), ToString::to_string),
             pkg.publishable,
             deps.join(",")
         ));
@@ -502,14 +654,12 @@ fn workspace_dump(ws: &halyard_core::package::Workspace) -> String {
 fn determinism_shuffled_insertion_order_is_identical() {
     // Discovery input order (BTreeMap) never leaks into the output: build
     // the ctx from the same file set in two orders and compare dumps.
-    let spec = &CARGO_FIXTURES[24];
-    let _fixture = build_cargo_fixture(spec).expect("fixture");
+    let spec = fixture(24);
+    let _fixture = build_cargo_fixture(spec).unwrap_or_else(|e| unreachable!("fixture: {e}"));
     let mut ctx_a = halyard_core::discover::DiscoverCtx::new();
     let mut ctx_b = halyard_core::discover::DiscoverCtx::new();
-    let mut files: Vec<(String, Vec<u8>)> = vec![(
-        "Cargo.toml".to_owned(),
-        spec.root.as_bytes().to_vec(),
-    )];
+    let mut files: Vec<(String, Vec<u8>)> =
+        vec![("Cargo.toml".to_owned(), spec.root.as_bytes().to_vec())];
     for (dir, manifest) in spec.members {
         files.push((format!("{dir}/Cargo.toml"), manifest.as_bytes().to_vec()));
     }
