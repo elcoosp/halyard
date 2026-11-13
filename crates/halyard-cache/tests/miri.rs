@@ -40,9 +40,15 @@ fn miri_full_lifecycle_roundtrip() {
     let dir = tempfile::tempdir().expect("tempdir");
     let git = dir.path().join("git");
     std::fs::create_dir_all(&git).expect("mkdir");
-    let key = CacheKey::compute(b"bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222", "blake3:layout", "blake3:cfg");
+    let key = CacheKey::compute(
+        b"bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",
+        "blake3:layout",
+        "blake3:cfg",
+    );
     let mut cache = Cache::open(&git).expect("open");
-    cache.insert(key.clone(), record(&[0, 64, 129])).expect("insert");
+    cache
+        .insert(key.clone(), record(&[0, 64, 129]))
+        .expect("insert");
     cache.flush().expect("flush");
     drop(cache);
     let reopened = Cache::open(&git).expect("reopen");
@@ -62,8 +68,9 @@ fn miri_torn_tail_skip() {
     let mut cache = Cache::open(&git).expect("open");
     for (n, key) in keys.iter().enumerate() {
         let torn = n == 2;
+        let pkg = u32::try_from(n).unwrap_or(u32::MAX);
         cache
-            .insert_with_failpoint(key.clone(), record(&[u32::from(n)]), &|_| torn)
+            .insert_with_failpoint(key.clone(), record(&[pkg]), &|_| torn)
             .expect("insert");
         if torn {
             break;
@@ -72,8 +79,8 @@ fn miri_torn_tail_skip() {
     drop(cache);
     let reopened = Cache::open(&git).expect("reopen skips torn tail");
     assert_eq!(reopened.len(), 2);
-    assert!(reopened.get(&keys[0]).is_some());
-    assert!(reopened.get(&keys[2]).is_none());
+    assert!(reopened.get(keys.first().expect("three keys")).is_some());
+    assert!(reopened.get(keys.get(2).expect("three keys")).is_none());
 }
 
 #[test]
@@ -83,7 +90,7 @@ fn miri_record_bytes_stay_in_bounds() {
     let rec = record(&[0, 7, 200]);
     let encoded = rec.encode();
     for cut in 0..encoded.len() {
-        let _ = CacheRecord::decode(&encoded[..cut]);
+        let _ = CacheRecord::decode(encoded.get(..cut).unwrap_or(&[]));
     }
     let mut overflow = encoded.clone();
     overflow.push(0xFF);
