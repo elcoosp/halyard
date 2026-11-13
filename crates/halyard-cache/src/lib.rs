@@ -32,8 +32,11 @@
 //! payload is a [`SmallBitset`]); it is consumed by `halyard-git` *before*
 //! the [`Snapshot`](halyard_core::planner::Snapshot) is constructed and
 //! must never leak into `halyard-core` (planner purity, §4/I6).
-
-#![deny(unsafe_code)]
+//!
+//! The crate-level `unsafe_code` permission lives in `Cargo.toml`
+//! (`[lints.rust] unsafe_code = "allow"`, invariant I10) — the source
+//! carries no allow attributes; the `unsafe` surface is confined to the
+//! [`mmap`] module with its own SAFETY rationale.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -91,7 +94,14 @@ impl CacheKey {
     /// Lowercase hex rendering (diagnostics, `examples/dump.rs`).
     #[must_use]
     pub fn to_hex(&self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(KEY_LEN * 2);
+        for b in &self.0 {
+            // `write!` to a `String` cannot fail; the `let _` keeps the
+            // house no-`expect` rule.
+            let _ = write!(out, "{b:02x}");
+        }
+        out
     }
 }
 
@@ -114,24 +124,26 @@ pub struct CacheRecord {
 }
 
 impl CacheRecord {
-    /// Deterministic little-endian serialization (I3: bytes are part of
-    /// the roundtrip determinism test).
-    fn encode(&self) -> Vec<u8> {
+    /// Deterministic little-endian serialization of the record payload
+    /// (I3: bytes are part of the roundtrip determinism test). Public so
+    /// the `dump` example and the corruption/miri suites exercise the
+    /// exact on-disk payload bytes; the framing (length + CRC + key)
+    /// around the payload stays private.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
         let words: Vec<u64> = if self.touched.is_empty() {
             Vec::new()
         } else {
-            self.touched
-                .iter()
-                .fold(Vec::new(), |mut acc, pkg| {
-                    let idx = pkg.to_u32() as usize / 64;
-                    if acc.len() <= idx {
-                        acc.resize(idx + 1, 0);
-                    }
-                    if let Some(word) = acc.get_mut(idx) {
-                        *word |= 1u64 << (pkg.to_u32() % 64);
-                    }
-                    acc
-                })
+            self.touched.iter().fold(Vec::new(), |mut acc, pkg| {
+                let idx = pkg.to_u32() as usize / 64;
+                if acc.len() <= idx {
+                    acc.resize(idx + 1, 0);
+                }
+                if let Some(word) = acc.get_mut(idx) {
+                    *word |= 1u64 << (pkg.to_u32() % 64);
+                }
+                acc
+            })
         };
         let mut out = Vec::with_capacity(4 + words.len() * 8 + 8);
         out.extend_from_slice(&u32::try_from(words.len()).unwrap_or(u32::MAX).to_le_bytes());
@@ -144,33 +156,37 @@ impl CacheRecord {
     }
 
     /// Decodes a payload; `None` when the bytes are malformed (the scan
-    /// treats this like a checksum failure and skips the record).
-    fn decode(payload: &[u8]) -> Option<Self> {
-        let words_len = u32::from_le_bytes(
-            payload.first_chunk::<4>()?.to_owned().try_into().ok()?,
-        ) as usize;
-        if payload.len() < 4 + words_len * 8 + 8 {
+    /// treats this like a checksum failure and skips the record). Public
+    /// for the same hostile-input suites as [`CacheRecord::encode`].
+    #[must_use]
+    pub fn decode(payload: &[u8]) -> Option<Self> {
+        let words_len = u32::from_le_bytes(*payload.first_chunk::<4>()?);
+        // `words_len` is hostile input: the capacity arithmetic runs in
+        // `u64` so no target can overflow before the bounds check
+        // rejects an over-long claim.
+        let words_bytes = u64::from(words_len) * 8;
+        if u64::try_from(payload.len()).unwrap_or(u64::MAX) < 4u64 + words_bytes + 8 {
             return None;
         }
+        // Guarded above: the words and trailing offsets fit `usize`.
+        let words_len = usize::try_from(words_len).unwrap_or(usize::MAX);
         let mut touched = SmallBitset::new();
         for i in 0..words_len {
             let start = 4 + i * 8;
-            let word = u64::from_le_bytes(
-                payload
-                    .get(start..start + 8)?
-                    .try_into()
-                    .ok()?,
-            );
+            let word = u64::from_le_bytes(payload.get(start..start + 8)?.try_into().ok()?);
             for bit in 0..64u32 {
                 if word & (1u64 << bit) != 0 {
-                    touched.set(halyard_core::PkgId::new(i as u32 * 64 + bit));
+                    // Saturating instead of `as`: a payload large enough
+                    // to overflow the PkgId arithmetic is malformed by
+                    // any sane measure; `None` skips the record.
+                    let pkg = u32::try_from(i).ok()?.checked_mul(64)?.checked_add(bit)?;
+                    touched.set(halyard_core::PkgId::new(pkg));
                 }
             }
         }
         let tail = payload.get(4 + words_len * 8..)?;
-        let subject_end = u32::from_le_bytes(tail.first_chunk::<4>()?.to_owned().try_into().ok()?);
-        let body_start =
-            u32::from_le_bytes(tail.get(4..8)?.try_into().ok()?);
+        let subject_end = u32::from_le_bytes(*tail.first_chunk::<4>()?);
+        let body_start = u32::from_le_bytes(tail.get(4..8)?.try_into().ok()?);
         Some(Self {
             touched,
             subject_end,
@@ -397,11 +413,8 @@ impl Cache {
                     operation: "scan record header".to_owned(),
                     message: e.to_string(),
                 })?;
-            let payload_len = u32::from_le_bytes(
-                header
-                    .first_chunk::<4>()
-                    .map_or([0u8; 4], |s| *s),
-            );
+            let payload_len =
+                u32::from_le_bytes(header.first_chunk::<4>().map_or([0u8; 4], |s| *s));
             let stored_crc = u32::from_le_bytes(
                 header
                     .get(4..8)
@@ -440,12 +453,9 @@ impl Cache {
             // Duplicate keys keep the FIRST (oldest) record so a re-run's
             // outcome is stable (I3); the later record is skipped from the
             // index but the chain still advances.
-            if !self.index.contains_key(&cache_key) {
-                self.index.insert(
-                    cache_key,
-                    (cursor, u32::try_from(record_len).unwrap_or(u32::MAX)),
-                );
-            }
+            self.index
+                .entry(cache_key)
+                .or_insert((cursor, u32::try_from(record_len).unwrap_or(u32::MAX)));
             cursor += record_len as u64;
         }
         self.valid_len = cursor.max(HEADER_LEN as u64);
@@ -488,7 +498,9 @@ impl Cache {
         if version != FORMAT_VERSION {
             return Err(CacheError::Header {
                 path: path.display().to_string(),
-                reason: format!("unknown format version {version} (this build reads {FORMAT_VERSION})"),
+                reason: format!(
+                    "unknown format version {version} (this build reads {FORMAT_VERSION})"
+                ),
             });
         }
         let crc = u32::from_le_bytes(
@@ -522,7 +534,8 @@ impl Cache {
     /// [`flush`]; a torn header fails [`Cache::open`] with
     /// [`CacheError::Header`], which the user remediates by deleting —
     /// the cache is always safe to delete, §8.7).
-    fn write_header(&mut self, hits: u64, misses: u64) -> Result<(), CacheError> {        let mut header = Vec::with_capacity(HEADER_LEN);
+    fn write_header(&mut self, hits: u64, misses: u64) -> Result<(), CacheError> {
+        let mut header = Vec::with_capacity(HEADER_LEN);
         header.extend_from_slice(MAGIC);
         header.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
         header.extend_from_slice(&hits.to_le_bytes());
@@ -546,31 +559,27 @@ impl Cache {
     /// (Re)maps the file for reads. Falls back to a plain `read()`-backed
     /// buffer when mmap is unavailable (empty file, Miri isolation).
     fn refresh_mapping(&mut self) {
-        let size = self
-            .file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = self.file.metadata().map_or(0, |m| m.len());
         if size == 0 {
             self.map = None;
             self.shadow.clear();
             return;
         }
-        match Mmap::open(&self.file, size) {
-            Some(map) => {
-                self.map = Some(map);
-                self.shadow.clear();
+        if let Some(map) = Mmap::open(&self.file, size) {
+            self.map = Some(map);
+            self.shadow.clear();
+        } else {
+            self.map = None;
+            // `unwrap_or(0)`: a size that does not fit `usize` (32-bit
+            // target, huge file) simply skips the pre-allocation; the
+            // read below still reports what it can.
+            let mut shadow = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+            let mut file = self.file.try_clone().ok();
+            if let Some(f) = file.as_mut() {
+                let _ = f.seek(SeekFrom::Start(0));
+                let _ = f.read_to_end(&mut shadow);
             }
-            None => {
-                self.map = None;
-                let mut shadow = Vec::with_capacity(size as usize);
-                let mut file = self.file.try_clone().ok();
-                if let Some(f) = file.as_mut() {
-                    let _ = f.seek(SeekFrom::Start(0));
-                    let _ = f.read_to_end(&mut shadow);
-                }
-                self.shadow = shadow;
-            }
+            self.shadow = shadow;
         }
     }
 
@@ -589,8 +598,10 @@ impl Cache {
     pub fn get(&self, key: &CacheKey) -> Option<CacheRecord> {
         let found = match self.index.get(key) {
             Some((offset, record_len)) => {
-                let start = *offset as usize;
-                let end = start.checked_add(*record_len as usize)?;
+                // `usize::MAX` sentinel: the `checked_add`/bounds check
+                // below rejects it as a miss (never a truncation).
+                let start = usize::try_from(*offset).unwrap_or(usize::MAX);
+                let end = start.checked_add(usize::try_from(*record_len).unwrap_or(usize::MAX))?;
                 let bytes = self.bytes();
                 if end > bytes.len() {
                     return None;
@@ -649,26 +660,36 @@ impl Cache {
     ) -> Result<(), CacheError> {
         let nth = self.index.len();
         let payload = rec.encode();
+        // The owned record's bytes are fully materialized below; release
+        // the in-memory copy before entering the lock section (its
+        // `SmallBitset` may own a heap allocation).
+        drop(rec);
         let mut record = Vec::with_capacity(8 + KEY_LEN + payload.len());
-        record.extend_from_slice(&u32::try_from(payload.len()).unwrap_or(u32::MAX).to_le_bytes());
+        record.extend_from_slice(
+            &u32::try_from(payload.len())
+                .unwrap_or(u32::MAX)
+                .to_le_bytes(),
+        );
         record.extend_from_slice(&[0u8; 4]); // crc placeholder
         record.extend_from_slice(&key.0);
         record.extend_from_slice(&payload);
-        let crc = crc32(&record[8..]);
+        let crc = crc32(record.get(8..).unwrap_or(&[]));
         if let Some(slot) = record.get_mut(4..8) {
             slot.copy_from_slice(&crc.to_le_bytes());
         }
         let torn = failpoint(nth);
-        let cut = if torn {
-            record.len() / 2
-        } else {
-            record.len()
-        };
+        let cut = if torn { record.len() / 2 } else { record.len() };
         let offset = self.valid_len;
         // Exclusive lock for the append; released before returning (per-op
         // locking, see [`Cache::open`]).
         acquire_lock(&self.file, &self.path())?;
-        let outcome = self.write_record(offset, &record[..cut], record.len(), key, torn);
+        let outcome = self.write_record(
+            offset,
+            record.get(..cut).unwrap_or(&[]),
+            record.len(),
+            key,
+            torn,
+        );
         release_lock(&self.file, &self.path());
         outcome?;
         self.refresh_mapping();
@@ -724,10 +745,12 @@ impl Cache {
 
     /// The flush body under the held exclusive lock.
     fn flush_locked(&mut self) -> Result<(), CacheError> {
-        self.file.set_len(self.valid_len).map_err(|e| CacheError::Io {
-            operation: "truncate tail".to_owned(),
-            message: e.to_string(),
-        })?;
+        self.file
+            .set_len(self.valid_len)
+            .map_err(|e| CacheError::Io {
+                operation: "truncate tail".to_owned(),
+                message: e.to_string(),
+            })?;
         self.write_header(self.hits.get(), self.misses.get())?;
         self.file
             .seek(SeekFrom::Start(self.valid_len))
@@ -776,6 +799,11 @@ impl std::fmt::Debug for Cache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Cache")
             .field("dir", &self.dir)
+            .field("file", &self.file)
+            .field("map", &self.map)
+            // The shadow buffer is rendered as its byte length, never as
+            // bytes (it mirrors the whole file).
+            .field("shadow", &self.shadow.len())
             .field("valid_len", &self.valid_len)
             .field("records", &self.index.len())
             .field("hits", &self.hits.get())
@@ -864,11 +892,7 @@ mod tests {
 
     #[test]
     fn record_roundtrips_words_and_offsets() {
-        for pkgs in [
-            vec![],
-            vec![0, 1, 63, 64, 127, 128, 200],
-            vec![500],
-        ] {
+        for pkgs in [vec![], vec![0, 1, 63, 64, 127, 128, 200], vec![500]] {
             let rec = record(&pkgs);
             let decoded = CacheRecord::decode(&rec.encode()).expect("decodes");
             assert_eq!(decoded.touched, rec.touched);
@@ -885,10 +909,25 @@ mod tests {
 
     #[test]
     fn key_is_stable_across_orderings() {
-        let a = CacheKey::compute(b"9f32036f7215bb0fb590f120442648feca5a6104", "blake3:aa", "blake3:bb");
-        let b = CacheKey::compute(b"9f32036f7215bb0fb590f120442648feca5a6104", "blake3:aa", "blake3:bb");
+        let a = CacheKey::compute(
+            b"9f32036f7215bb0fb590f120442648feca5a6104",
+            "blake3:aa",
+            "blake3:bb",
+        );
+        let b = CacheKey::compute(
+            b"9f32036f7215bb0fb590f120442648feca5a6104",
+            "blake3:aa",
+            "blake3:bb",
+        );
         assert_eq!(a, b);
-        assert_ne!(a, CacheKey::compute(b"9f32036f7215bb0fb590f120442648feca5a6104", "blake3:aa", "blake3:bc"));
+        assert_ne!(
+            a,
+            CacheKey::compute(
+                b"9f32036f7215bb0fb590f120442648feca5a6104",
+                "blake3:aa",
+                "blake3:bc"
+            )
+        );
         assert_eq!(a.as_bytes().len(), 32);
     }
 }
