@@ -216,6 +216,13 @@ impl<'r> Generations<'r> {
         self.graph.is_some()
     }
 
+    /// The commit's position in the commit-graph file (`None` without a
+    /// graph or for commits outside it) — the index the changed-path
+    /// Bloom filters (§8.4 step 4) are keyed by.
+    pub fn position(&self, oid: ObjectId) -> Option<usize> {
+        self.graph.as_ref()?.lookup(&oid).map(|pos| pos.0 as usize)
+    }
+
     /// Generation **and** committer timestamp in one lookup: the
     /// commit-graph stores both (§8.3 heap key without any object read);
     /// the DFS path falls back to an ODB read for the time.
