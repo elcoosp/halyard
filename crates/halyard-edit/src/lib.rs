@@ -13,7 +13,8 @@
 //! local `apply` flow: a [`halyard_core::plan::Plan`]'s edits convert
 //! into an [`EditSet`] ([`edit_set_from_plan`], [`dry_run_preview`] for
 //! `--dry`), route through the ecosystem adapters' semantic patchers
-//! (§7.3 `edit_versions`), and land with the same atomic protocol.
+//! (§7.3 `edit_versions`) and the M3.2 lockfile stage (`patch_lockfile`,
+//! §9.2), and land with the same atomic protocol.
 //!
 //! This crate is an effectful shell component (it touches the
 //! filesystem); the pure core never depends on it.
@@ -29,5 +30,6 @@ pub use apply::{EditSet, LineEndings, Patch, apply, detect_line_endings, verify_
 pub use atomic::{apply_to_file, apply_to_file_verified, atomic_write};
 pub use error::EditError;
 pub use plan_apply::{
-    ApplyReport, DryPatch, FileSummary, apply_plan, dry_run_preview, edit_set_from_plan,
+    ApplyReport, DryPatch, FileSummary, LockfileSummary, apply_plan, dry_run_preview,
+    edit_set_from_plan,
 };
