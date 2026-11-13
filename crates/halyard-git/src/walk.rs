@@ -28,7 +28,7 @@ use std::collections::{BinaryHeap, HashMap};
 use gix::hash::ObjectId;
 use halyard_core::{PkgId, SmallBitset};
 
-use crate::{map_git_err, refs::Generations, GitError};
+use crate::{GitError, map_git_err, refs::Generations};
 
 /// One emitted commit: it is NEW for every package in `new_for` (not
 /// reachable from that package's base). The tree-diff stage (M2.3)
@@ -110,7 +110,7 @@ struct WalkState<'r, 'g> {
     stale_count: usize,
 }
 
-impl<'r> WalkState<'r, '_> {
+impl WalkState<'_, '_> {
     /// Heap key for one commit: generation + timestamp, graph-first.
     ///
     /// # Errors
@@ -135,35 +135,32 @@ impl<'r> WalkState<'r, '_> {
     /// [`GitError::Object`] when the commit's generation or time cannot
     /// be read.
     fn push(&mut self, oid: ObjectId, bits: &SmallBitset) -> Result<u8, GitError> {
-        match self.flags.get_mut(&oid) {
-            Some(existing) => {
-                let was_stale = is_stale(existing, &self.all_based);
-                existing.union_with(bits);
-                let is_now_stale = is_stale(existing, &self.all_based);
-                if is_now_stale == was_stale {
-                    // Flags may have grown without crossing the
-                    // staleness threshold; the entry is already queued
-                    // (or was popped with its final flags).
-                    return Ok(0);
-                }
-                let (generation, time) = self.entry(oid)?;
-                self.heap.push(HeapEntry {
-                    generation,
-                    time,
-                    oid,
-                });
-                Ok(u8::from(is_now_stale) - u8::from(was_stale))
+        if let Some(existing) = self.flags.get_mut(&oid) {
+            let was_stale = is_stale(existing, &self.all_based);
+            existing.union_with(bits);
+            let is_now_stale = is_stale(existing, &self.all_based);
+            if is_now_stale == was_stale {
+                // Flags may have grown without crossing the
+                // staleness threshold; the entry is already queued
+                // (or was popped with its final flags).
+                return Ok(0);
             }
-            None => {
-                self.flags.insert(oid, bits.clone());
-                let (generation, time) = self.entry(oid)?;
-                self.heap.push(HeapEntry {
-                    generation,
-                    time,
-                    oid,
-                });
-                Ok(u8::from(is_stale(bits, &self.all_based)))
-            }
+            let (generation, time) = self.entry(oid)?;
+            self.heap.push(HeapEntry {
+                generation,
+                time,
+                oid,
+            });
+            Ok(u8::from(is_now_stale) - u8::from(was_stale))
+        } else {
+            self.flags.insert(oid, bits.clone());
+            let (generation, time) = self.entry(oid)?;
+            self.heap.push(HeapEntry {
+                generation,
+                time,
+                oid,
+            });
+            Ok(u8::from(is_stale(bits, &self.all_based)))
         }
     }
 }
@@ -214,11 +211,9 @@ pub fn paint<'r>(
     let mut all_based = SmallBitset::new();
     for (i, base) in bases.iter().enumerate() {
         if let Some(oid) = base {
-            all_based.set(PkgId::new(i as u32));
-            base_bits
-                .entry(*oid)
-                .or_default()
-                .set(PkgId::new(i as u32));
+            let id = PkgId::new(u32::try_from(i).unwrap_or(u32::MAX));
+            all_based.set(id);
+            base_bits.entry(*oid).or_default().set(id);
         }
     }
 
@@ -231,7 +226,7 @@ pub fn paint<'r>(
         all_packages: {
             let mut all = SmallBitset::new();
             for i in 0..package_count {
-                all.set(PkgId::new(i as u32));
+                all.set(PkgId::new(u32::try_from(i).unwrap_or(u32::MAX)));
             }
             all
         },
@@ -249,11 +244,7 @@ pub fn paint<'r>(
     let mut truncated = false;
     let bound = u64::from(initial_max_commits);
     while let Some(entry) = state.heap.pop() {
-        let bits = state
-            .flags
-            .get(&entry.oid)
-            .cloned()
-            .unwrap_or_default();
+        let bits = state.flags.get(&entry.oid).cloned().unwrap_or_default();
         if is_stale(&bits, &state.all_based) {
             state.stale_count = state.stale_count.saturating_sub(1);
         }
@@ -268,14 +259,14 @@ pub fn paint<'r>(
         // fresh, §8.3).
         let mut fresh = SmallBitset::new();
         for i in 0..package_count {
-            let id = PkgId::new(i as u32);
+            let id = PkgId::new(u32::try_from(i).unwrap_or(u32::MAX));
             if !bits.get(id) {
                 fresh.set(id);
             }
         }
         if !fresh.is_empty() {
             if u64::try_from(commits.len()).unwrap_or(u64::MAX) >= bound
-                && state.all_based.count() < package_count as u32
+                && state.all_based.count() < u32::try_from(package_count).unwrap_or(u32::MAX)
             {
                 // An initial-release package is in play: stop at the
                 // configured bound (§8.3).
@@ -289,14 +280,10 @@ pub fn paint<'r>(
                 time: entry.time,
             });
         }
-        let commit = repo
-            .find_commit(entry.oid)
-            .map_err(|e| {
-                {
-                    let oid = entry.oid;
-                    map_git_err("E-GIT-OBJECT", format!("cannot read commit {oid}: {e}"))
-                }
-            })?;
+        let commit = repo.find_commit(entry.oid).map_err(|e| {
+            let oid = entry.oid;
+            map_git_err("E-GIT-OBJECT", format!("cannot read commit {oid}: {e}"))
+        })?;
         for parent in commit.parent_ids() {
             let parent = parent.detach();
             let parent_gen = state.generations.of(parent)?;
