@@ -12,7 +12,11 @@ publish = false
 halyard-core = { workspace = true, features = ["schema-gen"] }
 halyard-config = { workspace = true, features = ["schema-gen"] }
 halyard-discover = { workspace = true }
+halyard-edit = { workspace = true }
+halyard-git = { workspace = true }
 halyard-test-support = { workspace = true }
+semver = { workspace = true }
+tempfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
