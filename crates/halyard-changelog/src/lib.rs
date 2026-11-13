@@ -10,6 +10,12 @@
 //! (`github-release-notes`) need forge context (compare links, remote
 //! URL) and stay unshipped; requesting them yields
 //! [`ChangelogError::Style`] (`E-CHLOG-STYLE`).
+//!
+//! The §11.3 Release-PR body renderer ([`pr_body`], M4.3a) lives here
+//! too: it is markdown rendering over a [`Plan`] — the same pure
+//! plan-in/markdown-out shape as the changelog styles — and its output
+//! is consumed by the §11.1 state machine's `PrSpec` (M4.2a). The
+//! embedded-plan inverse [`extract_embedded_plan`] is the I8 verifier.
 
 #![forbid(unsafe_code)]
 
@@ -18,6 +24,10 @@ use std::fmt::Write as _;
 
 use halyard_core::plan::{Plan, PlanRelease};
 use minijinja::{Environment, context};
+
+pub mod pr_body;
+
+pub use pr_body::{extract_embedded_plan, render_release_body};
 
 /// The stable `<!-- halyard:insert -->` marker (§9.4) and the Unreleased
 /// heading the renderer replaces.
@@ -119,6 +129,14 @@ pub enum ChangelogError {
         /// What is missing.
         reason: String,
     },
+    /// A §11.3 Release-PR body is malformed (`E-CHLOG-PRBODY`): the
+    /// embedded-plan marker is missing or its payload does not decode to
+    /// a hash-consistent `halyard-plan/v1` document (I8 fails closed —
+    /// a tampered body yields an error, never a plan).
+    PrBody {
+        /// What is wrong with the body or its embedded plan.
+        reason: String,
+    },
 }
 
 impl ChangelogError {
@@ -128,6 +146,15 @@ impl ChangelogError {
             Self::Style { .. } => "E-CHLOG-STYLE",
             Self::Template { .. } => "E-CHLOG-TEMPLATE",
             Self::File { .. } => "E-CHLOG-FILE",
+            Self::PrBody { .. } => "E-CHLOG-PRBODY",
+        }
+    }
+
+    /// Builds an [`ChangelogError::PrBody`] (the §11.3 embedded-plan
+    /// failure constructor).
+    pub fn pr_body(reason: impl Into<String>) -> Self {
+        Self::PrBody {
+            reason: reason.into(),
         }
     }
 }
@@ -151,6 +178,12 @@ impl std::fmt::Display for ChangelogError {
                 f,
                 "[E-CHLOG-FILE] cannot update changelog {file}: {reason} (add an \
                  `## [Unreleased]` section or a {INSERT_MARKER} marker)"
+            ),
+            Self::PrBody { reason } => write!(
+                f,
+                "[E-CHLOG-PRBODY] Release-PR body is not usable: {reason} (re-run \
+                 `halyard pr` to re-render the body from a fresh plan instead of \
+                 editing it by hand)"
             ),
         }
     }
