@@ -203,17 +203,17 @@ pub fn detect_links(
         }
     }
     for target in referenced {
-        if let Some(pkg) = ws.package(target) {
-            if matches!(pkg.ecosystem, crate::package::Ecosystem::Npm) {
-                for cargo in &cargo_pkgs {
-                    if cargo.root.as_str() == pkg.root.as_str() {
-                        candidates.push(LinkEdge {
-                            from: cargo.id,
-                            to: pkg.id,
-                            mode: LinkMode::Cascade,
-                            rule: LinkRule::WorkspacePath,
-                        });
-                    }
+        if let Some(pkg) = ws.package(target)
+            && matches!(pkg.ecosystem, crate::package::Ecosystem::Npm)
+        {
+            for cargo in &cargo_pkgs {
+                if cargo.root.as_str() == pkg.root.as_str() {
+                    candidates.push(LinkEdge {
+                        from: cargo.id,
+                        to: pkg.id,
+                        mode: LinkMode::Cascade,
+                        rule: LinkRule::WorkspacePath,
+                    });
                 }
             }
         }
@@ -306,13 +306,40 @@ mod tests {
     #[test]
     fn napi_rs_links_cdylib_crate_and_platform_subpackages() {
         let mut ws = Workspace::new();
-        let crate_id = pkg(&mut ws, "native", Ecosystem::Cargo, "packages/native",
-            Facets { cdylib: true, ..Facets::default() });
-        let main = pkg(&mut ws, "@org/native", Ecosystem::Npm, "packages/native",
-            Facets { napi: true, ..Facets::default() });
-        let platform = pkg(&mut ws, "@org/native-linux-x64-gnu", Ecosystem::Npm,
-            "packages/native/npm/linux-x64-gnu", Facets::default());
-        let _unrelated = pkg(&mut ws, "app", Ecosystem::Npm, "packages/app", Facets::default());
+        let crate_id = pkg(
+            &mut ws,
+            "native",
+            Ecosystem::Cargo,
+            "packages/native",
+            Facets {
+                cdylib: true,
+                ..Facets::default()
+            },
+        );
+        let main = pkg(
+            &mut ws,
+            "@org/native",
+            Ecosystem::Npm,
+            "packages/native",
+            Facets {
+                napi: true,
+                ..Facets::default()
+            },
+        );
+        let platform = pkg(
+            &mut ws,
+            "@org/native-linux-x64-gnu",
+            Ecosystem::Npm,
+            "packages/native/npm/linux-x64-gnu",
+            Facets::default(),
+        );
+        let _unrelated = pkg(
+            &mut ws,
+            "app",
+            Ecosystem::Npm,
+            "packages/app",
+            Facets::default(),
+        );
 
         let links = detect_links(&ws, &[]).unwrap();
         assert_eq!(links.len(), 2);
@@ -333,48 +360,127 @@ mod tests {
     #[test]
     fn wasm_pack_links_colocation() {
         let mut ws = Workspace::new();
-        let crate_id = pkg(&mut ws, "engine", Ecosystem::Cargo, "crates/engine",
-            Facets { wasm_bindgen: true, ..Facets::default() });
-        let binding = pkg(&mut ws, "engine-js", Ecosystem::Npm, "crates/engine", Facets::default());
+        let crate_id = pkg(
+            &mut ws,
+            "engine",
+            Ecosystem::Cargo,
+            "crates/engine",
+            Facets {
+                wasm_bindgen: true,
+                ..Facets::default()
+            },
+        );
+        let binding = pkg(
+            &mut ws,
+            "engine-js",
+            Ecosystem::Npm,
+            "crates/engine",
+            Facets::default(),
+        );
         // A non-wasm crate beside an npm package must not link.
-        let _plain = pkg(&mut ws, "plain", Ecosystem::Cargo, "crates/plain", Facets::default());
-        let _plain_js = pkg(&mut ws, "plain-js", Ecosystem::Npm, "crates/plain", Facets::default());
+        let _plain = pkg(
+            &mut ws,
+            "plain",
+            Ecosystem::Cargo,
+            "crates/plain",
+            Facets::default(),
+        );
+        let _plain_js = pkg(
+            &mut ws,
+            "plain-js",
+            Ecosystem::Npm,
+            "crates/plain",
+            Facets::default(),
+        );
 
         let links = detect_links(&ws, &[]).unwrap();
-        assert_eq!(links, vec![LinkEdge {
-            from: crate_id,
-            to: binding,
-            mode: LinkMode::Lockstep,
-            rule: LinkRule::WasmPack,
-        }]);
+        assert_eq!(
+            links,
+            vec![LinkEdge {
+                from: crate_id,
+                to: binding,
+                mode: LinkMode::Lockstep,
+                rule: LinkRule::WasmPack,
+            }]
+        );
     }
 
     #[test]
     fn workspace_path_rule_links_referenced_colocations() {
         let mut ws = Workspace::new();
-        let crate_id = pkg(&mut ws, "core", Ecosystem::Cargo, "crates/core", Facets::default());
-        let binding = pkg(&mut ws, "@org/core", Ecosystem::Npm, "crates/core", Facets::default());
-        let app = pkg(&mut ws, "app", Ecosystem::Npm, "packages/app", Facets::default());
+        let crate_id = pkg(
+            &mut ws,
+            "core",
+            Ecosystem::Cargo,
+            "crates/core",
+            Facets::default(),
+        );
+        let binding = pkg(
+            &mut ws,
+            "@org/core",
+            Ecosystem::Npm,
+            "crates/core",
+            Facets::default(),
+        );
+        let app = pkg(
+            &mut ws,
+            "app",
+            Ecosystem::Npm,
+            "packages/app",
+            Facets::default(),
+        );
         // app references the binding via workspace:* → triggers rule 4.
-        add_dep(&mut ws, app, binding, ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Star));
+        add_dep(
+            &mut ws,
+            app,
+            binding,
+            ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Star),
+        );
         // An unreferenced co-location pair must NOT link.
-        let _lonely_crate = pkg(&mut ws, "lonely", Ecosystem::Cargo, "crates/lonely", Facets::default());
-        let _lonely_js = pkg(&mut ws, "lonely-js", Ecosystem::Npm, "crates/lonely", Facets::default());
+        let _lonely_crate = pkg(
+            &mut ws,
+            "lonely",
+            Ecosystem::Cargo,
+            "crates/lonely",
+            Facets::default(),
+        );
+        let _lonely_js = pkg(
+            &mut ws,
+            "lonely-js",
+            Ecosystem::Npm,
+            "crates/lonely",
+            Facets::default(),
+        );
 
         let links = detect_links(&ws, &[]).unwrap();
-        assert_eq!(links, vec![LinkEdge {
-            from: crate_id,
-            to: binding,
-            mode: LinkMode::Cascade,
-            rule: LinkRule::WorkspacePath,
-        }]);
+        assert_eq!(
+            links,
+            vec![LinkEdge {
+                from: crate_id,
+                to: binding,
+                mode: LinkMode::Cascade,
+                rule: LinkRule::WorkspacePath,
+            }]
+        );
     }
 
     #[test]
     fn explicit_link_resolves_names_and_default_mode() {
         let mut ws = Workspace::new();
-        let crate_id = pkg(&mut ws, "my-crate", Ecosystem::Cargo, "crates/a", Facets::default());
-        let node = pkg(&mut ws, "@scope/my-crate-node", Ecosystem::Npm, "crates/a/node", Facets::default());
+        let crate_id = pkg(
+            &mut ws,
+            "my-crate",
+            Ecosystem::Cargo,
+            "crates/a",
+            Facets::default(),
+        );
+        let node = pkg(
+            &mut ws,
+            "@scope/my-crate-node",
+            Ecosystem::Npm,
+            "crates/a/node",
+            Facets::default(),
+        );
 
         let links = detect_links(
             &ws,
@@ -385,12 +491,15 @@ mod tests {
             }],
         )
         .unwrap();
-        assert_eq!(links, vec![LinkEdge {
-            from: crate_id,
-            to: node,
-            mode: LinkMode::Lockstep,
-            rule: LinkRule::Explicit,
-        }]);
+        assert_eq!(
+            links,
+            vec![LinkEdge {
+                from: crate_id,
+                to: node,
+                mode: LinkMode::Lockstep,
+                rule: LinkRule::Explicit,
+            }]
+        );
 
         let defaulted = detect_links(
             &ws,
@@ -401,7 +510,10 @@ mod tests {
             }],
         )
         .unwrap();
-        assert_eq!(defaulted[0].mode, LinkMode::Cascade);
+        assert_eq!(
+            defaulted.first().expect("one defaulted link").mode,
+            LinkMode::Cascade
+        );
     }
 
     #[test]
@@ -425,28 +537,72 @@ mod tests {
         // A napi pair that is also referenced via workspace: gets exactly
         // one edge — napi (lockstep) wins over workspace-path (cascade).
         let mut ws = Workspace::new();
-        let crate_id = pkg(&mut ws, "native", Ecosystem::Cargo, "crates/native",
-            Facets { cdylib: true, ..Facets::default() });
-        let main = pkg(&mut ws, "@org/native", Ecosystem::Npm, "crates/native",
-            Facets { napi: true, ..Facets::default() });
-        let app = pkg(&mut ws, "app", Ecosystem::Npm, "packages/app", Facets::default());
-        add_dep(&mut ws, app, main, ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Caret));
+        let crate_id = pkg(
+            &mut ws,
+            "native",
+            Ecosystem::Cargo,
+            "crates/native",
+            Facets {
+                cdylib: true,
+                ..Facets::default()
+            },
+        );
+        let main = pkg(
+            &mut ws,
+            "@org/native",
+            Ecosystem::Npm,
+            "crates/native",
+            Facets {
+                napi: true,
+                ..Facets::default()
+            },
+        );
+        let app = pkg(
+            &mut ws,
+            "app",
+            Ecosystem::Npm,
+            "packages/app",
+            Facets::default(),
+        );
+        add_dep(
+            &mut ws,
+            app,
+            main,
+            ReqSpec::WorkspaceProtocol(WorkspaceProtocol::Caret),
+        );
 
         let links = detect_links(&ws, &[]).unwrap();
         assert_eq!(links.len(), 1);
-        assert_eq!(links[0].rule, LinkRule::NapiRs);
-        assert_eq!(links[0].mode, LinkMode::Lockstep);
-        assert_eq!(links[0].from, crate_id);
-        assert_eq!(links[0].to, main);
+        let link = links.first().expect("one napi edge");
+        assert_eq!(link.rule, LinkRule::NapiRs);
+        assert_eq!(link.mode, LinkMode::Lockstep);
+        assert_eq!(link.from, crate_id);
+        assert_eq!(link.to, main);
     }
 
     #[test]
     fn explicit_overrides_heuristics() {
         let mut ws = Workspace::new();
-        let _ = pkg(&mut ws, "native", Ecosystem::Cargo, "crates/native",
-            Facets { cdylib: true, ..Facets::default() });
-        let _ = pkg(&mut ws, "@org/native", Ecosystem::Npm, "crates/native",
-            Facets { napi: true, ..Facets::default() });
+        let _ = pkg(
+            &mut ws,
+            "native",
+            Ecosystem::Cargo,
+            "crates/native",
+            Facets {
+                cdylib: true,
+                ..Facets::default()
+            },
+        );
+        let _ = pkg(
+            &mut ws,
+            "@org/native",
+            Ecosystem::Npm,
+            "crates/native",
+            Facets {
+                napi: true,
+                ..Facets::default()
+            },
+        );
         let links = detect_links(
             &ws,
             &[ExplicitLinkSpec {
@@ -457,25 +613,64 @@ mod tests {
         )
         .unwrap();
         assert_eq!(links.len(), 1, "explicit replaces the napi edge");
-        assert_eq!(links[0].rule, LinkRule::Explicit);
-        assert_eq!(links[0].mode, LinkMode::Cascade);
+        let link = links.first().expect("one explicit edge");
+        assert_eq!(link.rule, LinkRule::Explicit);
+        assert_eq!(link.mode, LinkMode::Cascade);
     }
 
     #[test]
     fn output_is_sorted_and_deterministic() {
         let mut ws = Workspace::new();
-        let c1 = pkg(&mut ws, "c1", Ecosystem::Cargo, "crates/c1",
-            Facets { cdylib: true, ..Facets::default() });
-        let n1 = pkg(&mut ws, "@o/c1", Ecosystem::Npm, "crates/c1",
-            Facets { napi: true, ..Facets::default() });
-        let c2 = pkg(&mut ws, "c2", Ecosystem::Cargo, "crates/c2",
-            Facets { cdylib: true, ..Facets::default() });
-        let n2 = pkg(&mut ws, "@o/c2", Ecosystem::Npm, "crates/c2",
-            Facets { napi: true, ..Facets::default() });
+        let c1 = pkg(
+            &mut ws,
+            "c1",
+            Ecosystem::Cargo,
+            "crates/c1",
+            Facets {
+                cdylib: true,
+                ..Facets::default()
+            },
+        );
+        let n1 = pkg(
+            &mut ws,
+            "@o/c1",
+            Ecosystem::Npm,
+            "crates/c1",
+            Facets {
+                napi: true,
+                ..Facets::default()
+            },
+        );
+        let c2 = pkg(
+            &mut ws,
+            "c2",
+            Ecosystem::Cargo,
+            "crates/c2",
+            Facets {
+                cdylib: true,
+                ..Facets::default()
+            },
+        );
+        let n2 = pkg(
+            &mut ws,
+            "@o/c2",
+            Ecosystem::Npm,
+            "crates/c2",
+            Facets {
+                napi: true,
+                ..Facets::default()
+            },
+        );
 
         let links = detect_links(&ws, &[]).unwrap();
-        let keys: Vec<(u32, u32)> = links.iter().map(|l| (l.from.to_u32(), l.to.to_u32())).collect();
-        assert_eq!(keys, vec![(c1.to_u32(), n1.to_u32()), (c2.to_u32(), n2.to_u32())]);
+        let keys: Vec<(u32, u32)> = links
+            .iter()
+            .map(|l| (l.from.to_u32(), l.to.to_u32()))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![(c1.to_u32(), n1.to_u32()), (c2.to_u32(), n2.to_u32())]
+        );
         let again = detect_links(&ws, &[]).unwrap();
         assert_eq!(links, again);
     }
