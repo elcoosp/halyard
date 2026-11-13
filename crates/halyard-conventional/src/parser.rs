@@ -101,6 +101,66 @@ pub fn is_fixup_or_squash(subject: &[u8]) -> bool {
     subject.starts_with(b"fixup!") || subject.starts_with(b"squash!")
 }
 
+/// The `git revert` trailer key (§8.5 revert cancellation).
+const REVERT_KEY: &[u8] = b"This reverts commit";
+
+/// Extracts the reverted commit from a `git revert` message (§8.5): the
+/// 40-char (or 64-char, SHA-256) hex OID after `This reverts commit` in
+/// the body. Scans the *whole message* byte-wise (revert trailers sit at
+/// the bottom; nothing is allocated unless a candidate is found). Returns
+/// the lowercase hex bytes; `None` when the message does not carry the
+/// trailer.
+///
+/// The accepted trailer shape is git's own output:
+/// `This reverts commit <40-hex>.` — case-sensitive key, optional trailing
+/// period, the OID on the same line. A `revert:`-prefixed *subject* is
+/// deliberately not accepted here (it carries no OID to cancel).
+pub fn revert_target(message: &[u8]) -> Option<BString> {
+    // Line-wise scan (total, allocation-free): the trailer is git's own
+    // body rendering, so the accepted line is
+    // `This reverts commit <40-hex>` (optionally trailing `.`).
+    let mut start = 0usize;
+    for i in 0..=message.len() {
+        if i == message.len() || message.get(i) == Some(&b'\n') {
+            let line = message.get(start..i).unwrap_or(&[]);
+            if let Some(found) = line_revert_target(line) {
+                return Some(found);
+            }
+            start = i + 1;
+        }
+    }
+    None
+}
+
+/// Matches one line against `This reverts commit <hex>` (optionally
+/// followed by a period or trailing whitespace).
+fn line_revert_target(line: &[u8]) -> Option<BString> {
+    let line = strip_trailing_cr(line);
+    // Find the key anywhere in the line (leading whitespace tolerated).
+    let pos = line.windows(REVERT_KEY.len()).position(|w| w == REVERT_KEY)?;
+    let rest = line.get(pos + REVERT_KEY.len()..)?;
+    let rest = rest.strip_prefix(b" ")?;
+    let end = rest
+        .iter()
+        .position(|&b| b.is_ascii_whitespace() || b == b'.')
+        .unwrap_or(rest.len());
+    let hex = rest.get(..end)?;
+    if hex.len() != 40 && hex.len() != 64 {
+        return None;
+    }
+    if !hex.iter().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(BString::from(hex.to_ascii_lowercase()))
+}
+
+/// Extracts a trailing `(#NNN)` PR number from a subject line (§8.5,
+/// byte scan from the end, regex-free). Alias of
+/// [`extract_pr_number`] with the protocol-facing name.
+pub fn trailing_pr_number(subject: &[u8]) -> Option<u64> {
+    extract_pr_number(subject)
+}
+
 /// Extracts a trailing `(#NNN)` PR number from a subject line (byte scan
 /// from the end, §8.5 — regex-free).
 pub fn extract_pr_number(subject: &[u8]) -> Option<u64> {
