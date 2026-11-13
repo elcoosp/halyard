@@ -44,18 +44,48 @@ pub struct NpmWorkspaceSpec {
 /// Materializes a [`CargoWorkspaceSpec`] into a disposable git fixture
 /// (deterministic identity per ADR-0003; discovery does not read history,
 /// but fixtures stay real repositories for §8.6 parity later).
+///
+/// Every package gets a `[lib] path = "lib.rs"` target with an empty
+/// `lib.rs` beside its manifest, so `cargo metadata` accepts the
+/// manifests (cargo rejects target-less packages). The file sits in the
+/// package directory itself — no new directories — so member globs keep
+/// matching exactly what the spec author wrote.
 pub fn build_cargo_fixture(spec: &CargoWorkspaceSpec) -> Result<GitFixture, FixtureError> {
     let fixture = GitFixture::new(spec.name)?;
-    fixture.write("Cargo.toml", spec.root)?;
+    if spec.root.contains("[package]") {
+        fixture.write("Cargo.toml", &append_lib_target(spec.root))?;
+        fixture.write("lib.rs", "")?;
+    } else {
+        fixture.write("Cargo.toml", spec.root)?;
+    }
     for (dir, manifest) in spec.members {
         let path = if dir.is_empty() {
             "Cargo.toml".to_owned()
         } else {
             format!("{dir}/Cargo.toml")
         };
-        fixture.write(&path, manifest)?;
+        if manifest.contains("[package]") {
+            fixture.write(&path, &append_lib_target(manifest))?;
+            let lib = if dir.is_empty() {
+                "lib.rs".to_owned()
+            } else {
+                format!("{dir}/lib.rs")
+            };
+            fixture.write(&lib, "")?;
+        } else {
+            fixture.write(&path, manifest)?;
+        }
     }
     Ok(fixture)
+}
+
+/// Appends the lib target that makes a manifest acceptable to
+/// `cargo metadata` (idempotent: an existing `[lib]` section is kept).
+fn append_lib_target(manifest: &str) -> String {
+    if manifest.contains("[lib]") {
+        return manifest.to_owned();
+    }
+    format!("{manifest}\n[lib]\npath = \"lib.rs\"\n")
 }
 
 /// Materializes an [`NpmWorkspaceSpec`].
@@ -106,10 +136,25 @@ pub struct CargoMetadataExpectation {
 /// Runs `cargo metadata --no-deps` in `repo_root` and extracts members +
 /// internal edges. Subprocess use is test/tooling-only (invariant I6
 /// applies to planning, not to ground-truth extraction).
-pub fn cargo_metadata_expectation(repo_root: &std::path::Path) -> Result<CargoMetadataExpectation, FixtureError> {
+pub fn cargo_metadata_expectation(
+    repo_root: &std::path::Path,
+) -> Result<CargoMetadataExpectation, FixtureError> {
+    // cargo searches upward for a `[workspace]` manifest; a clone inside
+    // the halyard tree would wrongly join halyard's own workspace. Run the
+    // ground truth against a temp copy outside any enclosing workspace.
+    let tmp = tempfile::tempdir()
+        .map_err(|e| FixtureError::git_invocation(format!("ground-truth tempdir: {e}")))?;
+    let isolated = tmp.path().join("clone");
+    copy_tree(repo_root, &isolated)?;
     let output = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1", "--offline"])
-        .current_dir(repo_root)
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--offline",
+        ])
+        .current_dir(&isolated)
         .output()
         .map_err(|e| FixtureError::git_invocation(format!("spawn cargo metadata: {e}")))?;
     if !output.status.success() {
@@ -123,10 +168,30 @@ pub fn cargo_metadata_expectation(repo_root: &std::path::Path) -> Result<CargoMe
     expectation_from_metadata(&value)
 }
 
+/// Recursively copies a repository directory: cargo metadata needs every
+/// member manifest and path-dependency target present.
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> Result<(), FixtureError> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| FixtureError::git_invocation(format!("mkdir {}: {e}", dst.display())))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| FixtureError::git_invocation(format!("read {}: {e}", src.display())))?
+    {
+        let entry = entry.map_err(|e| FixtureError::git_invocation(format!("readdir: {e}")))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_tree(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to).map_err(|e| {
+                FixtureError::git_invocation(format!("copy {}: {e}", from.display()))
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Pure extraction from already-parsed metadata (shared with xtask).
-pub fn expectation_from_metadata(
-    value: &Value,
-) -> Result<CargoMetadataExpectation, FixtureError> {
+pub fn expectation_from_metadata(value: &Value) -> Result<CargoMetadataExpectation, FixtureError> {
     let packages = value
         .get("packages")
         .and_then(Value::as_array)
@@ -146,15 +211,17 @@ pub fn expectation_from_metadata(
             Some((id, name))
         })
         .collect();
+    let member_names: std::collections::BTreeSet<&str> = packages
+        .iter()
+        .filter(|p| {
+            p.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| members_ids.contains(&id))
+        })
+        .filter_map(|p| p.get("name").and_then(Value::as_str))
+        .collect();
     let mut members = BTreeSet::new();
-    for pkg in packages {
-        let id = pkg
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| FixtureError::git_output("package without id".to_owned()))?;
-        if !members_ids.contains(&id) {
-            continue;
-        }
+    for pkg in member_packages(packages, &members_ids)? {
         members.insert(MetadataMember {
             name: pkg
                 .get("name")
@@ -169,64 +236,139 @@ pub fn expectation_from_metadata(
         });
     }
     let mut edges = BTreeSet::new();
-    for pkg in packages {
-        let id = pkg
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| FixtureError::git_output("package without id".to_owned()))?;
-        if !members_ids.contains(&id) {
-            continue;
-        }
+    for pkg in member_packages(packages, &members_ids)? {
         let from = pkg
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let deps = pkg.get("deps").and_then(Value::as_array);
+        // Resolved shape: `deps` rows carry the target package id.
+        if let Some(deps) = pkg.get("deps").and_then(Value::as_array) {
+            resolved_shape_edges(deps, &from, &members_ids, &id_to_name, &mut edges);
+            continue;
+        }
+        // `--no-deps` shape: `dependencies` rows, no resolved ids. A row
+        // is an internal edge when it has no registry/git source and its
+        // name matches a workspace member (path deps into the workspace
+        // and workspace-deps entries always name their member).
+        let deps = pkg.get("dependencies").and_then(Value::as_array);
         for dep in deps.into_iter().flatten() {
-            let target_id = dep.get("package").and_then(Value::as_str).unwrap_or("");
-            if !members_ids.contains(&target_id) {
-                continue; // external or path-outside-workspace
-            }
-            let to = id_to_name
-                .get(target_id)
-                .copied()
-                .unwrap_or_default()
-                .to_owned();
-            let optional = dep.get("optional").and_then(Value::as_bool).unwrap_or(false);
-            let kinds = dep.get("dep_kinds").and_then(Value::as_array);
-            let kind_list: Vec<String> = kinds
-                .into_iter()
-                .flatten()
-                .map(|k| {
-                    k.get("kind")
-                        .and_then(Value::as_str)
-                        .unwrap_or("normal")
-                        .to_owned()
-                })
-                .collect();
-            // A dep entry with an empty dep_kinds list is a plain
-            // `[dependencies]` edge; otherwise one edge per kind.
-            if kind_list.is_empty() {
-                let kind = if optional { "optional" } else { "normal" };
-                edges.insert(MetadataEdge {
-                    from: from.clone(),
-                    to: to.clone(),
-                    kind: kind.to_owned(),
-                });
-            } else {
-                for kind in &kind_list {
-                    let kind = if optional { "optional" } else { kind.as_str() };
-                    edges.insert(MetadataEdge {
-                        from: from.clone(),
-                        to: to.clone(),
-                        kind: kind.to_owned(),
-                    });
-                }
+            if let Some(edge) = no_deps_edge(dep, &from, &member_names) {
+                edges.insert(edge);
             }
         }
     }
     Ok(CargoMetadataExpectation { members, edges })
+}
+
+/// Member packages in id order; errors when any package lacks an id.
+fn member_packages<'a>(
+    packages: &'a [Value],
+    members_ids: &[&str],
+) -> Result<impl Iterator<Item = &'a Value>, FixtureError> {
+    packages
+        .iter()
+        .map(|pkg| {
+            pkg.get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| FixtureError::git_output("package without id".to_owned()))
+        })
+        .collect::<Result<Vec<&str>, FixtureError>>()?;
+    Ok(packages.iter().filter(move |pkg| {
+        pkg.get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| members_ids.contains(&id))
+    }))
+}
+
+/// Edges from the fully resolved `deps` shape (one row per kind).
+fn resolved_shape_edges(
+    deps: &[Value],
+    from: &str,
+    members_ids: &[&str],
+    id_to_name: &std::collections::BTreeMap<&str, &str>,
+    edges: &mut BTreeSet<MetadataEdge>,
+) {
+    for dep in deps {
+        let Some(target_id) = dep.get("package").and_then(Value::as_str) else {
+            continue;
+        };
+        if !members_ids.contains(&target_id) {
+            continue; // external or path-outside-workspace
+        }
+        let to = id_to_name
+            .get(target_id)
+            .copied()
+            .unwrap_or_default()
+            .to_owned();
+        let optional = dep
+            .get("optional")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let kinds = dep.get("dep_kinds").and_then(Value::as_array);
+        let kind_list: Vec<String> = kinds
+            .into_iter()
+            .flatten()
+            .map(|k| {
+                k.get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("normal")
+                    .to_owned()
+            })
+            .collect();
+        // A dep entry with an empty dep_kinds list is a plain
+        // `[dependencies]` edge; otherwise one edge per kind.
+        if kind_list.is_empty() {
+            let kind = if optional { "optional" } else { "normal" };
+            edges.insert(MetadataEdge {
+                from: from.to_owned(),
+                to,
+                kind: kind.to_owned(),
+            });
+        } else {
+            for kind in &kind_list {
+                let kind = if optional { "optional" } else { kind.as_str() };
+                edges.insert(MetadataEdge {
+                    from: from.to_owned(),
+                    to: to.clone(),
+                    kind: kind.to_owned(),
+                });
+            }
+        }
+    }
+}
+
+/// One edge from the `--no-deps` `dependencies` shape, or `None` when the
+/// row is external (registry/git source, or a path dep leaving the
+/// workspace).
+fn no_deps_edge(
+    dep: &Value,
+    from: &str,
+    member_names: &std::collections::BTreeSet<&str>,
+) -> Option<MetadataEdge> {
+    let name = dep.get("name").and_then(Value::as_str)?;
+    if dep.get("source").and_then(Value::as_str).is_some() {
+        return None; // registry / git dependency
+    }
+    if !member_names.contains(name) {
+        return None; // path dep that leaves the workspace
+    }
+    let kind_field = dep.get("kind").and_then(Value::as_str);
+    let optional = dep
+        .get("optional")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let kind = match kind_field {
+        Some("dev") => "dev",
+        Some("build") => "build",
+        _ if optional => "optional",
+        _ => "normal",
+    };
+    Some(MetadataEdge {
+        from: from.to_owned(),
+        to: name.to_owned(),
+        kind: kind.to_owned(),
+    })
 }
 
 /// Our discovery side of the differential: the same shape extracted from
@@ -245,7 +387,7 @@ pub fn workspace_expectation(
             version: pkg
                 .version
                 .as_ref()
-                .map_or_else(|| "0.0.0".to_owned(), |v| v.to_string()),
+                .map_or_else(|| "0.0.0".to_owned(), ToString::to_string),
         });
         for dep in &pkg.deps {
             let Some(target) = workspace.package(dep.to) else {
