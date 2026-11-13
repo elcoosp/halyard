@@ -75,7 +75,7 @@ pub struct LockfileSummary {
 pub struct ApplyReport {
     /// Per-file summaries, sorted by path (invariant I3).
     pub files: Vec<FileSummary>,
-    /// The lockfile stage results, in [`LOCKFILE_TARGETS`] order: one row
+    /// The lockfile stage results, in `LOCKFILE_TARGETS` order: one row
     /// per staged lockfile (a plan with no version moves for an
     /// ecosystem, or without the lockfile on disk, contributes none).
     pub lockfiles: Vec<LockfileSummary>,
