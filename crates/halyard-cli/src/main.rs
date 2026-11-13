@@ -487,16 +487,88 @@ fn cmd_apply(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliErr
             )
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // M3.2 native fallback (§9.2 rule 4): the in-memory patcher declined
+    // → the CLI shell runs the sanctioned effect step and verifies that
+    // only workspace members moved. Failing that verification is a hard
+    // error (re-plan instead of trusting a shifted tree).
+    let native_refresh = if report
+        .lockfile
+        .as_ref()
+        .is_some_and(|lock| lock.native_reason.is_some())
+    {
+        Some(native_lockfile_refresh(
+            &context.discovery.workspace,
+            &adapters,
+        )?)
+    } else {
+        None
+    };
     match cli.format {
-        Format::Json => print_pretty_json(&apply_report_json(&report))?,
-        Format::Gha | Format::Human => print!("{}", render::apply_report(&report)),
+        Format::Json => print_pretty_json(&apply_report_json(&report, native_refresh.as_deref()))?,
+        Format::Gha | Format::Human => {
+            print!(
+                "{}",
+                render::apply_report(&report, native_refresh.as_deref())
+            );
+        }
     }
     Ok(())
 }
 
+/// The §9.2 rule-4 native fallback (M3.2): the in-memory patcher
+/// declined, so the CLI shell runs the adapter's sanctioned effect step
+/// (`cargo update --workspace --offline`) and verifies afterwards that
+/// **only workspace members moved** — a resolution change fails closed
+/// (`E-LOCK-NATIVE`, re-plan instead of trusting a shifted tree).
+fn native_lockfile_refresh(
+    workspace: &halyard_core::package::Workspace,
+    adapters: &[&dyn halyard_core::EcosystemAdapter],
+) -> Result<Vec<String>, CliError> {
+    let adapter = adapters
+        .iter()
+        .copied()
+        .find(|adapter| adapter.id() == "cargo")
+        .ok_or_else(|| {
+            CliError::new(
+                halyard_core::lockfile::NativeRefreshError::CODE,
+                "plan releases cargo packages but no cargo adapter is registered",
+            )
+        })?;
+    let read_lock = || {
+        std::fs::read("Cargo.lock").map_err(|source| {
+            CliError::new(
+                halyard_edit::EditError::IO_CODE,
+                format!("cannot read Cargo.lock for the native refresh: {source}"),
+            )
+        })
+    };
+    let before = read_lock()?;
+    adapter
+        .refresh_lockfile_native(std::path::Path::new("."))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let after = read_lock()?;
+    let members: Vec<String> = workspace
+        .packages()
+        .iter()
+        .filter(|package| package.ecosystem.resolve(workspace.interner()) == "cargo")
+        .map(|package| {
+            workspace
+                .interner()
+                .get(package.name)
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    halyard_eco_cargo::lockfile::verify_native_refresh(&before, &after, &members)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))
+}
+
 /// The `apply` JSON summary (deterministic field order via `serde_json::json!`;
 /// built here so `halyard-edit` stays dependency-free, §7.2).
-fn apply_report_json(report: &halyard_edit::ApplyReport) -> serde_json::Value {
+fn apply_report_json(
+    report: &halyard_edit::ApplyReport,
+    native_refresh: Option<&[String]>,
+) -> serde_json::Value {
     let files: Vec<serde_json::Value> = report
         .files
         .iter()
@@ -508,8 +580,25 @@ fn apply_report_json(report: &halyard_edit::ApplyReport) -> serde_json::Value {
             })
         })
         .collect();
+    let lockfile = report.lockfile.as_ref().map(|lock| {
+        serde_json::json!({
+            "file": lock.file.to_string(),
+            "applied": lock.applied,
+            "skipped": lock.skipped,
+            "native_refresh_required": lock.native_reason.is_some(),
+            "native_reason": lock.native_reason,
+        })
+    });
+    let native = native_refresh.map(|moved| {
+        serde_json::json!({
+            "file": report.lockfile.as_ref().map(|lock| lock.file.to_string()),
+            "members_moved": moved,
+        })
+    });
     serde_json::json!({
         "files": files,
+        "lockfile": lockfile,
+        "native_refresh": native,
         "applied": report.total_applied(),
         "skipped": report.total_skipped(),
     })
