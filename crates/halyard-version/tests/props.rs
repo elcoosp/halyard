@@ -61,16 +61,16 @@ proptest::proptest! {
         match rewrite_requirement(&req, &new, policy) {
             Ok(RewriteOutcome::Rewritten(text)) => {
                 let parsed = semver::VersionReq::parse(&text)
-                    .unwrap_or_else(|e| panic!("rewritten {text:?} must parse: {e}"));
+                    .unwrap_or_else(|e| unreachable!("rewritten {text:?} must parse: {e}"));
                 prop_assert!(parsed.matches(&new), "rewritten {text:?} must admit {new}");
                 prop_assert!(
-                    !semver::VersionReq::parse(&req).unwrap_or_else(|e| panic!("req: {e}")).matches(&new),
+                    !semver::VersionReq::parse(&req).unwrap_or_else(|e| unreachable!("req: {e}")).matches(&new),
                     "rewrite only happens when the original does not admit the new version"
                 );
             }
             Ok(RewriteOutcome::Unchanged { because }) => {
                 let parsed = semver::VersionReq::parse(&req)
-                    .unwrap_or_else(|e| panic!("req {req:?}: {e}"));
+                    .unwrap_or_else(|e| unreachable!("req {req:?}: {e}"));
                 if because == UnchangedReason::Satisfied {
                     prop_assert!(parsed.matches(&new));
                 }
