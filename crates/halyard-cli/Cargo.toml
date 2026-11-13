@@ -12,13 +12,11 @@ name = "halyard"
 path = "src/main.rs"
 
 [dependencies]
-halyard-changelog = { workspace = true }
 halyard-config = { workspace = true }
 halyard-core = { workspace = true }
 halyard-discover = { workspace = true }
 halyard-edit = { workspace = true }
 halyard-git = { workspace = true }
-halyard-version = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 miette = { version = "7", features = ["fancy"] }
