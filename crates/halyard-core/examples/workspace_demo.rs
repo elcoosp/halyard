@@ -19,6 +19,36 @@ fn rel(raw: &str) -> Result<RelPath, Box<dyn Error>> {
     RelPath::new(raw).ok_or_else(|| format!("invalid repo-relative path: {raw:?}").into())
 }
 
+/// Builds the minimal wire plan and prints its hash (§5.8, I3).
+fn demo_plan_hash() {
+    // Plan hash over a minimal wire plan (§5.8, I3).
+    let plan = Plan {
+        schema: PLAN_SCHEMA_V1.to_owned(),
+        base_branch: "main".to_owned(),
+        head: "9f2ca67".to_owned(),
+        plan_hash: String::new(),
+        releases: vec![PlanRelease {
+            package: "core".to_owned(),
+            ecosystem: "cargo".to_owned(),
+            from: "0.4.1".to_owned(),
+            to: "0.5.0".to_owned(),
+            bump: Bump::Minor,
+            tag: "core-v0.5.0".to_owned(),
+            reasons: vec![PlanReason::Commit {
+                oid: "ab12cd34".to_owned(),
+                kind: "feat".to_owned(),
+                breaking: false,
+            }],
+            changelog: None,
+            publish: None,
+        }],
+        edits: Vec::new(),
+        order: vec!["core".to_owned()],
+        skipped: Vec::new(),
+    };
+    println!("plan hash: {}", halyard_core::plan_hash(&plan));
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut workspace = Workspace::new();
 
@@ -109,31 +139,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // Plan hash over a minimal wire plan (§5.8, I3).
-    let plan = Plan {
-        schema: PLAN_SCHEMA_V1.to_owned(),
-        base_branch: "main".to_owned(),
-        head: "9f2ca67".to_owned(),
-        plan_hash: String::new(),
-        releases: vec![PlanRelease {
-            package: "core".to_owned(),
-            ecosystem: "cargo".to_owned(),
-            from: "0.4.1".to_owned(),
-            to: "0.5.0".to_owned(),
-            bump: Bump::Minor,
-            tag: "core-v0.5.0".to_owned(),
-            reasons: vec![PlanReason::Commit {
-                oid: "ab12cd34".to_owned(),
-                kind: "feat".to_owned(),
-                breaking: false,
-            }],
-            changelog: None,
-            publish: None,
-        }],
-        edits: Vec::new(),
-        order: vec!["core".to_owned()],
-        skipped: Vec::new(),
-    };
-    println!("plan hash: {}", halyard_core::plan_hash(&plan));
-
+    demo_plan_hash();
     Ok(())
 }
