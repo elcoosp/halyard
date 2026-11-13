@@ -5,11 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Changelog rendering (M3.5): keep-a-changelog style over a Plan, idempotent Unreleased insertion"
+description = "Changelog rendering (M3.5): keep-a-changelog style over a Plan, idempotent Unreleased insertion; Release-PR body rendering (M4.3a, §11.3)"
 
 [dependencies]
 halyard-core = { workspace = true }
 minijinja = { version = "2", default-features = false, features = ["builtins"] }
+# §11.3 embedded plan: canonical JSON → DEFLATE → base64, so the Release
+# PR body carries the verifiable plan (I8) without inflating the body.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+base64 = "0.22"
+serde_json = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
