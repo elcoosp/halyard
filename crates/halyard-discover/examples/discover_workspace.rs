@@ -8,7 +8,7 @@
 //! `workspace:^` — the §6.5 link rules connect all three.
 
 use halyard_core::discover::DiscoverCtx;
-use halyard_discover::{discover_from_ctx, DiscoverInput};
+use halyard_discover::{DiscoverInput, discover_from_ctx};
 
 const FILES: &[(&str, &str)] = &[
     (
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .deps
             .iter()
             .filter_map(|d| ws.package(d.to).and_then(|t| ws.interner().get(t.name)))
-            .map(|n| n.to_owned())
+            .map(ToOwned::to_owned)
             .collect();
         println!(
             "  {name:<28} v{} publishable={} deps=[{}]",
@@ -59,9 +59,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("links (from -> to, mode, rule):");
     for link in ws.links() {
-        let from = ws.package(link.from).and_then(|p| ws.interner().get(p.name)).unwrap_or("?");
-        let to = ws.package(link.to).and_then(|p| ws.interner().get(p.name)).unwrap_or("?");
-        println!("  {from} -> {to} (mode: {}, rule: {})", link.mode.wire_key(), link.rule.wire_key());
+        let from = ws
+            .package(link.from)
+            .and_then(|p| ws.interner().get(p.name))
+            .unwrap_or("?");
+        let to = ws
+            .package(link.to)
+            .and_then(|p| ws.interner().get(p.name))
+            .unwrap_or("?");
+        println!(
+            "  {from} -> {to} (mode: {}, rule: {})",
+            link.mode.wire_key(),
+            link.rule.wire_key()
+        );
     }
     match discovery.graph.topo_order() {
         Ok(order) => {
@@ -76,7 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !discovery.warnings.is_empty() {
         println!("warnings:");
         for warning in &discovery.warnings {
-            println!("  [{}] {}: {}", warning.code, warning.subject, warning.message);
+            println!(
+                "  [{}] {}: {}",
+                warning.code, warning.subject, warning.message
+            );
         }
     }
     Ok(())
