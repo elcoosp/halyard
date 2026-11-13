@@ -12,10 +12,10 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 
 use std::sync::OnceLock;
 
+use halyard_core::PkgId;
 use halyard_core::package::{
     Ecosystem, GroupId, Package, PathFilter, RelPath, TagTemplate, VersionSource, Workspace,
 };
-use halyard_core::PkgId;
 use halyard_git::GitHistory;
 use halyard_test_support::fixture::{CommitSpec, GitFixture};
 
@@ -33,8 +33,15 @@ fn fixture(with_graph: bool) -> &'static GitFixture {
     static WITH_GRAPH: OnceLock<GitFixture> = OnceLock::new();
     let cell = if with_graph { &WITH_GRAPH } else { &NO_GRAPH };
     cell.get_or_init(|| {
-        let mut fx = GitFixture::new(if with_graph { "dhat-walk-graph" } else { "dhat-walk" })
-            .expect("fixture dir");
+        // Fixture setup failures abort the test loudly (test helpers are
+        // not `#[test]` fns, so the expect/unwrap lint allowance does not
+        // reach them).
+        let mut fx = GitFixture::new(if with_graph {
+            "dhat-walk-graph"
+        } else {
+            "dhat-walk"
+        })
+        .unwrap_or_else(|e| unreachable!("fixture dir: {e}"));
         fx.commit_with(&CommitSpec::files(
             vec![(
                 "Cargo.toml".to_owned(),
@@ -42,17 +49,22 @@ fn fixture(with_graph: bool) -> &'static GitFixture {
             )],
             "feat: base",
         ))
-        .expect("base commit");
-        fx.tag_light("v0.1.0").expect("base tag");
+        .unwrap_or_else(|e| unreachable!("base commit: {e}"));
+        fx.tag_light("v0.1.0")
+            .unwrap_or_else(|e| unreachable!("base tag: {e}"));
         for i in 0..COMMITS {
             fx.commit_with(&CommitSpec::files(
-                vec![("src/lib.rs".to_owned(), format!("pub const V{i}: u32 = {i};\n"))],
+                vec![(
+                    "src/lib.rs".to_owned(),
+                    format!("pub const V{i}: u32 = {i};\n"),
+                )],
                 "feat: extend",
             ))
-            .expect("commit");
+            .unwrap_or_else(|e| unreachable!("commit {i}: {e}"));
         }
         if with_graph {
-            fx.commit_graph_write(true).expect("commit-graph");
+            fx.commit_graph_write(true)
+                .unwrap_or_else(|e| unreachable!("commit-graph: {e}"));
         }
         fx
     })
@@ -64,13 +76,16 @@ fn single_pkg_workspace() -> Workspace {
         id: PkgId::FIRST,
         name: ws.intern("app"),
         ecosystem: Ecosystem::Cargo,
-        root: RelPath::new("").unwrap(),
-        manifest: RelPath::new("Cargo.toml").unwrap(),
+        root: RelPath::new("")
+            .unwrap_or_else(|| unreachable!("empty root is always a valid RelPath")),
+        manifest: RelPath::new("Cargo.toml")
+            .unwrap_or_else(|| unreachable!("root manifest path is always a valid RelPath")),
         version: Some(semver::Version::new(0, 1, 0)),
         version_source: VersionSource::Local,
         publishable: true,
         deps: Vec::new(),
-        tag_template: TagTemplate::parse("v{version}").unwrap(),
+        tag_template: TagTemplate::parse("v{version}")
+            .unwrap_or_else(|_| unreachable!("'v{{version}}' is always a valid template")),
         changelog: None,
         version_site: None,
         include: PathFilter::new(Vec::new(), Vec::new()),
@@ -89,7 +104,10 @@ fn walk_allocation_budget() {
     let degraded = audit(&ws, false, MAX_ALLOCATIONS_PER_COMMIT_NO_GRAPH);
     let with_graph = audit(&ws, true, MAX_ALLOCATIONS_PER_COMMIT_GRAPH);
     eprintln!("dhat per-commit: no-graph={degraded}, commit-graph={with_graph}");
-    assert!(with_graph <= degraded, "the commit-graph path must not be slower on allocs");
+    assert!(
+        with_graph <= degraded,
+        "the commit-graph path must not be slower on allocs"
+    );
 }
 
 /// Measures allocations for one `paint` over `fixture(with_graph)`.
@@ -99,12 +117,16 @@ fn audit(ws: &Workspace, with_graph: bool, ceiling: u64) -> u64 {
     // ODB pack index, the ref snapshot and the generation cache all come
     // from `GitHistory::build`; the audited window is the WALK itself
     // (§14.3: allocations per popped commit in the painter walk).
-    let warm = GitHistory::build(fx.root(), ws, 10_000).expect("warm-up");
+    let warm = GitHistory::build(fx.root(), ws, 10_000)
+        .unwrap_or_else(|e| unreachable!("warm-up build: {e}"));
 
     // Re-open the walk inputs (bases + head) so the measured section is
     // exactly one `paint` over the same graph.
-    let repo = halyard_git::gix::open(fx.root()).expect("repo");
-    let head = repo.head_id().expect("head").detach();
+    let repo = halyard_git::gix::open(fx.root()).unwrap_or_else(|e| unreachable!("repo open: {e}"));
+    let head = repo
+        .head_id()
+        .unwrap_or_else(|e| unreachable!("head id: {e}"))
+        .detach();
     let base_oids: Vec<Option<gix::hash::ObjectId>> = warm
         .bases()
         .iter()
@@ -117,7 +139,7 @@ fn audit(ws: &Workspace, with_graph: bool, ceiling: u64) -> u64 {
     let before = dhat::HeapStats::get();
     let mut generations = halyard_git::refs::Generations::new(&repo);
     let painted = halyard_git::walk::paint(&repo, head, &base_oids, 10_000, &mut generations)
-        .expect("paint");
+        .unwrap_or_else(|e| unreachable!("paint: {e}"));
     let after = dhat::HeapStats::get();
 
     let blocks = after.total_blocks - before.total_blocks;
