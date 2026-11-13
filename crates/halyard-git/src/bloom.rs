@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Murmur3 x86_32 (git's `murmurhash3.c`, seed variant 2).
+/// `Murmur3 x86_32` (git's `murmurhash3.c`, seed variant 2).
 fn murmur3_32(data: &[u8], seed: u32) -> u32 {
     const C1: u32 = 0xCC9E_2D51;
     const C2: u32 = 0x1B87_3593;
@@ -51,21 +51,19 @@ fn murmur3_32(data: &[u8], seed: u32) -> u32 {
         h1 = h1.rotate_left(13);
         h1 = h1.wrapping_mul(5).wrapping_add(0xE654_6B64);
     }
-    // Tail bytes (1..3 remaining), little-endian as git's implementation.
+    // Tail bytes (1..3 remaining), little-endian as git's implementation
+    // (the C reference falls through case 3 → 2 → 1, so the *last* byte
+    // is shifted only when the tail is 3 bytes long).
     let tail = data.get(blocks * 4..).unwrap_or(&[]);
     let mut k1 = 0u32;
-    if let Some(&b) = tail.last() {
+    if let Some(&b) = tail.get(2) {
         k1 ^= u32::from(b) << 16;
     }
-    if tail.len() >= 2 {
-        if let Some(&b) = tail.get(tail.len() - 2) {
-            k1 ^= u32::from(b) << 8;
-        }
+    if let Some(&b) = tail.get(1) {
+        k1 ^= u32::from(b) << 8;
     }
-    if tail.len() >= 1 {
-        if let Some(&b) = tail.first() {
-            k1 ^= u32::from(b);
-        }
+    if let Some(&b) = tail.first() {
+        k1 ^= u32::from(b);
         k1 = k1.wrapping_mul(C1).rotate_left(15).wrapping_mul(C2);
         h1 ^= k1;
     }
@@ -118,10 +116,13 @@ impl ChangedPathBloom {
         let mut ids: Vec<[u8; 4]> = Vec::new();
         for i in 0..=chunk_count {
             let base = 8 + i as usize * 12;
-            let id: [u8; 4] = bytes
-                .get(base..base + 4)
-                .and_then(|s| s.try_into().ok())
-                .filter(|id| id != &[0, 0, 0, 0])?;
+            let raw: Option<[u8; 4]> = bytes.get(base..base + 4).and_then(|s| s.try_into().ok());
+            let Some(id) = raw.filter(|id| id != &[0, 0, 0, 0]) else {
+                // The trailing all-zero entry terminates the chunk table
+                // (`gitformat-commit-graph`); it is not a chunk — stop the
+                // table walk instead of rejecting the file.
+                break;
+            };
             let offset = u64::from_be_bytes(
                 bytes
                     .get(base + 4..base + 12)
@@ -147,41 +148,42 @@ impl ChangedPathBloom {
         }
         let (bidx_off, bidx_end) = *chunks.get(b"BIDX")?;
         let (bdat_off, bdat_end) = *chunks.get(b"BDAT")?;
-        // BIDX: N × u32 BE; N commits (the file's OID count).
+        // BIDX: N × u32 BE; N commits (the file's OID count). Chunk
+        // extents must land inside the file — a corrupt graph is
+        // "consultation unavailable" (never a wrong answer).
         let bidx_len = usize::try_from(bidx_end.checked_sub(bidx_off)?).ok()?;
-        if bidx_len % 4 != 0 || bidx_len == 0 {
+        let bidx_end_usize = usize::try_from(bidx_end).ok()?;
+        if bidx_len % 4 != 0 || bidx_len == 0 || bidx_end_usize > bytes.len() {
             return None;
         }
+        let bidx_base = bidx_end_usize - bidx_len;
         let mut bidx = Vec::with_capacity(bidx_len / 4);
         for i in 0..bidx_len / 4 {
-            let at = bidx_off as usize + i * 4;
+            let at = bidx_base + i * 4;
             bidx.push(u32::from_be_bytes(
                 bytes.get(at..at + 4).and_then(|s| s.try_into().ok())?,
             ));
         }
         // BDAT header: hash version, num hashes, bits per entry.
         let bdat_len = usize::try_from(bdat_end.checked_sub(bdat_off)?).ok()?;
-        if bdat_len < 12 {
+        let bdat_end_usize = usize::try_from(bdat_end).ok()?;
+        if bdat_len < 12 || bdat_end_usize > bytes.len() {
             return None;
         }
-        let at = bdat_off as usize;
-        let hash_version = u32::from_le_bytes(
-            bytes.get(at..at + 4).and_then(|s| s.try_into().ok())?,
-        );
+        let at = bdat_end_usize - bdat_len;
+        let hash_version =
+            u32::from_le_bytes(bytes.get(at..at + 4).and_then(|s| s.try_into().ok())?);
         if hash_version != 2 {
             // Version 1 is buggy for non-ASCII paths (git's own warning);
             // treat as unavailable.
             return None;
         }
-        let num_hashes = u32::from_le_bytes(
-            bytes.get(at + 4..at + 8).and_then(|s| s.try_into().ok())?,
-        );
+        let num_hashes =
+            u32::from_le_bytes(bytes.get(at + 4..at + 8).and_then(|s| s.try_into().ok())?);
         if num_hashes == 0 || num_hashes > 64 {
             return None;
         }
-        let data = bytes
-            .get(at + 12..bdat_off as usize + bdat_len)
-            .map(<[u8]>::to_vec)?;
+        let data = bytes.get(at + 12..at + bdat_len).map(<[u8]>::to_vec)?;
         Some(Self {
             bidx,
             data,
@@ -219,20 +221,19 @@ impl ChangedPathBloom {
         };
         let bits = u64::from(u32::try_from(filter_len).unwrap_or(u32::MAX)) * 8;
         let hash0 = murmur3_32(path, 0x293A_E76F);
-        let hash1 = murmur3_32(path, 0x07E6_46E2);
+        let hash1 = murmur3_32(path, 0x7E64_6E2C);
         for i in 0..self.num_hashes {
-            let hash = hash0.wrapping_add(u32::try_from(i).unwrap_or(u32::MAX).wrapping_mul(hash1));
+            let hash = hash0.wrapping_add(i.wrapping_mul(hash1));
             let bit = u64::from(hash) % bits;
             let byte = usize::try_from(bit / 8).unwrap_or(usize::MAX);
             let mask = 1u8 << u32::try_from(bit % 8).unwrap_or(0);
             match filter.get(byte) {
-                Some(b) if b & mask != 0 => continue,
+                Some(b) if b & mask != 0 => {}
                 _ => return false, // a clear bit ⇒ definitely not changed
             }
         }
         true
     }
-
 }
 
 #[cfg(test)]
@@ -241,13 +242,23 @@ mod tests {
 
     #[test]
     fn murmur3_matches_known_vectors() {
-        // MurmurHash3 x86_32 public test vectors (seed 0).
+        // MurmurHash3 x86_32 vectors verified against the `mmh3` reference
+        // library (the previously checked-in constants did not match any
+        // implementation of the algorithm).
         assert_eq!(murmur3_32(b"", 0), 0);
         assert_eq!(murmur3_32(b"", 1), 0x514E_28B7);
-        assert_eq!(murmur3_32(b"aaaa", 0x9747_b28c), 0x5A97_8058);
-        assert_eq!(murmur3_32(b"hello", 0), 0x2419_4A79);
-        // The git Bloom seeds on a path shape.
-        let _ = murmur3_32(b"crates/core/src/lib.rs", 0x293A_E76F);
+        assert_eq!(murmur3_32(b"aaaa", 0x9747_B28C), 0x5A97_808A);
+        assert_eq!(murmur3_32(b"hello", 0), 0x248B_FA47);
+        // The git Bloom seeds on a real path shape (mmh3-verified): the
+        // two seeds must stay exactly git's, or probe results diverge.
+        assert_eq!(
+            murmur3_32(b"crates/core/src/lib.rs", 0x293A_E76F),
+            0x4E1F_D28A
+        );
+        assert_eq!(
+            murmur3_32(b"crates/core/src/lib.rs", 0x7E64_6E2C),
+            0xECA0_D6DB
+        );
     }
 
     #[test]
@@ -255,7 +266,9 @@ mod tests {
         assert!(ChangedPathBloom::parse(b"not a graph").is_none());
         let mut bytes = vec![b'C', b'G', b'P', b'H', 1, 1, 0, 0];
         assert!(ChangedPathBloom::parse(&bytes).is_none());
-        bytes[7] = 1;
+        if let Some(slot) = bytes.get_mut(7) {
+            *slot = 1;
+        }
         assert!(ChangedPathBloom::parse(&bytes).is_none());
     }
 
@@ -299,7 +312,7 @@ mod tests {
             !bloom.possibly_changed(0, &[0xFF; 64]),
             "an all-hashes-unlikely path must read negative"
         );
-        assert!(bloom.commit_count() == 1);
+        assert_eq!(bloom.commit_count(), 1);
     }
 
     #[test]
