@@ -3,7 +3,9 @@
 //! §14.1 budget for the forge is the ≤2-call update path (§11.5), so this
 //! bench documents the seam's in-memory overhead, not a network budget.
 //!
-//! Run: cargo bench -p halyard-forge
+//! Run: `cargo bench -p halyard-forge`
+
+use std::fmt::Write as _;
 
 use criterion::Criterion;
 use halyard_forge::{BranchName, Forge, MemoryForge, PrSpec, ReleaseSpec};
@@ -18,9 +20,7 @@ fn pr_spec() -> PrSpec {
     let mut body = String::with_capacity(1024);
     body.push_str("## 🚀 Release plan\n\n| Package | Current | Next | Bump | Why |\n");
     for i in 0..12 {
-        body.push_str(&format!(
-            "| `pkg-{i}` | 0.1.{i} | 0.2.0 | minor | `feat: …` |\n"
-        ));
+        let _ = writeln!(body, "| `pkg-{i}` | 0.1.{i} | 0.2.0 | minor | `feat: …` |");
     }
     PrSpec {
         branch: main_branch(),
@@ -34,7 +34,7 @@ fn release_spec(tag: &str) -> ReleaseSpec {
     let mut notes = String::with_capacity(512);
     notes.push_str("## Features\n\n");
     for i in 0..8 {
-        notes.push_str(&format!("- feat(pkg-{i}): add the thing ({i})\n"));
+        let _ = writeln!(notes, "- feat(pkg-{i}): add the thing ({i})");
     }
     ReleaseSpec {
         tag: tag.to_owned(),
