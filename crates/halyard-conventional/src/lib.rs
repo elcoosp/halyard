@@ -18,4 +18,7 @@
 
 mod parser;
 
-pub use parser::{ConventionalCommit, Trailer, extract_pr_number, is_fixup_or_squash, parse};
+pub use parser::{
+    ConventionalCommit, Trailer, extract_pr_number, is_fixup_or_squash, parse, revert_target,
+    trailing_pr_number,
+};
