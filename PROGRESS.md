@@ -19,8 +19,83 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M3.5b changelog styles slice (style registry + conventional/compact) | done | feat/pnpm-lock-patcher | M3.5b `Style` registry (`halyard-changelog`: `Style::{parse,name}` replacing the `style != "keep-a-changelog"` string check; `render_release`/`render_plan` dispatch through it), `conventional` style (planner section titles mapped through the documented type map — Features→feat, Bug Fixes/Fixed→fix, Performance→perf, Reverts→revert, unknown pass through verbatim; `### ⚠ BREAKING CHANGES` first), `compact` style (flat bullet list, breaking entries first), both idempotent with goldens; `github-release-notes` stays unshipped (needs forge context — documented); E-CHLOG-STYLE message + page updated to name the shipped set; `render` example now renders all three styles | minijinja template path (user-supplied template files) still open; `github-release-notes` waits for the forge milestone | 2026-11-13; see the session log below |
 | M4.1a forge seam slice (trait + reference adapter + taxonomy) | done | main | M4.1a `halyard-forge` crate (ADR-0011): the §11.4 `Forge` trait (object-safe, `&dyn`), the data vocabulary (`Pr`/`PrSpec`/`Release`/`ReleaseSpec`/`ApiCommit`/`ApiFile`/`BranchName`/`RateInfo`), the `E-FORGE-*` taxonomy with docs pages, the deterministic `MemoryForge` reference adapter (find-by-branch upserts, GET-by-tag-first releases, synthetic `fe`-prefixed commits, call log, failpoint harness), `commit_via_api` default honest decline, contract tests, `memory_forge` bench, `release_lifecycle` example, test-support re-exports, layer rule `forge → core` | M4.1b GitHub REST adapter (ETag/backoff/App-JWT, wiremock) open — nightly `forge-smoke` stays latent; PROGRESS row + README status were not updated when the slice landed (drift, repaired 2026-11-13) | 2026-11-13 (committed before the M4.2a/M4.3a session; row added retroactively) |
 | M4.2a state machine + M4.3a PR body slice | done | main (dirty; no commits) | M4.2a `halyard-forge::state` (`run_release_machine` over `&dyn Forge`: §11.1 tag phase with GET-by-tag-first idempotence + PROPAGATE gating, prepare phase find→upsert/`PrUnchanged` no-op/close; §11.5 call budgets counted from the adapter log; fail-closed input validation) + `Forge::close_pr` seam (default honest decline, §11.4 not-found-is-a-value convention) + `MemoryForge` open/closed PR modeling (closed PRs not re-found, upsert-after-close opens fresh) + 12 machine tests incl. the §15.2 failure-injection matrix (fail at every operation → re-run reaches the uninterrupted state, zero duplicates) + `state_machine` bench (5 pass shapes) + `release_machine` example; M4.3a `halyard-changelog::pr_body` (§11.3 body: plan table with deterministic Why map, Skipped line §16.3, changelog preview, override footer, embedded plan = canonical JSON → DEFLATE → base64 with recomputed `plan_hash`; `extract_embedded_plan` I8 verifier fails closed on missing/corrupt/hash-mismatched markers, `E-CHLOG-PRBODY` + docs page) + 10 tests + golden snapshot + `render_pr_body` example + forge example wired through the renderer (dev-dep) + layer rule widened (`changelog`: minijinja/serde_json/flate2/base64) | M4.1b GitHub REST adapter; M4.2b shell git-side tag/push effects (annotated tags, `--force-with-lease` CAS) and the CLI `pr`/`release` commands that consume the machine; corpus-wide pnpm differential xtask; M2.6 perf-budget close-out | 2026-11-13; see the session log below |
+| M4.2b step 1 + M4.3 `check` slice (pr --dry forecast + title lint) | done | main (dirty; no commits) | M4.2b step 1: `halyard-forge::preview::PreviewForge` (dry-run `Forge` adapter: probes see an empty forge, mutations are `preview://`-marked forecasts, §11.5 call log observable, `commit_via_api` declines per the seam default) + 9 contract tests incl. the machine composition (open forecast = find+upsert 2 calls, empty plan = 1 probe, tag phase PROPAGATE forecast), `pr_preview` bench (3 pass shapes), `pr_preview` example, CLI `pr --dry` (plan → §11.3 body → machine pass; effects + call-budget + body in human/json/gha; `E-CLI-PR` honest decline + docs page for live mode), `tests/cli_pr.rs` (6 tests incl. determinism + JSON stability); M4.3 `check`: `halyard-conventional::title_lint` (`TitleBumpRule` seam + `lint_title` — planner-exact as-written kind lookup, fixed §10.1 breaking→major rule, subject-line-only judgement, did-you-mean only for kinds outside the rule's known set), 12 engine tests + `title_lint` bench + `lint_title` example, CLI `check.rs` (`PlanTitleRule` over `PlanConfig::commit_types`, per-package §10.2 pre-major prediction), `halyard check --pr-title` / `--exit-code` (§15.4 exit 3), `E-CLI-TITLE` + docs page, `tests/cli_check.rs` (9 tests) | M4.1b GitHub REST adapter (the nightly `forge-smoke` job stays latent), the live `pr`/`release` shell effects (git-side tag/push), the tag-phase manifest-vs-tags reconciliation in `pr --dry` (declared not-forecast in the report), `github-release-notes` changelog style (needs forge context), M2.6 perf close-out (`--no-cache` still a forward-compat no-op — help text now states it precisely) | 2026-11-13; see the session log below |
 
 ## Session log
+
+### 2026-11-13 — M4.2b step 1 (`pr --dry` forecast) + M4.3 `check` title lint (branch `main`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `1d11bc8` (the
+  M4.2a/M4.3a tree had landed as conventional per-file commits plus the
+  docs-fix tail). Baseline `cargo test --workspace --all-features`
+  re-run green on a fresh toolchain (stable 1.100.0) before any delta.
+  Docs drift found: the CLI crate description still named only the
+  M1.10 command set (`apply`/`check`/`pr` missing) — fixed as part of
+  this slice.
+- **M4.2b step 1 implemented (no stubs), TDD with one full red→green
+  cycle** (9 `tests/preview.rs` contract tests written first, run red
+  against the missing adapter, then implemented):
+  - `halyard-forge/src/preview.rs` — the dry-run `Forge` adapter behind
+    `pr --dry`: `find_release_pr` → always `None` (offline mode cannot
+    observe the remote, I5), `upsert_pr` → a `preview://`-marked PR with
+    number `0` (a real forge can produce neither shape), `create_release`
+    → `created: true` + nothing stored, `close_pr` → the §11.4
+    not-found-is-a-value `Ok(false)`, `commit_via_api` → the documented
+    seam-default decline. Every call — mutations included — lands in the
+    §11.5 call log, so the dry run's budget forecast is the same
+    observable the live run will report.
+  - CLI `pr --dry`: plan → `render_release_body` (§11.3) →
+    `run_release_machine` over `PreviewForge` with `pending_releases: []`
+    (the tag-phase manifest-vs-tags reconciliation is the live run's
+    shell work — the report states this explicitly). Effects, the §11.5
+    call forecast and the body render through the human/json/gha paths;
+    the JSON document carries `mode/title/branch/pending_plan/effects/
+    calls/body`. Determinism pinned byte-identical across runs (I3).
+    Live mode declines fail-closed with the new `E-CLI-PR` code + docs
+    page instead of pretending to write.
+  - `pr_preview` bench (3 machine pass shapes over the adapter) and the
+    `pr_preview` example (open forecast / close probe / tag-phase
+    PROPAGATE, with the call log printed).
+- **M4.3 `check` implemented in the same session (M1 green end-to-end →
+  M2 authorized), TDD red→green (10 engine tests first):**
+  `halyard-conventional/src/title_lint.rs` — the §11.6 title-lint seam.
+  The parser leaf hosts the grammar + verdict types; the type→bump
+  policy is injected via the `TitleBumpRule` trait, so the leaf stays
+  standalone (ADR-0002 layer rules hold) while the shell binds
+  `PlanConfig::commit_types`. The engine mirrors `planner.rs` exactly:
+  the kind reaches the rule as written (no case normalization), breaking
+  titles are major per §10.1's fixed rule, only the subject line is
+  judged (a trailing `BREAKING CHANGE` line cannot leak), and the
+  did-you-mean hint (edit-distance ≤ 2, no deps) fires only for kinds
+  outside the rule's known set — a known-but-unmapped kind is policy,
+  not a typo. `halyard check --pr-title` predicts, per pending package,
+  the conveyed bump after the §10.2 pre-major remap
+  (`p1 0.1.0 → patch (0.x policy: minor → patch)`); a typo'd type fails
+  with `E-CLI-TITLE` (new docs page); `check --exit-code` gates CI with
+  §15.4 exit code 3 when a release is pending. `run()` now returns the
+  `ExitCode` so commands can carry non-failure codes.
+- **Micro-debt cleaned.** The CLI `--no-cache` help text now states the
+  truth precisely (the M2.5 cache seam exists; the CLI pipeline does not
+  wire it until M2.6 — accepted as a forward-compat no-op); the
+  native-lockfile-refresh member list no longer falls back to an empty
+  string on an unresolvable symbol — it fails closed with the
+  `E-LOCK-NATIVE` code (an empty members list would pass any refresh).
+- **Tests/bench/example totals.** 9 preview contract tests + 12
+  title-lint engine tests (10 integration + 2 inline) + 2 inline CLI
+  check tests + 9 CLI check integration tests + 6 CLI pr integration
+  tests; benches `title_lint` + `pr_preview` registered and run; 2 new
+  examples (`lint_title`, `pr_preview`); `check-layers` unaffected
+  (the CLI may depend on any workspace crate; forge/changelog gained no
+  new runtime deps).
+- **Honest state at cut-off.** M4.1b (GitHub REST adapter), the live
+  `pr`/`release` shell effects, the tag-phase reconciliation in
+  `pr --dry`, `github-release-notes` and M2.6 close-out remain open.
+  Tree left dirty on `main` (no commits made).
+- **Next session start point.** (1) M4.1b REST adapter (VERIFY-tagged
+  research first, ADR per §0.3), (2) the live `pr`/`release` shell over
+  git effects, (3) the corpus-wide pnpm differential as an xtask
+  subcommand, (4) M2.6 perf-budget close-out (wire the cache into the
+  CLI pipeline and retire the `--no-cache` no-op).
 
 ### 2026-11-13 — M4.2a Release-PR state machine + M4.3a PR body renderer (branch `main`, tree left dirty, no commits)
 
