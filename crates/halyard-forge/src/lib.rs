@@ -39,20 +39,23 @@
 //!
 //! M4.1a ships the seam + reference adapter; M4.2a ships the §11.1
 //! machine over it ([`state::run_release_machine`]) with the
-//! [`Forge::close_pr`] capability. The remaining M4.1b/M4.2b slices are
-//! the GitHub REST adapter (`ETag` conditionals, backoff, App-JWT auth)
-//! and the shell's git-side tag/push effects — the nightly `forge-smoke`
-//! job stays latent until the adapter exists.
+//! [`Forge::close_pr`] capability; M4.2b step 1 ships the dry-run
+//! adapter ([`PreviewForge`]) the shell's `pr --dry` forecast runs on.
+//! The remaining M4.1b slice is the GitHub REST adapter (`ETag`
+//! conditionals, backoff, App-JWT auth) — the nightly `forge-smoke` job
+//! stays latent until it exists.
 
 #![forbid(unsafe_code)]
 
 pub mod error;
 pub mod memory;
+pub mod preview;
 pub mod spec;
 pub mod state;
 
 pub use error::ForgeError;
 pub use memory::{CallRecord, MemoryForge};
+pub use preview::PreviewForge;
 pub use spec::{ApiCommit, ApiFile, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
 pub use state::{MachineEffect, MachineInput, MachineReport, run_release_machine};
 
