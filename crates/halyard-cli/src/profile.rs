@@ -67,11 +67,11 @@ impl Profiler {
             })
             .collect();
         let trace = format!("{{\"traceEvents\":[{}]}}", events.join(","));
-        if let Ok(path) = std::env::var("HALYARD_PROFILE_PATH") {
-            if let Ok(mut file) = std::fs::File::create(&path) {
-                let _ = file.write_all(trace.as_bytes());
-                return true;
-            }
+        if let Ok(path) = std::env::var("HALYARD_PROFILE_PATH")
+            && let Ok(mut file) = std::fs::File::create(&path)
+        {
+            let _ = file.write_all(trace.as_bytes());
+            return true;
         }
         eprintln!("{trace}");
         true
