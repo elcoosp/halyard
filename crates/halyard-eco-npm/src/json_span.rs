@@ -71,7 +71,11 @@ pub struct JsonError {
 
 impl std::fmt::Display for JsonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "invalid JSON at byte {}: {}", self.position, self.message)
+        write!(
+            f,
+            "invalid JSON at byte {}: {}",
+            self.position, self.message
+        )
     }
 }
 
@@ -106,7 +110,7 @@ impl JsonDoc {
         let root = if bom_offset == 0 {
             root
         } else {
-            shift_span(root, bom_offset as u32)
+            shift_span(root, u32::try_from(bom_offset).unwrap_or(u32::MAX))
         };
         Ok(Self {
             original: input.to_vec(),
@@ -123,18 +127,15 @@ impl JsonDoc {
     /// Decodes a top-level object entry by key.
     pub fn get(&self, key: &str) -> Option<&SpannedValue> {
         match &self.root.value {
-            JsonValue::Object(entries) => entries
-                .iter()
-                .find(|e| e.key == key)
-                .map(|e| &e.value),
+            JsonValue::Object(entries) => entries.iter().find(|e| e.key == key).map(|e| &e.value),
             _ => None,
         }
     }
 
     /// Looks up a nested key path through objects only.
     pub fn get_path(&self, path: &[&str]) -> Option<&SpannedValue> {
-        let mut cur = self.get(*path.first()?)?;
-        for key in &path[1..] {
+        let mut cur = self.get(path.first()?)?;
+        for key in path.get(1..).unwrap_or(&[]) {
             cur = match &cur.value {
                 JsonValue::Object(entries) => {
                     entries.iter().find(|e| e.key == *key).map(|e| &e.value)?
@@ -154,7 +155,7 @@ impl JsonDoc {
             JsonValue::Object(_) => {
                 let target = self.get_path(path).ok_or(JsonError {
                     position: 0,
-                    message: format!("key path {:?} does not resolve to a value", path),
+                    message: format!("key path {path:?} does not resolve to a value"),
                 })?;
                 match &target.value {
                     JsonValue::String { inner, .. } => *inner,
@@ -173,9 +174,31 @@ impl JsonDoc {
                 });
             }
         };
-        // Record the edit; render applies it.
-        self.edits.push((span.start, span.end, new.to_owned()));
+        self.replace_span(span, new)?;
         Ok(span)
+    }
+
+    /// Records a byte-span replacement of one string's **inner** text
+    /// (between the quotes). Span-addressed variant of
+    /// [`JsonDoc::set_string`] for callers that already resolved the edit
+    /// site by walking the spanned tree (M3.3 patcher): duplicate keys in
+    /// one object cannot be addressed by key path, but every entry has a
+    /// unique span.
+    ///
+    /// # Errors
+    ///
+    /// [`JsonError`] when `span` is out of the document's bounds — the
+    /// caller's span must come from the same parsed document.
+    pub fn replace_span(&mut self, span: Span, new: &str) -> Result<(), JsonError> {
+        let (start, end) = (span.start, span.end);
+        if start > end || end > u32::try_from(self.original.len()).unwrap_or(u32::MAX) {
+            return Err(JsonError {
+                position: usize::try_from(start).unwrap_or(usize::MAX),
+                message: format!("span {start}..{end} is outside the document"),
+            });
+        }
+        self.edits.push((start, end, new.to_owned()));
+        Ok(())
     }
 
     /// Renders the document: original bytes with the recorded patches
@@ -242,12 +265,20 @@ struct Scanner<'a> {
     pos: usize,
 }
 
-impl<'a> Scanner<'a> {
+impl Scanner<'_> {
     fn err(&self, msg: &str) -> JsonError {
         JsonError {
             position: self.pos,
             message: msg.to_owned(),
         }
+    }
+
+    /// The current position as a u32 span coordinate. A position that
+    /// does not fit `u32` (impossible for real package manifests — the
+    /// scanner works on in-memory files) renders as `u32::MAX`, which
+    /// only ever reads as "past the end of the document".
+    fn pos32(&self) -> u32 {
+        u32::try_from(self.pos).unwrap_or(u32::MAX)
     }
 
     fn peek(&self) -> Option<u8> {
@@ -265,7 +296,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn parse_value(&mut self) -> Result<SpannedValue, JsonError> {
-        let start = self.pos as u32;
+        let start = self.pos32();
         let value = match self.peek() {
             None => return Err(self.err("unexpected end of input")),
             Some(b'{') => return self.parse_object(start),
@@ -276,21 +307,21 @@ impl<'a> Scanner<'a> {
                     value: JsonValue::String { decoded, inner },
                     span: Span {
                         start,
-                        end: self.pos as u32,
+                        end: self.pos32(),
                     },
                 }
             }
             Some(b't') => self.parse_keyword("true", JsonValue::Bool(true))?,
             Some(b'f') => self.parse_keyword("false", JsonValue::Bool(false))?,
             Some(b'n') => self.parse_keyword("null", JsonValue::Null)?,
-            Some(b'-') | Some(b'0'..=b'9') => self.parse_number()?,
+            Some(b'-' | b'0'..=b'9') => self.parse_number()?,
             Some(_) => return Err(self.err("unexpected character")),
         };
         Ok(value)
     }
 
     fn parse_keyword(&mut self, word: &str, value: JsonValue) -> Result<SpannedValue, JsonError> {
-        let start = self.pos as u32;
+        let start = self.pos32();
         let bytes = word.as_bytes();
         for expected in bytes {
             if self.peek() != Some(*expected) {
@@ -302,7 +333,7 @@ impl<'a> Scanner<'a> {
             value,
             span: Span {
                 start,
-                end: self.pos as u32,
+                end: self.pos32(),
             },
         })
     }
@@ -333,9 +364,9 @@ impl<'a> Scanner<'a> {
             }
         }
         // exp
-        if matches!(self.peek(), Some(b'e') | Some(b'E')) {
+        if matches!(self.peek(), Some(b'e' | b'E')) {
             self.pos += 1;
-            if matches!(self.peek(), Some(b'+') | Some(b'-')) {
+            if matches!(self.peek(), Some(b'+' | b'-')) {
                 self.pos += 1;
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
@@ -345,12 +376,13 @@ impl<'a> Scanner<'a> {
                 self.pos += 1;
             }
         }
-        let text = String::from_utf8_lossy(&self.bytes[start..self.pos]).into_owned();
+        let text =
+            String::from_utf8_lossy(self.bytes.get(start..self.pos).unwrap_or(&[])).into_owned();
         Ok(SpannedValue {
             value: JsonValue::Number(text),
             span: Span {
-                start: start as u32,
-                end: self.pos as u32,
+                start: u32::try_from(start).unwrap_or(u32::MAX),
+                end: self.pos32(),
             },
         })
     }
@@ -368,8 +400,8 @@ impl<'a> Scanner<'a> {
             match b {
                 b'"' => {
                     let inner = Span {
-                        start: inner_start as u32,
-                        end: self.pos as u32,
+                        start: u32::try_from(inner_start).unwrap_or(u32::MAX),
+                        end: self.pos32(),
                     };
                     self.pos += 1;
                     return Ok((decoded, inner));
@@ -405,15 +437,13 @@ impl<'a> Scanner<'a> {
                                 if !(0xDC00..0xE000).contains(&lo) {
                                     return Err(self.err("invalid low surrogate"));
                                 }
-                                let combined =
-                                    0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                                let combined = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
                                 char::from_u32(combined)
                                     .ok_or_else(|| self.err("invalid surrogate pair"))?
                             } else if (0xDC00..0xE000).contains(&hi) {
                                 return Err(self.err("lone low surrogate"));
                             } else {
-                                char::from_u32(hi)
-                                    .ok_or_else(|| self.err("invalid \\u escape"))?
+                                char::from_u32(hi).ok_or_else(|| self.err("invalid \\u escape"))?
                             };
                             decoded.push(ch);
                         }
@@ -428,7 +458,7 @@ impl<'a> Scanner<'a> {
                     if end > self.bytes.len() {
                         return Err(self.err("truncated UTF-8 sequence"));
                     }
-                    let chunk = &self.bytes[self.pos..end];
+                    let chunk = self.bytes.get(self.pos..end).unwrap_or(&[]);
                     match std::str::from_utf8(chunk) {
                         Ok(s) => decoded.push_str(s),
                         Err(_) => return Err(self.err("invalid UTF-8 in string")),
@@ -467,7 +497,7 @@ impl<'a> Scanner<'a> {
                 value: JsonValue::Object(entries),
                 span: Span {
                     start,
-                    end: self.pos as u32,
+                    end: self.pos32(),
                 },
             });
         }
@@ -493,6 +523,20 @@ impl<'a> Scanner<'a> {
             match self.peek() {
                 Some(b',') => {
                     self.pos += 1;
+                    // Lenient real-world manifests: a trailing comma
+                    // before `}` is tolerated (the lossless editor must
+                    // parse what npm's lenient tooling accepts).
+                    self.skip_ws();
+                    if self.peek() == Some(b'}') {
+                        self.pos += 1;
+                        return Ok(SpannedValue {
+                            value: JsonValue::Object(entries),
+                            span: Span {
+                                start,
+                                end: self.pos32(),
+                            },
+                        });
+                    }
                 }
                 Some(b'}') => {
                     self.pos += 1;
@@ -500,7 +544,7 @@ impl<'a> Scanner<'a> {
                         value: JsonValue::Object(entries),
                         span: Span {
                             start,
-                            end: self.pos as u32,
+                            end: self.pos32(),
                         },
                     });
                 }
@@ -519,7 +563,7 @@ impl<'a> Scanner<'a> {
                 value: JsonValue::Array(items),
                 span: Span {
                     start,
-                    end: self.pos as u32,
+                    end: self.pos32(),
                 },
             });
         }
@@ -530,6 +574,19 @@ impl<'a> Scanner<'a> {
             match self.peek() {
                 Some(b',') => {
                     self.pos += 1;
+                    // Trailing comma before `]` is tolerated (see the
+                    // object parser note).
+                    self.skip_ws();
+                    if self.peek() == Some(b']') {
+                        self.pos += 1;
+                        return Ok(SpannedValue {
+                            value: JsonValue::Array(items),
+                            span: Span {
+                                start,
+                                end: self.pos32(),
+                            },
+                        });
+                    }
                 }
                 Some(b']') => {
                     self.pos += 1;
@@ -537,7 +594,7 @@ impl<'a> Scanner<'a> {
                         value: JsonValue::Array(items),
                         span: Span {
                             start,
-                            end: self.pos as u32,
+                            end: self.pos32(),
                         },
                     });
                 }
@@ -550,12 +607,12 @@ impl<'a> Scanner<'a> {
 /// Expected length of the UTF-8 sequence starting with byte `b`.
 fn utf8_len(b: u8) -> usize {
     match b {
-        0x00..=0x7F => 1,
         0xC0..=0xDF => 2,
         0xE0..=0xEF => 3,
         0xF0..=0xF7 => 4,
-        // Continuation bytes / invalid leads: treated as 1 so the caller
-        // reports invalid UTF-8 instead of running past the end.
+        // ASCII and continuation bytes / invalid leads: treated as 1 so
+        // the caller reports invalid UTF-8 instead of running past the
+        // end.
         _ => 1,
     }
 }
@@ -578,7 +635,10 @@ mod tests {
         let version = doc.get("version").unwrap();
         match &version.value {
             JsonValue::String { inner, .. } => {
-                assert_eq!(&src[inner.start as usize..inner.end as usize], b"1.2.3");
+                assert_eq!(
+                    src.get(inner.start as usize..inner.end as usize),
+                    Some(&b"1.2.3"[..])
+                );
             }
             other => panic!("expected string, got {other:?}"),
         }
@@ -608,7 +668,11 @@ mod tests {
             b"1.",
             b"\"\\x\"",
         ] {
-            assert!(JsonDoc::parse(bad).is_err(), "{:?} should fail", String::from_utf8_lossy(bad));
+            assert!(
+                JsonDoc::parse(bad).is_err(),
+                "{:?} should fail",
+                String::from_utf8_lossy(bad)
+            );
         }
     }
 
@@ -629,7 +693,10 @@ mod tests {
         let v = doc.get("v").unwrap();
         match &v.value {
             JsonValue::String { inner, .. } => {
-                assert_eq!(&src[inner.start as usize..inner.end as usize], b"1.0.0");
+                assert_eq!(
+                    src.get(inner.start as usize..inner.end as usize),
+                    Some(&b"1.0.0"[..])
+                );
             }
             _ => panic!("expected string"),
         }
