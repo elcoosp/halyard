@@ -25,8 +25,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("dir        : {}", Cache::cache_dir(&git_dir).display());
     println!("records    : {}", cache.len());
     println!("valid bytes: {}", cache.size_bytes());
-    println!("hit-rate   : {:.1}% ({} hits / {} misses since last flush)",
-        if total == 0 { 0.0 } else { f64::from(u32::try_from(hits).unwrap_or(u32::MAX)) * 100.0 / f64::from(u32::try_from(total).unwrap_or(u32::MAX)) },
+    println!(
+        "hit-rate   : {:.1}% ({} hits / {} misses since last flush)",
+        if total == 0 {
+            0.0
+        } else {
+            f64::from(u32::try_from(hits).unwrap_or(u32::MAX)) * 100.0
+                / f64::from(u32::try_from(total).unwrap_or(u32::MAX))
+        },
         hits,
         misses,
     );
