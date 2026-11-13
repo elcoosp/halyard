@@ -3,7 +3,7 @@
 //! [`MemoryForge`] — the same sequence the M4.2 state machine runs
 //! against a real forge adapter.
 //!
-//! Run: cargo run -p halyard-forge --example release_lifecycle
+//! Run: `cargo run -p halyard-forge --example release_lifecycle`
 
 use halyard_forge::{ApiCommit, ApiFile, BranchName, Forge, MemoryForge, PrSpec, ReleaseSpec};
 
