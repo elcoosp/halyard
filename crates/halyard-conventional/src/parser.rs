@@ -137,7 +137,9 @@ pub fn revert_target(message: &[u8]) -> Option<BString> {
 fn line_revert_target(line: &[u8]) -> Option<BString> {
     let line = strip_trailing_cr(line);
     // Find the key anywhere in the line (leading whitespace tolerated).
-    let pos = line.windows(REVERT_KEY.len()).position(|w| w == REVERT_KEY)?;
+    let pos = line
+        .windows(REVERT_KEY.len())
+        .position(|w| w == REVERT_KEY)?;
     let rest = line.get(pos + REVERT_KEY.len()..)?;
     let rest = rest.strip_prefix(b" ")?;
     let end = rest
@@ -148,7 +150,7 @@ fn line_revert_target(line: &[u8]) -> Option<BString> {
     if hex.len() != 40 && hex.len() != 64 {
         return None;
     }
-    if !hex.iter().all(|b| b.is_ascii_hexdigit()) {
+    if !hex.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     Some(BString::from(hex.to_ascii_lowercase()))
