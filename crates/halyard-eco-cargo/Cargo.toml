@@ -21,9 +21,17 @@ proptest = { workspace = true }
 insta = { workspace = true }
 criterion = { workspace = true }
 halyard-test-support = { workspace = true }
+# M3.2 differential: the fixture workspaces and `cargo update -w
+# --offline` ground truth live in a tempdir (dev-only, exempt from the
+# layer rules).
+tempfile = { workspace = true }
 
 [[bench]]
 name = "manifest_parse"
+harness = false
+
+[[bench]]
+name = "lockfile_patch"
 harness = false
 
 [lints]
