@@ -27,5 +27,10 @@ harness = false
 name = "state_machine"
 harness = false
 
+# M4.2b step 1 (`pr --dry`): the dry-run pass shapes over PreviewForge.
+[[bench]]
+name = "pr_preview"
+harness = false
+
 [lints]
 workspace = true
