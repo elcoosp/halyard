@@ -1,16 +1,20 @@
-//! Changelog rendering (M3.5, §9.4): the `keep-a-changelog` style over a
+//! Changelog rendering (M3.5 + M3.5b, §9.4): the built-in styles over a
 //! [`Plan`]. The renderer is pure — a [`Plan`] plus the existing file
 //! text in, the new file text out — and idempotent: re-running against a
 //! file that already carries the plan's release replaces only the
 //! `Unreleased` section and is byte-identical to the first run (I1/I3).
 //!
-//! Other §9.4 styles (`conventional`, `compact`, `github-release-notes`)
-//! are deferred to M3.5b; requesting them yields [`ChangelogError::Style`]
-//! (`E-CHLOG-STYLE`).
+//! The built-in style set ([`Style`]): `keep-a-changelog` (M3.5),
+//! `conventional` (grouped by conventional commit type, M3.5b) and
+//! `compact` (one flat bullet list, M3.5b). Other §9.4 styles
+//! (`github-release-notes`) need forge context (compare links, remote
+//! URL) and stay unshipped; requesting them yields
+//! [`ChangelogError::Style`] (`E-CHLOG-STYLE`).
 
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use halyard_core::plan::{Plan, PlanRelease};
 use minijinja::{Environment, context};
@@ -19,6 +23,47 @@ use minijinja::{Environment, context};
 /// heading the renderer replaces.
 pub const INSERT_MARKER: &str = "<!-- halyard:insert -->";
 const UNRELEASED_HEADING: &str = "## [Unreleased]";
+
+/// The built-in changelog styles (§9.4) and their config names — the
+/// M3.5b style registry that replaced the `style != "keep-a-changelog"`
+/// string check. `github-release-notes` stays unshipped (it needs forge
+/// context: compare links, remote URL).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    /// `keep-a-changelog`: `## [version]` + `### Section` groups taken
+    /// from the planner's entry preview (M3.5).
+    KeepAChangelog,
+    /// `conventional`: grouped by conventional commit type (`### feat`,
+    /// `### fix`, …), `### ⚠ BREAKING CHANGES` first (M3.5b).
+    Conventional,
+    /// `compact`: one flat bullet list per release, breaking entries
+    /// first, no section grouping (M3.5b).
+    Compact,
+}
+
+impl Style {
+    /// Parses a style name as written in `halyard.toml` (`changelog.style`)
+    /// or an API argument.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "keep-a-changelog" => Some(Self::KeepAChangelog),
+            "conventional" => Some(Self::Conventional),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+
+    /// The style's config name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::KeepAChangelog => "keep-a-changelog",
+            Self::Conventional => "conventional",
+            Self::Compact => "compact",
+        }
+    }
+}
 
 /// Changelog failures (§15.4 `E-CHLOG-*`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,9 +100,8 @@ impl std::fmt::Display for ChangelogError {
         match self {
             Self::Style { requested } => write!(
                 f,
-                "[E-CHLOG-STYLE] changelog style {requested:?} is not available in v1; the \
-                 built-in style is \"keep-a-changelog\" (a minijinja template path arrives with \
-                 M3.5b)"
+                "[E-CHLOG-STYLE] changelog style {requested:?} is not available; the built-in \
+                 styles are \"keep-a-changelog\", \"conventional\" and \"compact\""
             ),
             Self::File { file, reason } => write!(
                 f,
@@ -81,11 +125,15 @@ impl std::error::Error for ChangelogError {}
 /// [`ChangelogError::Style`] for any style other than
 /// `keep-a-changelog`.
 pub fn render_release(release: &PlanRelease, style: &str) -> Result<String, ChangelogError> {
-    if style != "keep-a-changelog" {
-        return Err(ChangelogError::Style {
-            requested: style.to_owned(),
-        });
-    }
+    let style = Style::parse(style).ok_or_else(|| ChangelogError::Style {
+        requested: style.to_owned(),
+    })?;
+    render_release_styled(release, style)
+}
+
+/// Renders one release section in the parsed [`Style`] (the dispatch
+/// target of [`render_release`]).
+fn render_release_styled(release: &PlanRelease, style: Style) -> Result<String, ChangelogError> {
     // `empty()` (no globals/filters, no auto-escape) instead of the
     // deprecated-without-`serde` `new()`: the keep-a-changelog template is
     // plain Jinja over the plan's own values — no builtin filters or
@@ -108,17 +156,24 @@ pub fn render_release(release: &PlanRelease, style: &str) -> Result<String, Chan
             .map(|c| c.entry_md.clone())
             .unwrap_or_default(),
     );
-    // Dateless heading: the release step (which owns the clock) stamps
-    // dates; the pure renderer never reads one (§4 purity).
-    template
-        .render(context! {
-            version => release.to,
-            tag => release.tag,
-            sections => sections,
-        })
-        .map_err(|e| ChangelogError::Style {
-            requested: format!("render error: {e}"),
-        })
+    match style {
+        Style::KeepAChangelog => {
+            // Dateless heading: the release step (which owns the clock)
+            // stamps dates; the pure renderer never reads one (§4
+            // purity).
+            template
+                .render(context! {
+                    version => release.to,
+                    tag => release.tag,
+                    sections => sections,
+                })
+                .map_err(|e| ChangelogError::Style {
+                    requested: format!("render error: {e}"),
+                })
+        }
+        Style::Conventional => Ok(conventional_body(&release.to, &sections)),
+        Style::Compact => Ok(compact_body(&release.to, &sections)),
+    }
 }
 
 /// Renders the full changelog document: every release in the plan, newest
@@ -134,14 +189,12 @@ pub fn render_plan(
     style: &str,
     existing: Option<&str>,
 ) -> Result<String, ChangelogError> {
-    if style != "keep-a-changelog" {
-        return Err(ChangelogError::Style {
-            requested: style.to_owned(),
-        });
-    }
+    let style = Style::parse(style).ok_or_else(|| ChangelogError::Style {
+        requested: style.to_owned(),
+    })?;
     let mut sections: Vec<String> = Vec::new();
     for release in &plan.releases {
-        sections.push(render_release(release, style)?);
+        sections.push(render_release_styled(release, style)?);
     }
     let body = sections.join("\n");
     let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
@@ -252,6 +305,60 @@ fn sections_of(entry_md: &str) -> Vec<(String, Vec<String>)> {
     sections
 }
 
+/// Maps the planner's section titles onto conventional type names (the
+/// documented M3.5b map; unknown titles pass through verbatim — never a
+/// guess).
+fn conventional_heading(title: &str) -> &str {
+    match title {
+        "Features" => "feat",
+        "Bug Fixes" | "Fixed" => "fix",
+        "Performance" => "perf",
+        "Reverts" => "revert",
+        _ => title,
+    }
+}
+
+/// The parsed sections of one release: `(heading, bullet lines)` pairs.
+type Sections = Vec<(String, Vec<String>)>;
+
+/// Splits the parsed sections into the breaking group and the rest (both
+/// styles put breaking entries first, §9.4).
+fn split_breaking(sections: &Sections) -> (Sections, Sections) {
+    let (breaking, rest): (Sections, Sections) = sections
+        .iter()
+        .cloned()
+        .partition(|(title, _)| title == "⚠ BREAKING CHANGES");
+    (breaking, rest)
+}
+
+/// The `conventional` release body: `### <type>` groups (breaking first,
+/// then document order).
+fn conventional_body(version: &str, sections: &Sections) -> String {
+    let (breaking, rest) = split_breaking(sections);
+    let mut out = format!("## [{version}]\n");
+    for (title, lines) in breaking.iter().chain(rest.iter()) {
+        let _ = writeln!(out, "\n### {}\n", conventional_heading(title));
+        for line in lines {
+            let _ = writeln!(out, "- {line}");
+        }
+    }
+    out
+}
+
+/// The `compact` release body: one flat bullet list (breaking entries
+/// first, then document order), no section grouping.
+fn compact_body(version: &str, sections: &Sections) -> String {
+    let (breaking, rest) = split_breaking(sections);
+    let mut out = format!("## [{version}]\n");
+    for (title, lines) in breaking.iter().chain(rest.iter()) {
+        let _ = title;
+        for line in lines {
+            let _ = writeln!(out, "- {line}");
+        }
+    }
+    out
+}
+
 /// The keep-a-changelog release template (minijinja, compiled per call —
 /// releases are one-shot documents, not hot-loop text).
 static RELEASE_TEMPLATE: &str = r"## [{{ version }}]
@@ -347,8 +454,106 @@ mod tests {
 
     #[test]
     fn unknown_style_is_an_error() {
-        match render_plan(&sample_plan(), "compact", None) {
+        match render_plan(&sample_plan(), "github-release-notes", None) {
             Err(err) => assert_eq!(err.code(), "E-CHLOG-STYLE"),
+            Ok(out) => unreachable!("unknown style must error, got {out:?}"),
+        }
+    }
+    // --- M3.5b style registry + compact/conventional styles (tests
+    // written first; the renderers land in the green step) ---
+
+    #[test]
+    fn style_parse_and_names_round_trip() {
+        for (name, expected) in [
+            ("keep-a-changelog", Style::KeepAChangelog),
+            ("conventional", Style::Conventional),
+            ("compact", Style::Compact),
+        ] {
+            let parsed = Style::parse(name).unwrap_or_else(|| unreachable!("{name} parses"));
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.name(), name);
+        }
+        assert!(Style::parse("keepachangelog").is_none());
+        assert!(Style::parse("").is_none());
+    }
+
+    #[test]
+    fn compact_style_flattens_bullets_breaking_first() -> Result<(), Box<dyn std::error::Error>> {
+        let plan = sample_plan();
+        let out = render_release(plan.releases.first().ok_or("release")?, "compact")?;
+        // No section headings in the compact body.
+        assert!(!out.contains("### "), "{out}");
+        assert!(out.contains("## [0.2.0]"), "{out}");
+        // Breaking entries come first, then the remaining bullets.
+        let breaking = out.find("- reshape contract").ok_or("breaking bullet")?;
+        let feat = out.find("- grow surface").ok_or("feature bullet")?;
+        assert!(breaking < feat, "breaking first: {out}");
+        insta::assert_snapshot!(out);
+        Ok(())
+    }
+
+    #[test]
+    fn conventional_style_groups_by_type_breaking_first() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let plan = sample_plan();
+        let out = render_release(plan.releases.first().ok_or("release")?, "conventional")?;
+        // The planner's section titles map onto conventional type names;
+        // the breaking group keeps its heading and stays first.
+        let breaking = out.find("### ⚠ BREAKING CHANGES").ok_or("breaking group")?;
+        let feat = out.find("### feat").ok_or("feat group")?;
+        assert!(breaking < feat, "breaking first: {out}");
+        assert!(out.contains("- reshape contract"), "{out}");
+        assert!(out.contains("- grow surface"), "{out}");
+        insta::assert_snapshot!(out);
+        Ok(())
+    }
+
+    #[test]
+    fn conventional_maps_the_documented_section_titles() -> Result<(), Box<dyn std::error::Error>> {
+        let release = PlanRelease {
+            changelog: Some(PlanChangelog {
+                file: "CHANGELOG.md".to_owned(),
+                entry_md: concat!(
+                    "## 1.0.0\n\n### Bug Fixes\n\n- patch span drift\n\n",
+                    "### Performance\n\n- parse faster\n"
+                )
+                .to_owned(),
+            }),
+            ..sample_plan().releases.first().ok_or("release")?.clone()
+        };
+        let out = render_release(&release, "conventional")?;
+        assert!(out.contains("### fix"), "{out}");
+        assert!(out.contains("### perf"), "{out}");
+        assert!(!out.contains("### Bug Fixes"), "titles are mapped: {out}");
+        assert!(!out.contains("### Performance"), "titles are mapped: {out}");
+        Ok(())
+    }
+
+    #[test]
+    fn compact_and_conventional_reruns_are_byte_identical() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let plan = sample_plan();
+        for style in ["compact", "conventional"] {
+            let first = render_plan(&plan, style, None)?;
+            let second = render_plan(&plan, style, Some(&first))?;
+            assert_eq!(first, second, "{style} re-run is byte-identical");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_style_error_names_the_built_ins() {
+        match render_plan(&sample_plan(), "github-release-notes", None) {
+            Err(err) => {
+                assert_eq!(err.code(), "E-CHLOG-STYLE");
+                let message = err.to_string();
+                assert!(
+                    message.contains("keep-a-changelog")
+                        && message.contains("conventional")
+                        && message.contains("compact"),
+                    "message names the shipped styles: {message}"
+                );
+            }
             Ok(out) => unreachable!("unknown style must error, got {out:?}"),
         }
     }
