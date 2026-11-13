@@ -40,9 +40,10 @@ pub fn apply_dry(preview: &BTreeMap<String, Vec<DryPatch>>) -> String {
 }
 
 /// Renders the deterministic per-file apply summary (M3.6): sorted paths,
-/// applied/skipped counts, plus the M3.2 lockfile stage row (patches, or
-/// the native-refresh outcome when the patcher declined, §9.2 rule 4).
-pub fn apply_report(report: &ApplyReport, native_refresh: Option<&[String]>) -> String {
+/// applied/skipped counts, plus the M3.2/M3.4 lockfile stage rows
+/// (patches, or the native-refresh outcome when a patcher declined,
+/// §9.2 rule 4 / §9.3).
+pub fn apply_report(report: &ApplyReport, native_refreshes: &[(String, Vec<String>)]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -60,7 +61,7 @@ pub fn apply_report(report: &ApplyReport, native_refresh: Option<&[String]>) -> 
             file.file, file.applied, file.skipped
         );
     }
-    if let Some(lock) = &report.lockfile {
+    for lock in &report.lockfiles {
         match &lock.native_reason {
             None => {
                 let _ = writeln!(
@@ -78,11 +79,10 @@ pub fn apply_report(report: &ApplyReport, native_refresh: Option<&[String]>) -> 
             }
         }
     }
-    if let Some((lock, moved)) = report.lockfile.as_ref().zip(native_refresh) {
+    for (file, moved) in native_refreshes {
         let _ = writeln!(
             out,
-            "{}: natively refreshed, members moved: {}",
-            lock.file,
+            "{file}: natively refreshed, members moved: {}",
             moved.join(", ")
         );
     }
