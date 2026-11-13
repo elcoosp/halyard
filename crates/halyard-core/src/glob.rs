@@ -15,7 +15,7 @@
 //! Patterns are matched against **directories** derived from the committed
 //! file list (a workspace member is a directory containing a manifest);
 //! `match_segments` is the single-segment `fnmatch`-style matcher and
-//! [`matches`] the whole-path entry point. Matching is pure, allocation
+//! `matches` the whole-path entry point. Matching is pure, allocation
 //! light and total: no input panics.
 
 /// True when `path` (forward-slash separated) matches `pattern`.
