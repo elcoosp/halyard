@@ -39,9 +39,12 @@ unused = { level = "deny", priority = -1 }
 # --all-features -- -D warnings`.
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
-# §15.3 restriction set; test allowances are configured in clippy.toml
-# (`allow-*-in-tests`). `indexing_slicing` has no test allowance, so test code
-# uses `.get()`/iterators instead of direct indexing.
+# §15.3 restriction set; the test allowances (`allow-unwrap-in-tests` & co.)
+# live in `clippy.toml` — clippy's behavioral configuration file, which
+# cannot be expressed as `[lints]` entries (it was removed as "obsolete" in
+# 801f1b0 and restored when the gate proved load-bearing). `indexing_slicing`
+# has no test allowance, so test code uses `.get()`/iterators instead of
+# direct indexing.
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
