@@ -1,5 +1,6 @@
 //! Edit errors — stable codes `E-EDIT-PATCHES`, `E-EDIT-VERIFY`,
-//! `E-EDIT-IO`, `E-EDIT-UNREWRITABLE` (§15.4; pages under `docs/errors/`).
+//! `E-EDIT-IO`, `E-EDIT-UNREWRITABLE`, `E-LOCK-PARSE` (§15.4; pages under
+//! `docs/errors/`).
 
 /// An error while validating, applying or writing an edit set.
 #[derive(Debug)]
@@ -25,6 +26,13 @@ pub enum EditError {
         /// detail.
         message: String,
     },
+    /// A lockfile patch pass failed outright (`E-LOCK-PARSE`, M3.2): the
+    /// lockfile does not parse or a planned change is unusable; nothing
+    /// was written (§9.1 apply protocol).
+    LockfileParse {
+        /// What the lockfile patcher reported.
+        reason: String,
+    },
     /// A filesystem operation failed (read, temp write, fsync, rename).
     Io {
         /// Path the operation targeted.
@@ -41,6 +49,8 @@ impl EditError {
     pub const VERIFY_CODE: &'static str = "E-EDIT-VERIFY";
     /// Stable code for [`EditError::Unrewritable`].
     pub const UNREWRITABLE_CODE: &'static str = "E-EDIT-UNREWRITABLE";
+    /// Stable code for [`EditError::LockfileParse`].
+    pub const LOCKFILE_PARSE_CODE: &'static str = "E-LOCK-PARSE";
     /// Stable code for [`EditError::Io`].
     pub const IO_CODE: &'static str = "E-EDIT-IO";
 
@@ -50,6 +60,7 @@ impl EditError {
             Self::InvalidPatches { .. } => Self::PATCHES_CODE,
             Self::VerifyFailed { .. } => Self::VERIFY_CODE,
             Self::Unrewritable { .. } => Self::UNREWRITABLE_CODE,
+            Self::LockfileParse { .. } => Self::LOCKFILE_PARSE_CODE,
             Self::Io { .. } => Self::IO_CODE,
         }
     }
@@ -70,6 +81,9 @@ impl std::fmt::Display for EditError {
             }
             Self::Unrewritable { message } => {
                 write!(f, "[{}] {message}", Self::UNREWRITABLE_CODE)
+            }
+            Self::LockfileParse { reason } => {
+                write!(f, "[{}] {reason}", Self::LOCKFILE_PARSE_CODE)
             }
             Self::Io { path, source } => {
                 write!(
