@@ -15,10 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use halyard_discover::DiscoverInput;
-use halyard_test_support::manifest_fixtures::{
-    cargo_metadata_expectation, workspace_expectation,
-};
+use halyard_test_support::manifest_fixtures::{cargo_metadata_expectation, workspace_expectation};
 use serde_json::Value;
+use std::fmt::Write as _;
 
 /// A corpus repo row (subset of `corpus/manifest.toml`).
 struct CorpusRepo {
@@ -30,8 +29,8 @@ struct CorpusRepo {
 fn corpus_repos(root: &Path) -> Result<Vec<CorpusRepo>, String> {
     let manifest = std::fs::read_to_string(root.join("corpus/manifest.toml"))
         .map_err(|e| format!("read corpus/manifest.toml: {e}"))?;
-    let value: Value = toml::from_str(&manifest)
-        .map_err(|e| format!("parse corpus/manifest.toml: {e}"))?;
+    let value: Value =
+        toml::from_str(&manifest).map_err(|e| format!("parse corpus/manifest.toml: {e}"))?;
     let repos = value
         .get("repo")
         .and_then(Value::as_array)
@@ -88,10 +87,10 @@ pub fn discover_diff(args: &[String]) -> Result<(), String> {
     let mut missing_tool: Option<String> = None;
 
     for repo in repos {
-        if let Some(name) = &only {
-            if &repo.name != name {
-                continue;
-            }
+        if let Some(name) = &only
+            && repo.name != *name
+        {
+            continue;
         }
         let wanted = repo.ecosystems.iter().any(|eco| eco == &which);
         if !wanted {
@@ -129,11 +128,11 @@ pub fn discover_diff(args: &[String]) -> Result<(), String> {
     if missing_tool == Some("pnpm".to_owned()) && ok == 0 && diff == 0 {
         println!("SKIP: corpus not fetched or pnpm not installed — deferred to CI");
     }
-    println!(
-        "discover-diff({which}): ok={ok} diff={diff} skip={skipped}"
-    );
+    println!("discover-diff({which}): ok={ok} diff={diff} skip={skipped}");
     if diff > 0 {
-        Err(format!("{diff} corpus repos differ from package-manager ground truth"))
+        Err(format!(
+            "{diff} corpus repos differ from package-manager ground truth"
+        ))
     } else {
         Ok(())
     }
@@ -155,11 +154,11 @@ fn diff_cargo(name: &str, clone: &Path) -> Result<(), String> {
             .symmetric_difference(&ours.members)
             .collect();
         if !member_diff.is_empty() {
-            report.push_str(&format!("members: {member_diff:?} "));
+            let _ = write!(report, "members: {member_diff:?} ");
         }
         let edge_diff: Vec<_> = expected.edges.symmetric_difference(&ours.edges).collect();
         if !edge_diff.is_empty() {
-            report.push_str(&format!("edges: {edge_diff:?}"));
+            let _ = write!(report, "edges: {edge_diff:?}");
         }
         Err(report)
     }
@@ -210,13 +209,12 @@ fn diff_npm(name: &str, clone: &Path) -> Result<(), String> {
                 interner.get(p.name).unwrap_or_default().to_owned(),
                 p.version
                     .as_ref()
-                    .map_or_else(|| "0.0.0".to_owned(), |v| v.to_string()),
+                    .map_or_else(|| "0.0.0".to_owned(), ToString::to_string),
             )
         })
         .collect();
     if ours_members != expected_members {
-        let only_expected: Vec<_> =
-            expected_members.difference(&ours_members).collect();
+        let only_expected: Vec<_> = expected_members.difference(&ours_members).collect();
         let only_ours: Vec<_> = ours_members.difference(&expected_members).collect();
         return Err(format!(
             "members differ; pnpm-only={only_expected:?} ours-only={only_ours:?}"
@@ -227,39 +225,14 @@ fn diff_npm(name: &str, clone: &Path) -> Result<(), String> {
         .workspace
         .packages()
         .iter()
-        .map(|p| (p.root.as_str().to_owned(), interner.get(p.name).unwrap_or_default().to_owned()))
-        .collect();
-    let expected_edges: std::collections::BTreeSet<(String, String)> = projects
-        .iter()
-        .filter_map(|p| {
-            let pkg = p.as_object()?;
-            let from = pkg.get("name")?.as_str()?.to_owned();
-            let project_path = pkg
-                .get("path")
-                .and_then(Value::as_str)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| clone.to_path_buf());
-            let deps = pkg.get("dependencies")?.as_object()?;
-            let mut edges = Vec::new();
-            for (_dep_name, spec) in deps {
-                let raw = spec.as_str().unwrap_or_default();
-                let Some(rel) = raw.strip_prefix("link:") else {
-                    continue;
-                };
-                let target_dir = project_path.join(rel);
-                if let Ok(canonical) = std::fs::canonicalize(&target_dir) {
-                    if let Ok(rel_to_root) = canonical.strip_prefix(clone) {
-                        let rel_path = rel_to_root.to_string_lossy().replace('\\', "/");
-                        if let Some(to) = members_by_path.get(&rel_path) {
-                            edges.push((from.clone(), to.clone()));
-                        }
-                    }
-                }
-            }
-            Some(edges)
+        .map(|p| {
+            (
+                p.root.as_str().to_owned(),
+                interner.get(p.name).unwrap_or_default().to_owned(),
+            )
         })
-        .flatten()
         .collect();
+    let expected_edges = expected_pnpm_edges(projects, clone, &members_by_path);
     let ours_edges: std::collections::BTreeSet<(String, String)> = discovery
         .workspace
         .packages()
@@ -296,8 +269,7 @@ fn tool_available(tool: &str) -> bool {
     Command::new(tool)
         .arg("--version")
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Locates the repository root (walks up for `corpus/manifest.toml`).
@@ -311,4 +283,44 @@ fn repo_root() -> Result<PathBuf, String> {
             return Err("corpus/manifest.toml not found from cwd upward".to_owned());
         }
     }
+}
+
+/// The pnpm-reported internal workspace edges: `link:<rel>` dependency
+/// specs resolved to repo-relative member paths, as
+/// `(from, to)` name pairs.
+fn expected_pnpm_edges(
+    projects: &[Value],
+    clone: &Path,
+    members_by_path: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeSet<(String, String)> {
+    projects
+        .iter()
+        .filter_map(|p| {
+            let pkg = p.as_object()?;
+            let from = pkg.get("name")?.as_str()?.to_owned();
+            let project_path = pkg
+                .get("path")
+                .and_then(Value::as_str)
+                .map_or_else(|| clone.to_path_buf(), PathBuf::from);
+            let deps = pkg.get("dependencies")?.as_object()?;
+            let mut edges = Vec::new();
+            for (_dep_name, spec) in deps {
+                let raw = spec.as_str().unwrap_or_default();
+                let Some(rel) = raw.strip_prefix("link:") else {
+                    continue;
+                };
+                let target_dir = project_path.join(rel);
+                if let Ok(canonical) = std::fs::canonicalize(&target_dir)
+                    && let Ok(rel_to_root) = canonical.strip_prefix(clone)
+                {
+                    let rel_path = rel_to_root.to_string_lossy().replace('\\', "/");
+                    if let Some(to) = members_by_path.get(&rel_path) {
+                        edges.push((from.clone(), to.clone()));
+                    }
+                }
+            }
+            Some(edges)
+        })
+        .flatten()
+        .collect()
 }
