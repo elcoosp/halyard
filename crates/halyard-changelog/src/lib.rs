@@ -65,14 +65,50 @@ impl Style {
     }
 }
 
+/// Renders one release section through a **user-supplied** minijinja
+/// template (§9.4, §16.4: `changelog.style` may be a template path). The
+/// renderer stays pure — the caller reads the file and passes the source
+/// text (§4).
+///
+/// The template environment is minimal and deterministic: the variables
+/// `version`, `tag` and `sections` (each section is `(title, bullet
+/// lines)`, as in the built-in keep-a-changelog template) with loops and
+/// ifs; no builtin filters or globals.
+///
+/// # Errors
+///
+/// [`ChangelogError::Template`] when the template fails to compile or
+/// render; nothing is mutated.
+pub fn render_release_template(
+    release: &PlanRelease,
+    template_source: &str,
+) -> Result<String, ChangelogError> {
+    let sections = sections_of(
+        &release
+            .changelog
+            .as_ref()
+            .map(|c| c.entry_md.clone())
+            .unwrap_or_default(),
+    );
+    render_template_source(template_source, &release.to, &release.tag, &sections)
+        .map_err(|reason| ChangelogError::Template { reason })
+}
+
 /// Changelog failures (§15.4 `E-CHLOG-*`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChangelogError {
     /// The requested style is not shipped (`E-CHLOG-STYLE`); the built-in
-    /// v1 set is `keep-a-changelog` only.
+    /// set is `keep-a-changelog`, `conventional` and `compact` — user
+    /// templates go through [`render_plan_template`], not a style name.
     Style {
         /// The style name as requested.
         requested: String,
+    },
+    /// A user-supplied minijinja template failed to compile or render
+    /// (`E-CHLOG-TEMPLATE`); nothing was mutated.
+    Template {
+        /// The engine's diagnosis (compile or render stage).
+        reason: String,
     },
     /// The existing changelog text cannot be updated (`E-CHLOG-FILE`):
     /// no `Unreleased` section, no marker and no header block to anchor
@@ -90,6 +126,7 @@ impl ChangelogError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Style { .. } => "E-CHLOG-STYLE",
+            Self::Template { .. } => "E-CHLOG-TEMPLATE",
             Self::File { .. } => "E-CHLOG-FILE",
         }
     }
@@ -101,7 +138,14 @@ impl std::fmt::Display for ChangelogError {
             Self::Style { requested } => write!(
                 f,
                 "[E-CHLOG-STYLE] changelog style {requested:?} is not available; the built-in \
-                 styles are \"keep-a-changelog\", \"conventional\" and \"compact\""
+                 styles are \"keep-a-changelog\", \"conventional\" and \"compact\" (user \
+                 templates go through render_plan_template)"
+            ),
+            Self::Template { reason } => write!(
+                f,
+                "[E-CHLOG-TEMPLATE] user changelog template failed: {reason} (the template \
+                 environment is minimal: the variables `version`, `tag` and `sections` — \
+                 section title + bullet lines — with loops/ifs; no builtin filters)"
             ),
             Self::File { file, reason } => write!(
                 f,
@@ -134,21 +178,6 @@ pub fn render_release(release: &PlanRelease, style: &str) -> Result<String, Chan
 /// Renders one release section in the parsed [`Style`] (the dispatch
 /// target of [`render_release`]).
 fn render_release_styled(release: &PlanRelease, style: Style) -> Result<String, ChangelogError> {
-    // `empty()` (no globals/filters, no auto-escape) instead of the
-    // deprecated-without-`serde` `new()`: the keep-a-changelog template is
-    // plain Jinja over the plan's own values — no builtin filters or
-    // globals — so behavior is identical and no `serde` feature is pulled
-    // into the layer-restricted dependency set (§7.2).
-    let mut env = Environment::empty();
-    env.add_template("release", RELEASE_TEMPLATE)
-        .map_err(|e| ChangelogError::Style {
-            requested: format!("template error: {e}"),
-        })?;
-    let template = env
-        .get_template("release")
-        .map_err(|e| ChangelogError::Style {
-            requested: format!("template error: {e}"),
-        })?;
     let sections = sections_of(
         &release
             .changelog
@@ -161,19 +190,64 @@ fn render_release_styled(release: &PlanRelease, style: Style) -> Result<String, 
             // Dateless heading: the release step (which owns the clock)
             // stamps dates; the pure renderer never reads one (§4
             // purity).
-            template
-                .render(context! {
-                    version => release.to,
-                    tag => release.tag,
-                    sections => sections,
-                })
-                .map_err(|e| ChangelogError::Style {
-                    requested: format!("render error: {e}"),
-                })
+            render_template_source(RELEASE_TEMPLATE, &release.to, &release.tag, &sections).map_err(
+                |reason| ChangelogError::Style {
+                    requested: format!("template error: {reason}"),
+                },
+            )
         }
         Style::Conventional => Ok(conventional_body(&release.to, &sections)),
         Style::Compact => Ok(compact_body(&release.to, &sections)),
     }
+}
+
+/// Compiles and renders one release section from a minijinja source
+/// (the shared engine behind the built-in keep-a-changelog template and
+/// the user-template path). The environment is `empty()` — minimal and
+/// deterministic, no builtin filters/globals (see the M3.2 note on
+/// `Environment::empty()`); the context is `version`, `tag`, `sections`.
+fn render_template_source(
+    template_source: &str,
+    version: &str,
+    tag: &str,
+    sections: &Sections,
+) -> Result<String, String> {
+    let mut env = Environment::empty();
+    env.add_template("release", template_source)
+        .map_err(|e| format!("compile: {e}"))?;
+    let template = env
+        .get_template("release")
+        .map_err(|e| format!("compile: {e}"))?;
+    template
+        .render(context! {
+            version => version,
+            tag => tag,
+            sections => sections,
+        })
+        .map_err(|e| format!("render: {e}"))
+}
+
+/// Renders the full changelog document from a **user-supplied** minijinja
+/// template (`§9.4`, `§16.4` template-path style): same insertion
+/// machinery and idempotence as [`render_plan`], body sections rendered
+/// through the template (see [`render_release_template`] for the
+/// environment contract).
+///
+/// # Errors
+///
+/// [`ChangelogError::Template`] / [`ChangelogError::File`].
+pub fn render_plan_template(
+    plan: &Plan,
+    template_source: &str,
+    existing: Option<&str>,
+) -> Result<String, ChangelogError> {
+    let mut sections: Vec<String> = Vec::new();
+    for release in &plan.releases {
+        sections.push(render_release_template(release, template_source)?);
+    }
+    let body = sections.join("\n");
+    let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
+    insert_body(existing, &body, &versions)
 }
 
 /// Renders the full changelog document: every release in the plan, newest
@@ -198,6 +272,17 @@ pub fn render_plan(
     }
     let body = sections.join("\n");
     let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
+    insert_body(existing, &body, &versions)
+}
+
+/// The shared insertion machinery of [`render_plan`] and
+/// [`render_plan_template`]: fresh-document header, marker/Unreleased
+/// anchoring, in-place release-section replacement (I1).
+fn insert_body(
+    existing: Option<&str>,
+    body: &str,
+    versions: &[&str],
+) -> Result<String, ChangelogError> {
     let Some(existing) = existing else {
         return Ok(format!(
             "# Changelog\n\nAll notable changes to this project are documented here.\n\n\
@@ -209,7 +294,7 @@ pub fn render_plan(
     // place, §9.4), then the fresh body is inserted after the marker or
     // the `Unreleased` heading. Anchor-less files are an error, never a
     // silent rewrite.
-    let cleaned = remove_release_sections(existing, &versions);
+    let cleaned = remove_release_sections(existing, versions);
     if let Some(marker_pos) = cleaned.find(INSERT_MARKER) {
         let head = cleaned.get(..marker_pos).unwrap_or_default();
         let tail = cleaned
