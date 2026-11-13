@@ -8,12 +8,21 @@
 //! negations, `catalog:` / `catalog:<name>` protocols, `workspace:*` /
 //! `workspace:^` / `workspace:~` / `workspace:<version>`, `file:` /
 //! `link:`, `private: true` and `publishConfig` (read, not interpreted).
+//!
+//! The M3.4 lockfile seam ([`lockfile`]) patches `pnpm-lock.yaml` for the
+//! plan's version moves (§9.3, importers-only byte patches) and declines
+//! to [`halyard_core::lockfile::LockfileOutcome::NeedsNative`] on any
+//! shape it cannot guarantee pnpm-identical bytes for; the native refresh
+//! dispatches on the workspace's lockfile kind (pnpm/npm/yarn/bun).
 
 use halyard_core::discover::{
     DiscoverCtx, DiscoverError, DiscoveryWarning, Facets, ManifestFormat, RawDep, RawPackage,
     RawVersionSource,
 };
 use halyard_core::edit::{EditFailure, EditOutcome};
+use halyard_core::lockfile::{
+    LockfileFailure, LockfileOutcome, LockfileVersionChange, NativeRefreshError,
+};
 use halyard_core::package::{
     DepKind, Ecosystem, ManifestSite, RelPath, ReqSpec, Span, WorkspaceProtocol,
 };
@@ -22,6 +31,7 @@ use halyard_core::{EcosystemAdapter, glob};
 
 pub mod edit;
 pub mod json_span;
+pub mod lockfile;
 pub mod pnpm_yaml;
 
 /// The npm-family adapter (§7.3 discovery + manifest-edit subset).
@@ -175,6 +185,71 @@ impl EcosystemAdapter for NpmAdapter {
             skipped: counts.skipped,
         })
     }
+
+    fn patch_lockfile(
+        &self,
+        file: &RelPath,
+        content: &[u8],
+        changes: &[LockfileVersionChange],
+    ) -> Result<LockfileOutcome, LockfileFailure> {
+        // Route by lockfile name: only the pnpm grammar has an in-memory
+        // patcher in v1 (§9.3); the other npm-family lockfiles are
+        // native-only and decline honestly.
+        if file.as_str() != lockfile::PNPM_LOCKFILE {
+            return Ok(LockfileOutcome::NeedsNative {
+                reason: format!(
+                    "lockfile {file} has no in-memory patcher (package-lock.json/yarn.lock/\
+                     bun.lock are native-only in v1); refresh natively with its own tool"
+                ),
+            });
+        }
+        let raw = lockfile_edit_str(file, content)?;
+        lockfile::patch_pnpm_lockfile(raw, file.as_str(), changes)
+    }
+
+    fn refresh_lockfile_native(&self, ws_root: &std::path::Path) -> Result<(), NativeRefreshError> {
+        let kind = lockfile::detect_lockfile_kind(ws_root);
+        // Effect step (§9.3): argv array only — no shell, no string
+        // interpolation of untrusted text (invariant I7). The caller
+        // verifies the effect (only member importer rows moved).
+        let Some((program, args, command)) = lockfile::refresh_command(kind) else {
+            return Err(NativeRefreshError::Failed {
+                command: "(lockfile detection)".to_owned(),
+                message: "no npm-family lockfile (pnpm-lock.yaml, package-lock.json, yarn.lock, \
+                          bun.lock) exists under the workspace root"
+                    .to_owned(),
+            });
+        };
+        let output = std::process::Command::new(program)
+            .args(args)
+            .current_dir(ws_root)
+            .output()
+            .map_err(|source| NativeRefreshError::Spawn {
+                command: command.to_owned(),
+                source: source.to_string(),
+            })?;
+        if !output.status.success() {
+            let message = if output.stderr.is_empty() {
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            } else {
+                String::from_utf8_lossy(&output.stderr).into_owned()
+            };
+            return Err(NativeRefreshError::Failed {
+                command: command.to_owned(),
+                message,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Decodes lockfile bytes for a patch pass; non-UTF-8 lockfiles are
+/// `E-LOCK-PARSE` (pnpm writes UTF-8; nothing can be patched losslessly).
+fn lockfile_edit_str<'a>(file: &RelPath, bytes: &'a [u8]) -> Result<&'a str, LockfileFailure> {
+    std::str::from_utf8(bytes).map_err(|_| LockfileFailure::Parse {
+        file: file.to_string(),
+        message: "lockfile is not valid UTF-8".to_owned(),
+    })
 }
 
 /// Converts a scanner error position into a core span.
@@ -679,5 +754,131 @@ mod tests {
         let ctx = ctx_with(&[("package.json", "{\"name\": ")]);
         let err = NpmAdapter::new().discover(&ctx).unwrap_err();
         assert_eq!(err.code(), "E-DISC-MANIFEST");
+    }
+
+    /// The M3.4 adapter-routing fixture: one importer whose plain-semver
+    /// dependency on the member resolves as a link.
+    const PNPM_LOCK: &str = "lockfileVersion: '9.0'\n\nimporters:\n\n  packages/app:\n    dependencies:\n      ui:\n        specifier: ^0.4.1\n        version: 0.4.1(link:../ui)\n";
+
+    fn lock_change() -> LockfileVersionChange {
+        LockfileVersionChange {
+            name: "ui".to_owned(),
+            from: "0.4.1".to_owned(),
+            to: "0.5.0".to_owned(),
+        }
+    }
+
+    #[test]
+    fn adapter_patch_lockfile_routes_pnpm_lockfile() {
+        let file = RelPath::new(lockfile::PNPM_LOCKFILE).unwrap_or_else(|| unreachable!("path"));
+        let out = NpmAdapter::new()
+            .patch_lockfile(&file, PNPM_LOCK.as_bytes(), &[lock_change()])
+            .unwrap_or_else(|f| unreachable!("fixture patch failed: {f}"));
+        let LockfileOutcome::Patched {
+            content, applied, ..
+        } = out
+        else {
+            unreachable!("pnpm lockfile must patch through the adapter, got {out:?}")
+        };
+        assert_eq!(applied, 2, "specifier + link-ref version");
+        let text = String::from_utf8(content).unwrap_or_else(|e| unreachable!("utf8: {e}"));
+        assert!(text.contains("specifier: ^0.5.0"), "{text}");
+        assert!(text.contains("version: 0.5.0(link:../ui)"), "{text}");
+    }
+
+    #[test]
+    fn adapter_patch_lockfile_declines_other_npm_family_lockfiles() {
+        for name in ["package-lock.json", "yarn.lock", "bun.lock"] {
+            let file = RelPath::new(name).unwrap_or_else(|| unreachable!("path"));
+            let out = NpmAdapter::new()
+                .patch_lockfile(&file, b"{}", &[lock_change()])
+                .unwrap_or_else(|f| unreachable!("decline is not an error: {f}"));
+            let LockfileOutcome::NeedsNative { reason } = out else {
+                unreachable!("{name} must decline, got {out:?}")
+            };
+            assert!(
+                reason.contains("native-only"),
+                "reason explains the v1 scope: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn adapter_patch_lockfile_non_utf8_is_e_lock_parse() {
+        let file = RelPath::new(lockfile::PNPM_LOCKFILE).unwrap_or_else(|| unreachable!("path"));
+        let err = NpmAdapter::new()
+            .patch_lockfile(&file, &[0xff, 0xfe], &[lock_change()])
+            .unwrap_err();
+        assert_eq!(err.code(), "E-LOCK-PARSE");
+    }
+
+    #[test]
+    fn refresh_command_table_is_the_documented_argv() {
+        let (program, args, command) = lockfile::refresh_command(lockfile::LockfileKind::Pnpm)
+            .unwrap_or_else(|| unreachable!("pnpm has a refresh command"));
+        assert_eq!(program, "pnpm");
+        assert_eq!(args, &["install", "--lockfile-only", "--offline"]);
+        assert_eq!(command, "pnpm install --lockfile-only --offline");
+        for (kind, program_name, expected) in [
+            (
+                lockfile::LockfileKind::Npm,
+                "npm",
+                "npm install --package-lock-only",
+            ),
+            (
+                lockfile::LockfileKind::Yarn,
+                "yarn",
+                "yarn install --mode update-lockfile",
+            ),
+            (
+                lockfile::LockfileKind::Bun,
+                "bun",
+                "bun install --lockfile-only",
+            ),
+        ] {
+            let (program, _, command) = lockfile::refresh_command(kind)
+                .unwrap_or_else(|| unreachable!("native-only kinds have refresh commands"));
+            assert_eq!(program, program_name);
+            assert_eq!(command, expected);
+        }
+        assert!(lockfile::refresh_command(lockfile::LockfileKind::None).is_none());
+    }
+
+    #[test]
+    fn detect_lockfile_kind_by_presence() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        assert_eq!(
+            lockfile::detect_lockfile_kind(tmp.path()),
+            lockfile::LockfileKind::None
+        );
+        std::fs::write(tmp.path().join(lockfile::PNPM_LOCKFILE), "")?;
+        assert_eq!(
+            lockfile::detect_lockfile_kind(tmp.path()),
+            lockfile::LockfileKind::Pnpm
+        );
+        std::fs::remove_file(tmp.path().join(lockfile::PNPM_LOCKFILE))?;
+        std::fs::write(tmp.path().join("yarn.lock"), "")?;
+        assert_eq!(
+            lockfile::detect_lockfile_kind(tmp.path()),
+            lockfile::LockfileKind::Yarn
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn adapter_refresh_without_a_lockfile_fails_deterministically() {
+        // No npm-family lockfile exists: the effect step declines before
+        // any spawn (deterministic on every machine, I2).
+        let tmp = tempfile::tempdir().unwrap_or_else(|e| unreachable!("tempdir: {e}"));
+        let err = NpmAdapter::new()
+            .refresh_lockfile_native(tmp.path())
+            .unwrap_err();
+        assert_eq!(err.code(), "E-LOCK-NATIVE");
+        match err {
+            NativeRefreshError::Failed { command, .. } => {
+                assert!(command.contains("detection"), "{command}");
+            }
+            other => unreachable!("expected Failed, got {other:?}"),
+        }
     }
 }
