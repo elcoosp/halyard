@@ -49,6 +49,7 @@ pattern from M1 onward where useful).
 | `E-CACHE-LOCK` | [E-CACHE-LOCK.md](E-CACHE-LOCK.md) | cache advisory lock (M2.5) |
 | `E-CHLOG-STYLE` | [E-CHLOG-STYLE.md](E-CHLOG-STYLE.md) | changelog style (M3.x) |
 | `E-CHLOG-FILE` | [E-CHLOG-FILE.md](E-CHLOG-FILE.md) | changelog existing file (M3.x) |
+| `E-CHLOG-PRBODY` | [E-CHLOG-PRBODY.md](E-CHLOG-PRBODY.md) | Release-PR body / embedded plan (M4.3a, §11.3) |
 | `E-CLI-CWD` | [E-CLI-CWD.md](E-CLI-CWD.md) | CLI -C handling (M1.10) |
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
