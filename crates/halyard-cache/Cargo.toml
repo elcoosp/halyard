@@ -37,5 +37,32 @@ miri = []
 # Loom model checking of the record/lock state machine (tests/loom.rs).
 loom = []
 
-[lints]
-workspace = true
+# This crate cannot use `[lints] workspace = true` together with a lint
+# override (cargo rejects the combination), so the workspace lint table is
+# reproduced here BY HAND with exactly one exception — invariant I10 (§2):
+# this is the workspace's single `unsafe`-permitted crate, and the
+# permission lives at the manifest instead of an inner `allow(unsafe_code)`
+# attribute in the source, so the source-level gate for allow/expect
+# attributes stays empty and the single exception is visible in one
+# reviewed place. The `unsafe` surface itself is confined to `src/mmap.rs`
+# with its own SAFETY comments, Miri coverage and loom model (see that
+# module). KEEP IN SYNC with `[workspace.lints]` in the root Cargo.toml.
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "allow"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unused = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
