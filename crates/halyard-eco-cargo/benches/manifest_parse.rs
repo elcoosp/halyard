@@ -5,7 +5,7 @@
 //! §6.3 surface. Budget row: §14.1 "Plan with 200 new commits, 40 crates"
 //! (discovery is its front half); formal budgets arm at M2.6.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::Criterion;
 
 const ROOT_MANIFEST: &str = r#"
 [workspace]
@@ -49,29 +49,36 @@ cc = "1.0"
 "#;
 
 fn parse_pair() {
-    let root =
-        toml_edit::ImDocument::parse(black_box(ROOT_MANIFEST)).expect("root manifest parses");
-    let member =
-        toml_edit::ImDocument::parse(black_box(MEMBER_MANIFEST)).expect("member manifest parses");
+    // Bench fixture constants must parse; a failure aborts the bench
+    // loudly (bench fns are not `#[test]`, so the expect/unwrap lint
+    // allowance does not reach them).
+    let root = match toml_edit::ImDocument::parse(std::hint::black_box(ROOT_MANIFEST)) {
+        Ok(doc) => doc,
+        Err(e) => unreachable!("root manifest parses: {e}"),
+    };
+    let member = match toml_edit::ImDocument::parse(std::hint::black_box(MEMBER_MANIFEST)) {
+        Ok(doc) => doc,
+        Err(e) => unreachable!("member manifest parses: {e}"),
+    };
     // Touch the spans so the bench covers extraction, not just parsing.
     let _ = root
         .get("workspace")
         .and_then(|item| item.as_table())
         .and_then(|t| t.get("members"))
         .and_then(|item| item.as_value())
-        .and_then(|v| v.span());
+        .and_then(toml_edit::Value::span);
     let _ = member
         .get("package")
         .and_then(|item| item.as_table())
         .and_then(|t| t.get("version"))
         .and_then(|item| item.as_value())
-        .and_then(|v| v.span());
+        .and_then(toml_edit::Value::span);
 }
 
 fn bench_manifest_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("eco-cargo");
     group.throughput(criterion::Throughput::Bytes(
-        (ROOT_MANIFEST.len() + MEMBER_MANIFEST.len()) as u64,
+        u64::try_from(ROOT_MANIFEST.len() + MEMBER_MANIFEST.len()).unwrap_or(u64::MAX),
     ));
     group.bench_function("parse_pair_with_spans", |b| {
         b.iter(parse_pair);
@@ -79,5 +86,14 @@ fn bench_manifest_parse(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_manifest_parse);
-criterion_main!(benches);
+/// Criterion harness entry (the `criterion_group!` expansion, spelled out
+/// so the generated `pub fn` does not trip `missing_docs`).
+fn benches() {
+    let mut criterion: Criterion = Criterion::default().configure_from_args();
+    bench_manifest_parse(&mut criterion);
+}
+
+fn main() {
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}
