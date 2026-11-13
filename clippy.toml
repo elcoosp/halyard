@@ -1,0 +1,14 @@
+# Clippy configuration for the HALYARD workspace.
+# Restriction lints (§15.3) are denied workspace-wide; test code gets explicit
+# allowances here. `indexing_slicing` intentionally has no test allowance.
+#
+# LOAD-BEARING: this file is clippy's *behavioral* configuration — it cannot
+# be moved into `[lints]` tables (commit 801f1b0 removed it as "obsolete",
+# which silently turned every test-code `unwrap`/`expect`/`panic!` into a
+# `-D warnings` gate failure; restored 2026-11-13). The root Cargo.toml
+# `[workspace.lints.clippy]` table documents the deny list; THIS file decides
+# where it applies.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-dbg-in-tests = true
