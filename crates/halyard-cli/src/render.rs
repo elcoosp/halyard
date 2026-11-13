@@ -4,50 +4,108 @@
 //! identical inputs render byte-identical text (I3).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use halyard_core::HistoryProvider;
 use halyard_core::{Plan, PlanRelease};
+use halyard_edit::{ApplyReport, DryPatch};
 
-use crate::doctor::DoctorReport;
 use crate::Context;
+use crate::doctor::DoctorReport;
+
+/// Renders the `apply --dry` preview (`plan_apply::dry_run_preview`): the
+/// byte patches the plan would write, per file, sorted by path (I3).
+pub fn apply_dry(preview: &BTreeMap<String, Vec<DryPatch>>) -> String {
+    let mut out = String::new();
+    let patches: usize = preview.values().map(Vec::len).sum();
+    let _ = writeln!(
+        out,
+        "dry run: {} file{}, {} patch{}",
+        preview.len(),
+        if preview.len() == 1 { "" } else { "s" },
+        patches,
+        if patches == 1 { "" } else { "es" }
+    );
+    for (file, edits) in preview {
+        let _ = writeln!(out, "{file}:");
+        for patch in edits {
+            let _ = writeln!(
+                out,
+                "  [{}..{}) -> {:?}",
+                patch.start, patch.end, patch.text
+            );
+        }
+    }
+    out
+}
+
+/// Renders the deterministic per-file apply summary (M3.6): sorted paths,
+/// applied/skipped counts.
+pub fn apply_report(report: &ApplyReport) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "applied {} edit{} across {} file{} ({} skipped)",
+        report.total_applied(),
+        if report.total_applied() == 1 { "" } else { "s" },
+        report.files.len(),
+        if report.files.len() == 1 { "" } else { "s" },
+        report.total_skipped(),
+    );
+    for file in &report.files {
+        let _ = writeln!(
+            out,
+            "{}: {} applied, {} skipped",
+            file.file, file.applied, file.skipped
+        );
+    }
+    out
+}
 
 /// Renders the plan as an aligned human table plus per-release reasons.
 pub fn plan_human(plan: &Plan) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "plan {plan_hash} (head {head}, base {base})\n",
+    let _ = writeln!(
+        out,
+        "plan {plan_hash} (head {head}, base {base})",
         plan_hash = plan.plan_hash,
         head = short(&plan.head),
         base = plan.base_branch,
-    ));
+    );
     if plan.releases.is_empty() {
         out.push_str("nothing to release.\n");
     } else {
-        out.push_str(&format!(
-            "{:20} {:10} {:10} {:6} tag\n",
+        let _ = writeln!(
+            out,
+            "{:20} {:10} {:10} {:6} tag",
             "package", "from", "to", "bump"
-        ));
+        );
         for release in &plan.releases {
-            out.push_str(&format!(
-                "{:20} {:10} {:10} {:6} {}\n",
-                release.package, release.from, release.to, format_args!("{:?}", release.bump).to_string().to_lowercase(), release.tag,
-            ));
+            let _ = writeln!(
+                out,
+                "{:20} {:10} {:10} {:6} {}",
+                release.package,
+                release.from,
+                release.to,
+                format_args!("{:?}", release.bump)
+                    .to_string()
+                    .to_lowercase(),
+                release.tag,
+            );
         }
-        out.push_str(&format!(
-            "\npublish order: {}\n",
-            plan.order.join(" -> ")
-        ));
+        let _ = writeln!(out, "\npublish order: {}", plan.order.join(" -> "));
     }
     for skip in &plan.skipped {
-        out.push_str(&format!("skipped {}: {}\n", skip.package, skip.reason));
+        let _ = writeln!(out, "skipped {}: {}", skip.package, skip.reason);
     }
     for edit in &plan.edits {
-        out.push_str(&format!(
-            "edit {} ({} patch{})\n",
+        let _ = writeln!(
+            out,
+            "edit {} ({} patch{})",
             edit.file,
             edit.patches.len(),
             if edit.patches.len() == 1 { "" } else { "es" }
-        ));
+        );
     }
     out
 }
@@ -64,27 +122,24 @@ pub fn explain_human(release: &PlanRelease) -> String {
                 oid,
                 kind,
                 breaking,
-            } => out.push_str(&format!(
-                "  commit {} {}{}{}\n",
-                short(oid),
-                kind,
-                if *breaking { "!" } else { "" },
-                " (breaking)" .trim_end()
-            )),
-            halyard_core::PlanReason::ReleaseAs { oid, version } => {
-                out.push_str(&format!(
-                    "  release-as {} → {}\n",
+            } => {
+                let _ = writeln!(
+                    out,
+                    "  commit {} {}{}{}",
                     short(oid),
-                    version
-                ));
+                    kind,
+                    if *breaking { "!" } else { "" },
+                    " (breaking)".trim_end()
+                );
+            }
+            halyard_core::PlanReason::ReleaseAs { oid, version } => {
+                let _ = writeln!(out, "  release-as {} → {}", short(oid), version);
             }
             halyard_core::PlanReason::Changeset { file } => {
-                out.push_str(&format!("  changeset {}\n", file));
+                let _ = writeln!(out, "  changeset {file}");
             }
             halyard_core::PlanReason::Cascade { via, edge, why } => {
-                out.push_str(&format!(
-                    "  cascade via {via} ({edge}, {why})\n"
-                ));
+                let _ = writeln!(out, "  cascade via {via} ({edge}, {why})");
             }
             halyard_core::PlanReason::InitialRelease => {
                 out.push_str("  initial release (no tag yet)\n");
@@ -92,7 +147,11 @@ pub fn explain_human(release: &PlanRelease) -> String {
         }
     }
     if let Some(changelog) = &release.changelog {
-        out.push_str(&format!("\nchangelog preview ({}):\n{}\n", changelog.file, changelog.entry_md));
+        let _ = writeln!(
+            out,
+            "\nchangelog preview ({}):\n{}",
+            changelog.file, changelog.entry_md
+        );
     }
     out
 }
@@ -108,12 +167,16 @@ pub fn status_rows(context: &Context) -> Vec<BTreeMap<&'static str, String>> {
                 .history
                 .digest()
                 .base_of(pkg.id)
-                .map(|b| b.tag.to_string())
-                .unwrap_or_else(|| "(initial)".to_owned());
+                .map_or_else(|| "(initial)".to_owned(), |b| b.tag.to_string());
             let commits = context.history.digest().commits_for(pkg.id).len();
             let mut row = BTreeMap::new();
             row.insert("package", name);
-            row.insert("version", pkg.version.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "-".to_owned()));
+            row.insert(
+                "version",
+                pkg.version
+                    .as_ref()
+                    .map_or_else(|| "-".to_owned(), ToString::to_string),
+            );
             row.insert("base", base);
             row.insert("unreleased", commits.to_string());
             row.insert("pending", commits.to_string());
@@ -124,15 +187,21 @@ pub fn status_rows(context: &Context) -> Vec<BTreeMap<&'static str, String>> {
 
 /// Status table (human).
 pub fn status_human(context: &Context) -> String {
-    let mut out = format!("{:20} {:10} {:24} {}\n", "package", "version", "base", "unreleased");
+    let mut out = format!(
+        "{:20} {:10} {:24} {}\n",
+        "package", "version", "base", "unreleased"
+    );
     for row in status_rows(context) {
-        out.push_str(&format!(
-            "{:20} {:10} {:24} {}\n",
+        let _ = writeln!(
+            out,
+            "{:20} {:10} {:24} {}",
             row.get("package").map(String::as_str).unwrap_or_default(),
             row.get("version").map(String::as_str).unwrap_or_default(),
             row.get("base").map(String::as_str).unwrap_or_default(),
-            row.get("unreleased").map(String::as_str).unwrap_or_default(),
-        ));
+            row.get("unreleased")
+                .map(String::as_str)
+                .unwrap_or_default(),
+        );
     }
     out
 }
@@ -166,13 +235,14 @@ pub fn graph_edges(context: &Context) -> Vec<BTreeMap<&'static str, String>> {
 pub fn graph_text(context: &Context) -> String {
     let mut out = String::new();
     for row in graph_edges(context) {
-        out.push_str(&format!(
-            "{} -> {} [{}] {}\n",
+        let _ = writeln!(
+            out,
+            "{} -> {} [{}] {}",
             row.get("from").map(String::as_str).unwrap_or_default(),
             row.get("to").map(String::as_str).unwrap_or_default(),
             row.get("kind").map(String::as_str).unwrap_or_default(),
             row.get("req").map(String::as_str).unwrap_or_default(),
-        ));
+        );
     }
     if out.is_empty() {
         out.push_str("(no workspace edges)\n");
@@ -184,11 +254,12 @@ pub fn graph_text(context: &Context) -> String {
 pub fn graph_mermaid(context: &Context) -> String {
     let mut out = String::from("graph TD\n");
     for row in graph_edges(context) {
-        out.push_str(&format!(
-            "    {} --> {}\n",
+        let _ = writeln!(
+            out,
+            "    {} --> {}",
             mermaid_id(row.get("from").map(String::as_str).unwrap_or_default()),
             mermaid_id(row.get("to").map(String::as_str).unwrap_or_default())
-        ));
+        );
     }
     out
 }
@@ -210,11 +281,12 @@ fn mermaid_id(name: &str) -> String {
 pub fn graph_dot(context: &Context) -> String {
     let mut out = String::from("digraph workspace {\n");
     for row in graph_edges(context) {
-        out.push_str(&format!(
-            "    {:?} -> {:?};\n",
+        let _ = writeln!(
+            out,
+            "    {:?} -> {:?};",
             row.get("from").map(String::as_str).unwrap_or_default(),
             row.get("to").map(String::as_str).unwrap_or_default()
-        ));
+        );
     }
     out.push_str("}\n");
     out
@@ -224,15 +296,16 @@ pub fn graph_dot(context: &Context) -> String {
 pub fn doctor_human(report: &DoctorReport) -> String {
     let mut out = String::from("halyard doctor\n");
     for check in &report.checks {
-        out.push_str(&format!(
-            "  [{}] {}: {}\n",
+        let _ = writeln!(
+            out,
+            "  [{}] {}: {}",
             if check.ok { "ok" } else { "!!" },
             check.name,
             check.detail
-        ));
+        );
     }
     for warning in &report.warnings {
-        out.push_str(&format!("  warning: {warning}\n"));
+        let _ = writeln!(out, "  warning: {warning}");
     }
     if report.healthy {
         out.push_str("all checks passed\n");
@@ -246,15 +319,16 @@ pub fn doctor_human(report: &DoctorReport) -> String {
 pub fn doctor_gha(report: &DoctorReport) -> String {
     let mut out = String::from("## halyard doctor\n\n| check | status | detail |\n|---|---|---|\n");
     for check in &report.checks {
-        out.push_str(&format!(
-            "| {name} | {status} | {detail} |\n",
+        let _ = writeln!(
+            out,
+            "| {name} | {status} | {detail} |",
             name = check.name,
             status = if check.ok { "ok" } else { "fail" },
             detail = check.detail
-        ));
+        );
     }
     for warning in &report.warnings {
-        out.push_str(&format!("::warning::halyard doctor: {warning}\n"));
+        let _ = writeln!(out, "::warning::halyard doctor: {warning}");
     }
     out
 }
@@ -267,23 +341,25 @@ pub fn plan_gha(plan: &Plan) -> String {
     } else {
         out.push_str("| Package | From | To | Bump | Tag |\n|---|---|---|---|---|\n");
         for release in &plan.releases {
-            out.push_str(&format!(
-                "| {pkg} | {from} | **{to}** | {bump:?} | {tag} |\n",
+            let _ = writeln!(
+                out,
+                "| {pkg} | {from} | **{to}** | {bump:?} | {tag} |",
                 pkg = release.package,
                 from = release.from,
                 to = release.to,
                 bump = release.bump,
                 tag = release.tag,
-            ));
+            );
         }
     }
     for skip in &plan.skipped {
-        out.push_str(&format!(
-            "::warning::halyard plan: skipped {} ({})\n",
+        let _ = writeln!(
+            out,
+            "::warning::halyard plan: skipped {} ({})",
             skip.package, skip.reason
-        ));
+        );
     }
-    out.push_str(&format!("\nplan hash: `{}`\n", plan.plan_hash));
+    let _ = writeln!(out, "\nplan hash: `{}`", plan.plan_hash);
     out
 }
 
@@ -296,22 +372,28 @@ pub fn explain_gha(release: &PlanRelease) -> String {
         to = release.to
     );
     for reason in &release.reasons {
-        out.push_str(&format!("- {reason:?}\n"));
+        let _ = writeln!(out, "- {reason:?}");
     }
     out
 }
 
 /// Status as a GHA summary.
 pub fn status_gha(context: &Context) -> String {
-    let mut out = String::from("## halyard status\n\n| package | version | base | unreleased |\n|---|---|---|---|\n");
+    let mut out = String::from(
+        "## halyard status\n\n| package | version | base | unreleased |\n|---|---|---|---|\n",
+    );
     for row in status_rows(context) {
-        out.push_str(&format!(
-            "| {p} | {v} | {b} | {u} |\n",
+        let _ = writeln!(
+            out,
+            "| {p} | {v} | {b} | {u} |",
             p = row.get("package").map(String::as_str).unwrap_or_default(),
             v = row.get("version").map(String::as_str).unwrap_or_default(),
             b = row.get("base").map(String::as_str).unwrap_or_default(),
-            u = row.get("unreleased").map(String::as_str).unwrap_or_default(),
-        ));
+            u = row
+                .get("unreleased")
+                .map(String::as_str)
+                .unwrap_or_default(),
+        );
     }
     out
 }
