@@ -1,10 +1,12 @@
 //! The [`MemoryForge`] reference adapter (§7.1 "mock forge", §15.1 E2E
 //! lane): a deterministic, in-memory [`Forge`] that models the forge
-//! semantics the M4.2 state machine relies on — find-by-branch upserts,
-//! GET-by-tag-first release creation, synthetic signed commits — plus the
-//! two observability surfaces the §11.5 budget work needs: the call log
-//! (the "≤ 2 REST calls on the update path" assertion rides on it) and
-//! the failpoint harness (§15.2 failure injection).
+//! semantics the M4.2 state machine relies on — find-by-branch upserts
+//! over *open* PRs, GET-by-tag-first release creation, synthetic signed
+//! commits, open/closed PR state (§11.1 step 3 close semantics) — plus
+//! the two observability surfaces the §11.5 budget work needs: the call
+//! log (the "≤ 2 REST calls on the update path" assertion rides on it)
+//! and the failpoint harness (§15.2 failure injection, first consumed by
+//! the machine's own test matrix).
 //!
 //! Determinism (I3): no clock, no randomness — PR numbers and object ids
 //! are assigned sequentially, URLs are synthetic `mem://` schemes, and
@@ -30,10 +32,20 @@ pub struct CallRecord {
     pub target: String,
 }
 
+#[derive(Debug)]
+struct StoredPr {
+    pr: Pr,
+    /// Open/closed state (§11.1 step 3): a closed PR stops being found
+    /// by [`Forge::find_release_pr`] and is never rewritten in place —
+    /// a later upsert opens a fresh PR, as real forges cannot reopen a
+    /// closed PR under its number.
+    open: bool,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     failure: Option<ForgeError>,
-    prs: Vec<Pr>,
+    prs: Vec<StoredPr>,
     next_pr_number: u64,
     releases: Vec<Release>,
     next_commit: u64,
@@ -69,10 +81,16 @@ impl MemoryForge {
         self.state().failure = failure;
     }
 
-    /// Snapshot of the PRs the forge currently holds (open/closed state
-    /// is not modeled — the seam's consumers re-find by branch).
+    /// Snapshot of the PRs the forge currently holds, **open and
+    /// closed** (the §11.1 close semantics are modeled; consumers that
+    /// care about open-ness re-find through [`Forge::find_release_pr`],
+    /// which returns open PRs only).
     pub fn prs(&self) -> Vec<Pr> {
-        self.state().prs.clone()
+        self.state()
+            .prs
+            .iter()
+            .map(|stored| stored.pr.clone())
+            .collect()
     }
 
     /// Snapshot of the releases the forge currently holds.
@@ -107,8 +125,8 @@ impl Forge for MemoryForge {
         Ok(state
             .prs
             .iter()
-            .find(|pr| pr.branch == branch.as_str())
-            .cloned())
+            .find(|stored| stored.open && stored.pr.branch == branch.as_str())
+            .map(|stored| stored.pr.clone()))
     }
 
     fn upsert_pr(&self, spec: &PrSpec) -> Result<Pr, ForgeError> {
@@ -117,14 +135,17 @@ impl Forge for MemoryForge {
         if let Some(failure) = state.failure.clone() {
             return Err(failure);
         }
-        if let Some(existing) = state
+        // Find-by-branch upsert (§11.4, I1) — open PRs only: a closed PR
+        // is never rewritten in place (real forges cannot reopen a
+        // closed PR under its number), so the upsert opens a fresh one.
+        if let Some(stored) = state
             .prs
             .iter_mut()
-            .find(|pr| pr.branch == spec.branch.as_str())
+            .find(|stored| stored.open && stored.pr.branch == spec.branch.as_str())
         {
-            existing.title = spec.title.clone();
-            existing.body = spec.body.clone();
-            return Ok(existing.clone());
+            stored.pr.title.clone_from(&spec.title);
+            stored.pr.body.clone_from(&spec.body);
+            return Ok(stored.pr.clone());
         }
         state.next_pr_number += 1;
         let pr = Pr {
@@ -134,8 +155,30 @@ impl Forge for MemoryForge {
             body: spec.body.clone(),
             url: format!("mem://pr/{}", state.next_pr_number),
         };
-        state.prs.push(pr.clone());
+        state.prs.push(StoredPr {
+            pr: pr.clone(),
+            open: true,
+        });
         Ok(pr)
+    }
+
+    fn close_pr(&self, branch: &BranchName) -> Result<bool, ForgeError> {
+        let mut state = self.state();
+        Self::record(&mut state, "close_pr", branch.as_str());
+        if let Some(failure) = state.failure.clone() {
+            return Err(failure);
+        }
+        // Not-found is a value, not an error (§11.4): closing a branch
+        // without an open PR reports `false` and the re-close is a
+        // no-op (I1).
+        Ok(state
+            .prs
+            .iter_mut()
+            .find(|stored| stored.open && stored.pr.branch == branch.as_str())
+            .is_some_and(|stored| {
+                stored.open = false;
+                true
+            }))
     }
 
     fn release_exists(&self, tag: &str) -> Result<bool, ForgeError> {
