@@ -1,7 +1,7 @@
 //! Cache lifecycle tests (M2.5, §8.7): open/get/insert/flush roundtrip,
 //! determinism (run twice, byte-compare), torn-tail recovery via the
 //! injectable failpoint, and a **real** kill-during-write test that
-//! re-executes this test binary as a child process, has it abort()
+//! re-executes this test binary as a child process, has it `abort()`
 //! mid-record, and asserts the reopened cache skips the truncated tail
 //! and stays re-runnable (I2).
 
@@ -28,9 +28,17 @@ fn record(ids: &[u32]) -> CacheRecord {
 }
 
 fn temp_git_dir() -> std::path::PathBuf {
-    let dir = tempfile::tempdir().expect("tempdir");
+    // The test-lint allowances (expect/unwrap) only reach `#[test]`
+    // functions, not helpers; a fixture failure is unreachable by
+    // construction (fresh tempdir), so it aborts the test loudly here.
+    let dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => unreachable!("tempdir fixture: {e}"),
+    };
     let path = dir.path().join("git");
-    std::fs::create_dir_all(&path).expect("mkdir");
+    if let Err(e) = std::fs::create_dir_all(&path) {
+        unreachable!("mkdir fixture: {e}");
+    }
     // Leak the tempdir guard on purpose: the fixtures below need the
     // directory for the whole test, and the test process cleans up /tmp.
     std::mem::forget(dir);
@@ -40,10 +48,16 @@ fn temp_git_dir() -> std::path::PathBuf {
 #[test]
 fn roundtrip_and_counters() {
     let git = temp_git_dir();
-    let key = CacheKey::compute(b"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111", "blake3:layout", "blake3:cfg");
+    let key = CacheKey::compute(
+        b"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
+        "blake3:layout",
+        "blake3:cfg",
+    );
     let mut cache = Cache::open(&git).expect("open");
     assert!(cache.is_empty());
-    cache.insert(key.clone(), record(&[0, 1, 130])).expect("insert");
+    cache
+        .insert(key.clone(), record(&[0, 1, 130]))
+        .expect("insert");
     assert_eq!(cache.len(), 1);
     cache.flush().expect("flush");
 
@@ -53,10 +67,18 @@ fn roundtrip_and_counters() {
     assert_eq!(got.touched, bitset(&[0, 1, 130]));
     assert_eq!((got.subject_end, got.body_start), (17, 19));
     let (hits, misses) = reopened.hit_rate();
-    assert_eq!((hits, misses), (1, 0), "counters survive the header roundtrip");
+    assert_eq!(
+        (hits, misses),
+        (1, 0),
+        "counters survive the header roundtrip"
+    );
 
     // A miss counts too.
-    let absent = CacheKey::compute(b"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1112", "blake3:layout", "blake3:cfg");
+    let absent = CacheKey::compute(
+        b"aaaa1111aaaa1111aaaa1111aaaa1111aaaa1112",
+        "blake3:layout",
+        "blake3:cfg",
+    );
     assert!(reopened.get(&absent).is_none());
     assert_eq!(reopened.hit_rate(), (1, 1));
 }
@@ -71,8 +93,12 @@ fn determinism_run_twice_byte_compares() {
     let mut second = Cache::open(&b).expect("open b");
     for n in 0..7u8 {
         let key = CacheKey::compute(&[n; 40], "blake3:layout", "blake3:cfg");
-        first.insert(key.clone(), record(&[u32::from(n), 200])).expect("insert");
-        second.insert(key, record(&[u32::from(n), 200])).expect("insert");
+        first
+            .insert(key.clone(), record(&[u32::from(n), 200]))
+            .expect("insert");
+        second
+            .insert(key, record(&[u32::from(n), 200]))
+            .expect("insert");
     }
     first.flush().expect("flush");
     second.flush().expect("flush");
@@ -92,8 +118,9 @@ fn failpoint_torn_tail_is_skipped_and_recoverable() {
     let mut cache = Cache::open(&git).expect("open");
     for (n, key) in keys.iter().enumerate() {
         let torn = n == 2;
+        let pkg = u32::try_from(n).unwrap_or(u32::MAX);
         cache
-            .insert_with_failpoint(key.clone(), record(&[n as u32]), &|_| torn)
+            .insert_with_failpoint(key.clone(), record(&[pkg]), &|_| torn)
             .expect("insert");
         if torn {
             break;
@@ -106,12 +133,14 @@ fn failpoint_torn_tail_is_skipped_and_recoverable() {
     // 3/4 are absent — and inserting again works.
     let mut reopened = Cache::open(&git).expect("reopen skips torn tail");
     assert_eq!(reopened.len(), 2, "records after the torn one are skipped");
-    assert!(reopened.get(&keys[0]).is_some());
-    assert!(reopened.get(&keys[1]).is_some());
+    assert!(reopened.get(keys.first().expect("five keys")).is_some());
+    assert!(reopened.get(keys.get(1).expect("five keys")).is_some());
     for key in keys.iter().skip(2) {
         assert!(reopened.get(key).is_none());
     }
-    reopened.insert(keys[4].clone(), record(&[4])).expect("re-runnable");
+    reopened
+        .insert(keys.get(4).expect("five keys").clone(), record(&[4]))
+        .expect("re-runnable");
     reopened.flush().expect("flush again");
     let reopened_final = Cache::open(&git).expect("final open");
     assert_eq!(reopened_final.len(), 3);
@@ -163,7 +192,9 @@ fn kill_during_write_leaves_a_recoverable_cache() {
     let mut reopened = Cache::open(&git).expect("reopen after real kill");
     assert_eq!(reopened.len(), 2, "records before the torn one survived");
     let key = CacheKey::compute(&[9; 40], "blake3:layout", "blake3:cfg");
-    reopened.insert(key.clone(), record(&[9])).expect("re-run insert");
+    reopened
+        .insert(key.clone(), record(&[9]))
+        .expect("re-run insert");
     reopened.flush().expect("re-run flush");
     let reopened_final = Cache::open(&git).expect("final open");
     assert!(reopened_final.get(&key).is_some());
@@ -199,7 +230,10 @@ fn corrupt_records_never_kill_the_scan() {
         eprintln!("T3 inserting");
         for n in 0..4u8 {
             cache
-                .insert(CacheKey::compute(&[n; 40], "blake3:layout", "blake3:cfg"), record(&[u32::from(n)]))
+                .insert(
+                    CacheKey::compute(&[n; 40], "blake3:layout", "blake3:cfg"),
+                    record(&[u32::from(n)]),
+                )
                 .expect("insert");
         }
         eprintln!("T4 flushing");
@@ -214,7 +248,9 @@ fn corrupt_records_never_kill_the_scan() {
     let mut bytes = std::fs::read(&path).expect("read");
     let at = 28 + 40; // header + first record length/crc fields
     let before = bytes.get(at).copied().expect("byte exists");
-    bytes[at] = before ^ 0xFF;
+    if let Some(slot) = bytes.get_mut(at) {
+        *slot = before ^ 0xFF;
+    }
     std::fs::write(&path, &bytes).expect("write back");
     let cache = Cache::open(&git).expect("open skips corruption");
     assert!(
