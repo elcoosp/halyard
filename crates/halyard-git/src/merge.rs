@@ -1,5 +1,5 @@
 //! The merge policy (§8.5, M2.4): how merge commits, reverts and
-//! autosquash commits flow into the [`HistoryDigest`].
+//! autosquash commits flow into the `HistoryDigest` digest.
 //!
 //! Default (`first-parent`, §16.4): every commit is diffed against its
 //! **first parent** and a merge commit itself is *not* counted as a
@@ -16,7 +16,7 @@
 //! planner's bump mapping stays correct.
 //!
 //! Autosquash (§8.5): `fixup!`/`squash!` subjects never emit a
-//! [`RelevantCommit`] and never contribute a reason (the parser returns
+//! `RelevantCommit` entries and never contribute a reason (the parser returns
 //! `None` for them; the walk still visits them).
 //!
 //! The `(#NNN)` trailing PR-number extractor is a byte scan from the end
