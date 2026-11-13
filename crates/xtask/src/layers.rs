@@ -125,11 +125,13 @@ const RULES: &[LayerRule] = &[
         external: Some(&["gix", "gix-commitgraph", "semver", "tracing", "bstr"]),
     },
     // M3.5 changelog renderer (§9.4): consumes the Plan; `minijinja` is
-    // the template engine named by the spec.
+    // the template engine named by the spec. M4.3a adds the §11.3 PR
+    // body: `serde_json` (canonical plan JSON), `flate2` + `base64`
+    // (the compressed embedded plan, I8).
     LayerRule {
         name: "halyard-changelog",
         workspace: &["halyard-core"],
-        external: Some(&["minijinja"]),
+        external: Some(&["minijinja", "serde_json", "flate2", "base64"]),
     },
     // M2.5 persistent cache (§8.7): the only crate permitted `unsafe`
     // (invariant I10). External set: `blake3` (content-addressed keys),
