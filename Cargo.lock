@@ -1378,14 +1378,12 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "clap_complete",
- "halyard-changelog",
  "halyard-config",
  "halyard-core",
  "halyard-discover",
  "halyard-edit",
  "halyard-git",
  "halyard-test-support",
- "halyard-version",
  "insta",
  "miette",
  "semver",
@@ -1480,7 +1478,9 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "halyard-core",
+ "halyard-discover",
  "proptest",
+ "semver",
  "tempfile",
 ]
 
@@ -2913,9 +2913,13 @@ dependencies = [
  "halyard-config",
  "halyard-core",
  "halyard-discover",
+ "halyard-edit",
+ "halyard-git",
  "halyard-test-support",
+ "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
 ]
 
