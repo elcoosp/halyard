@@ -74,10 +74,7 @@ pub(crate) struct ParsedDep {
 pub(crate) type ParsedDoc<'a> = toml_edit::Document<&'a str>;
 
 /// Parses `raw` into a span-carrying document.
-pub(crate) fn parse_document<'a>(
-    raw: &'a str,
-    file: &str,
-) -> Result<ParsedDoc<'a>, DiscoverError> {
+pub(crate) fn parse_document<'a>(raw: &'a str, file: &str) -> Result<ParsedDoc<'a>, DiscoverError> {
     toml_edit::Document::parse(raw).map_err(|e| DiscoverError::Manifest {
         file: file.to_owned(),
         format: ManifestFormat::Toml,
@@ -98,14 +95,12 @@ pub(crate) fn workspace_facts(doc: &ParsedDoc<'_>) -> Result<WorkspaceFacts, Dis
     let (members, excludes) = match ws {
         Some(table) => {
             let members = match table.get("members") {
-                Some(_) => string_list(table.get("members")).ok_or(
-                    DiscoverError::Manifest {
-                        file: "Cargo.toml".to_owned(),
-                        format: ManifestFormat::Toml,
-                        message: "[workspace] members must be an array of strings".to_owned(),
-                        span: None,
-                    },
-                )?,
+                Some(_) => string_list(table.get("members")).ok_or(DiscoverError::Manifest {
+                    file: "Cargo.toml".to_owned(),
+                    format: ManifestFormat::Toml,
+                    message: "[workspace] members must be an array of strings".to_owned(),
+                    span: None,
+                })?,
                 None => Vec::new(),
             };
             let excludes = string_list(table.get("exclude")).unwrap_or_default();
@@ -123,7 +118,7 @@ pub(crate) fn workspace_facts(doc: &ParsedDoc<'_>) -> Result<WorkspaceFacts, Dis
         .and_then(|t| t.get("dependencies"))
         .and_then(toml_edit::Item::as_table)
     {
-        for (name, item) in deps.iter() {
+        for (name, item) in deps {
             if let Some(entry) = requirement_from_item(item) {
                 workspace_deps.insert(name.to_owned(), entry);
             }
@@ -142,7 +137,7 @@ pub(crate) fn workspace_facts(doc: &ParsedDoc<'_>) -> Result<WorkspaceFacts, Dis
 fn string_list(item: Option<&toml_edit::Item>) -> Option<Vec<String>> {
     let arr = item?.as_array()?;
     let mut out = Vec::new();
-    for value in arr.iter() {
+    for value in arr {
         out.push(value.as_str()?.to_owned());
     }
     Some(out)
@@ -159,20 +154,29 @@ fn item_string_and_span(item: &toml_edit::Item) -> Option<(String, Option<Span>)
 fn requirement_from_item(item: &toml_edit::Item) -> Option<WorkspaceDepEntry> {
     match item {
         toml_edit::Item::Value(value) => {
-            let text = value.as_str()?;
+            if let Some(text) = value.as_str() {
+                return Some(WorkspaceDepEntry {
+                    req: req_from_text(text),
+                    version_span: value.span().map(span_of),
+                });
+            }
+            // Inline-table form: `dep = { path = …, version = "…" }`.
+            let inline = value.as_inline_table()?;
+            let version = inline.get("version");
             Some(WorkspaceDepEntry {
-                req: req_from_text(text),
-                version_span: value.span().map(span_of),
+                req: version
+                    .and_then(toml_edit::Value::as_str)
+                    .map_or(ReqSpec::PathOnly, req_from_text),
+                version_span: version.and_then(toml_edit::Value::span).map(span_of),
             })
         }
         toml_edit::Item::Table(table) => {
             let version = table.get("version");
             Some(WorkspaceDepEntry {
                 req: version
-                    .and_then(|v| v.as_value())
-                    .and_then(|v| v.as_str())
-                    .map(req_from_text)
-                    .unwrap_or(ReqSpec::PathOnly),
+                    .and_then(toml_edit::Item::as_value)
+                    .and_then(toml_edit::Value::as_str)
+                    .map_or(ReqSpec::PathOnly, req_from_text),
                 version_span: version
                     .and_then(toml_edit::Item::as_value)
                     .and_then(toml_edit::Value::span)
@@ -200,13 +204,13 @@ fn req_from_text(text: &str) -> ReqSpec {
 fn is_workspace_inherit(item: &toml_edit::Item) -> bool {
     let inline = item
         .as_value()
-        .and_then(|v| v.as_inline_table())
+        .and_then(toml_edit::Value::as_inline_table)
         .and_then(|t| t.get("workspace"))
-        .and_then(|v| v.as_bool());
+        .and_then(toml_edit::Value::as_bool);
     let dotted = item
         .as_table()
         .and_then(|t| t.get("workspace"))
-        .and_then(|v| v.as_bool());
+        .and_then(toml_edit::Item::as_bool);
     inline == Some(true) || dotted == Some(true)
 }
 
@@ -246,7 +250,7 @@ impl Fields<'_> {
 /// Builds a dependency row from the long-form/inline-table fields.
 fn table_dep(
     name: &str,
-    fields: Fields<'_>,
+    fields: &Fields<'_>,
     kind: DepKind,
     manifest: &RelPath,
     root_manifest: &RelPath,
@@ -275,7 +279,7 @@ fn table_dep(
         });
     }
     let version = fields.get_str("version");
-    let req = version.map(req_from_text).unwrap_or(ReqSpec::PathOnly);
+    let req = version.map_or(ReqSpec::PathOnly, req_from_text);
     let version_span = fields.get_span("version");
     Some(ParsedDep {
         name: dep_name,
@@ -299,7 +303,7 @@ fn collect_section(
     facts: &WorkspaceFacts,
     out: &mut Vec<ParsedDep>,
 ) {
-    for (name, item) in table.iter() {
+    for (name, item) in table {
         match item {
             toml_edit::Item::Value(value) => {
                 // Plain string form.
@@ -316,17 +320,23 @@ fn collect_section(
                     });
                     continue;
                 }
-                if let Some(inline) = value.as_inline_table() {
-                    if let Some(dep) = table_dep(
+                if let Some(inline) = value.as_inline_table()
+                    && let Some(mut dep) = table_dep(
                         name,
-                        Fields::Inline(inline),
+                        &Fields::Inline(inline),
                         kind,
                         manifest,
                         root_manifest,
                         facts,
-                    ) {
-                        out.push(dep);
+                    )
+                {
+                    // Path form (inline): internal when it normalizes
+                    // inside the repository — the same rule the
+                    // long-form table branch applies below.
+                    if let Some(path) = inline.get("path").and_then(|v| v.as_str()) {
+                        dep.internal = normalize_join(base_dir, path).is_some();
                     }
+                    out.push(dep);
                 }
             }
             toml_edit::Item::Table(sub) => {
@@ -334,7 +344,7 @@ fn collect_section(
                 // `foo.workspace = true`.
                 if let Some(mut dep) = table_dep(
                     name,
-                    Fields::Table(sub),
+                    &Fields::Table(sub),
                     kind,
                     manifest,
                     root_manifest,
@@ -358,6 +368,142 @@ fn collect_section(
     }
 }
 
+/// Resolves the package version: local string or `workspace = true`
+/// inheritance (§6.3), with the byte site of the value captured alongside
+/// (M1.9) — the root manifest for inherited versions so all inheritors
+/// share one edit, the own manifest otherwise.
+fn resolve_version(
+    package: &toml_edit::Table,
+    file: &str,
+    name: &str,
+    manifest: &RelPath,
+    root_manifest: &RelPath,
+    facts: &WorkspaceFacts,
+    warnings: &mut Vec<DiscoveryWarning>,
+) -> Result<
+    (
+        Option<semver::Version>,
+        RawVersionSource,
+        Option<ManifestSite>,
+    ),
+    DiscoverError,
+> {
+    let version_item = package.get("version");
+    match version_item {
+        Some(item) if is_workspace_inherit(item) => match &facts.inherited_version {
+            Some((text, span)) => Ok((
+                semver::Version::parse(text).ok(),
+                RawVersionSource::WorkspaceInherited {
+                    file: "Cargo.toml".to_owned(),
+                    key_path: "package.version".to_owned(),
+                },
+                Some(ManifestSite {
+                    file: root_manifest.clone(),
+                    spans: spans_of(*span),
+                }),
+            )),
+            None => Err(DiscoverError::Manifest {
+                file: file.to_owned(),
+                format: ManifestFormat::Toml,
+                message: "version.workspace = true but [workspace.package] has no version"
+                    .to_owned(),
+                span: None,
+            }),
+        },
+        Some(item) => {
+            let text = item.as_value().and_then(toml_edit::Value::as_str);
+            if let Some(text) = text {
+                let parsed = semver::Version::parse(text).ok();
+                if parsed.is_none() {
+                    warnings.push(warning(
+                        "invalid-version",
+                        name,
+                        format!(
+                            "version {text:?} is not valid semver; package treated as unpublished"
+                        ),
+                    ));
+                }
+                let site = ManifestSite {
+                    file: manifest.clone(),
+                    spans: spans_of(item.span().map(span_of)),
+                };
+                Ok((parsed, RawVersionSource::Local, Some(site)))
+            } else {
+                warnings.push(warning(
+                    "no-version",
+                    name,
+                    "no usable `version` in [package]; package treated as unpublished".to_owned(),
+                ));
+                Ok((None, RawVersionSource::Local, None))
+            }
+        }
+        None => {
+            warnings.push(warning(
+                "no-version",
+                name,
+                "no `version` in [package]; package treated as unpublished".to_owned(),
+            ));
+            Ok((None, RawVersionSource::Local, None))
+        }
+    }
+}
+
+/// Collects dependency rows from the root-level sections and every
+/// `[target.*]` section (§6.3), in fixed order for determinism.
+fn collect_all_deps(
+    doc: &ParsedDoc<'_>,
+    manifest: &RelPath,
+    root_manifest: &RelPath,
+    base_dir: &str,
+    facts: &WorkspaceFacts,
+) -> Vec<ParsedDep> {
+    let mut deps: Vec<ParsedDep> = Vec::new();
+    for (section, kind) in [
+        ("dependencies", DepKind::Normal),
+        ("dev-dependencies", DepKind::Dev),
+        ("build-dependencies", DepKind::Build),
+    ] {
+        if let Some(table) = doc.get(section).and_then(toml_edit::Item::as_table) {
+            collect_section(
+                table,
+                kind,
+                manifest,
+                root_manifest,
+                base_dir,
+                facts,
+                &mut deps,
+            );
+        }
+    }
+    if let Some(targets) = doc.get("target").and_then(toml_edit::Item::as_table) {
+        for (_cfg, target_item) in targets {
+            if let Some(target_table) = target_item.as_table() {
+                for (section, kind) in [
+                    ("dependencies", DepKind::Normal),
+                    ("dev-dependencies", DepKind::Dev),
+                    ("build-dependencies", DepKind::Build),
+                ] {
+                    if let Some(table) = target_table
+                        .get(section)
+                        .and_then(toml_edit::Item::as_table)
+                    {
+                        collect_section(
+                            table,
+                            kind,
+                            manifest,
+                            root_manifest,
+                            base_dir,
+                            facts,
+                            &mut deps,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    deps
+}
+
 /// Parses one member (or root) manifest into a draft.
 pub(crate) fn package_draft(
     doc: &ParsedDoc<'_>,
@@ -371,21 +517,23 @@ pub(crate) fn package_draft(
         message: "manifest path is not a normalized repo-relative path".to_owned(),
         span: None,
     })?;
-    let root_manifest =
-        RelPath::new("Cargo.toml").expect("root manifest path is always valid");
+    let Some(root_manifest) = RelPath::new("Cargo.toml") else {
+        unreachable!("the literal root manifest path is always a valid RelPath");
+    };
     let mut warnings: Vec<DiscoveryWarning> = Vec::new();
-    let package = doc.get("package").and_then(toml_edit::Item::as_table).ok_or(
-        DiscoverError::Manifest {
+    let package = doc
+        .get("package")
+        .and_then(toml_edit::Item::as_table)
+        .ok_or(DiscoverError::Manifest {
             file: file.to_owned(),
             format: ManifestFormat::Toml,
             message: "member manifest has no [package] table".to_owned(),
             span: None,
-        },
-    )?;
+        })?;
     let name = package
         .get("name")
         .and_then(|v| v.as_value())
-        .and_then(|v| v.as_str())
+        .and_then(toml_edit::Value::as_str)
         .ok_or(DiscoverError::Manifest {
             file: file.to_owned(),
             format: ManifestFormat::Toml,
@@ -394,81 +542,25 @@ pub(crate) fn package_draft(
         })?
         .to_owned();
 
-    // Version: local string, or `workspace = true` inheritance (§6.3).
-    // The byte site of the value is captured alongside (M1.9): the plan's
-    // own-version patch targets it; inherited versions site into the root
-    // manifest so all inheritors share one edit.
-    let version_item = package.get("version");
-    let (version, version_source, version_site) = match version_item {
-        Some(item) if is_workspace_inherit(item) => match &facts.inherited_version {
-            Some((text, span)) => (
-                semver::Version::parse(text).ok(),
-                RawVersionSource::WorkspaceInherited {
-                    file: "Cargo.toml".to_owned(),
-                    key_path: "package.version".to_owned(),
-                },
-                Some(ManifestSite {
-                    file: root_manifest.clone(),
-                    spans: spans_of(*span),
-                }),
-            ),
-            None => {
-                return Err(DiscoverError::Manifest {
-                    file: file.to_owned(),
-                    format: ManifestFormat::Toml,
-                    message: "version.workspace = true but [workspace.package] has no version"
-                        .to_owned(),
-                    span: None,
-                });
-            }
-        },
-        Some(item) => match item.as_value().and_then(|v| v.as_str()) {
-            Some(text) => {
-                let parsed = semver::Version::parse(text).ok();
-                if parsed.is_none() {
-                    warnings.push(warning(
-                        "invalid-version",
-                        &name,
-                        format!(
-                            "version {text:?} is not valid semver; package treated as unpublished"
-                        ),
-                    ));
-                }
-                let site = ManifestSite {
-                    file: manifest.clone(),
-                    spans: spans_of(item.span().map(span_of)),
-                };
-                (parsed, RawVersionSource::Local, Some(site))
-            }
-            None => {
-                warnings.push(warning(
-                    "no-version",
-                    &name,
-                    "no usable `version` in [package]; package treated as unpublished".to_owned(),
-                ));
-                (None, RawVersionSource::Local, None)
-            }
-        },
-        None => {
-            warnings.push(warning(
-                "no-version",
-                &name,
-                "no `version` in [package]; package treated as unpublished".to_owned(),
-            ));
-            (None, RawVersionSource::Local, None)
-        }
-    };
+    let (version, version_source, version_site) = resolve_version(
+        package,
+        file,
+        &name,
+        &manifest,
+        &root_manifest,
+        facts,
+        &mut warnings,
+    )?;
 
     // `publish = false` flips publishability; `publish = [registries]`
-    // keeps it on (§6.3).
-    let publishable = match package.get("publish") {
-        Some(item) => item
-            .as_value()
-            .and_then(|v| v.as_bool())
-            .map(|b| b)
-            .unwrap_or(true),
-        None => true,
-    };
+    // keeps it on (§6.3). A package without a usable version is treated
+    // as unpublishable (§6.3: warn + unpublishable).
+    let publish_flag = package
+        .get("publish")
+        .and_then(toml_edit::Item::as_value)
+        .and_then(toml_edit::Value::as_bool)
+        .unwrap_or(true);
+    let publishable = publish_flag && version.is_some();
 
     // `package.metadata.halyard` overrides (§6.3): `tag_style` for now.
     let tag_template = package
@@ -477,61 +569,23 @@ pub(crate) fn package_draft(
         .and_then(|t| t.get("halyard"))
         .and_then(toml_edit::Item::as_table)
         .and_then(|t| t.get("tag_style"))
-        .and_then(|v| v.as_value())
-        .and_then(|v| v.as_str())
+        .and_then(toml_edit::Item::as_value)
+        .and_then(toml_edit::Value::as_str)
         .map(|raw| parse_tag_template(raw, file, None))
         .transpose()?;
 
-    // Facets for the §6.5 link rules.
-    let cdylib = package
+    // Facets for the §6.5 link rules. `[lib]` is a top-level table (the
+    // previous lookup inside `[package]` never matched, so cdylib crates
+    // went unnoticed and the napi rule never fired).
+    let cdylib = doc
         .get("lib")
         .and_then(toml_edit::Item::as_table)
         .and_then(|t| t.get("crate-type"))
-        .and_then(|v| v.as_value())
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .any(|t| t == "cdylib")
-        })
-        .unwrap_or(false);
+        .and_then(toml_edit::Item::as_value)
+        .and_then(toml_edit::Value::as_array)
+        .is_some_and(|arr| arr.iter().filter_map(|v| v.as_str()).any(|t| t == "cdylib"));
 
-    // Dependency sections (root-level and per-target, §6.3).
-    let mut deps: Vec<ParsedDep> = Vec::new();
-    for (section, kind) in [
-        ("dependencies", DepKind::Normal),
-        ("dev-dependencies", DepKind::Dev),
-        ("build-dependencies", DepKind::Build),
-    ] {
-        if let Some(table) = doc.get(section).and_then(toml_edit::Item::as_table) {
-            collect_section(table, kind, &manifest, &root_manifest, base_dir, facts, &mut deps);
-        }
-    }
-    if let Some(targets) = doc.get("target").and_then(toml_edit::Item::as_table) {
-        for (_cfg, target_item) in targets.iter() {
-            if let Some(target_table) = target_item.as_table() {
-                for (section, kind) in [
-                    ("dependencies", DepKind::Normal),
-                    ("dev-dependencies", DepKind::Dev),
-                    ("build-dependencies", DepKind::Build),
-                ] {
-                    if let Some(table) =
-                        target_table.get(section).and_then(toml_edit::Item::as_table)
-                    {
-                        collect_section(
-                            table,
-                            kind,
-                            &manifest,
-                            &root_manifest,
-                            base_dir,
-                            facts,
-                            &mut deps,
-                        );
-                    }
-                }
-            }
-        }
-    }
+    let deps = collect_all_deps(doc, &manifest, &root_manifest, base_dir, facts);
 
     // wasm-bindgen facet: any dependency named wasm-bindgen (§6.5).
     let wasm_bindgen = deps.iter().any(|d| d.name == "wasm-bindgen");
@@ -542,8 +596,10 @@ pub(crate) fn package_draft(
             warnings.push(warning(
                 "ignored-section",
                 file,
-                format!("[{section}] is ignored by discovery (registry overrides are not \
-                         modeled)"),
+                format!(
+                    "[{section}] is ignored by discovery (registry overrides are not \
+                         modeled)"
+                ),
             ));
         }
     }
