@@ -21,7 +21,7 @@
 //! is released before the call returns (per-operation locking). Reads
 //! through the mapping are immutable bytes within the scanned valid
 //! prefix; the only `unsafe` in the workspace (invariant I10, §2) is the
-//! `mmap`/`munmap`/`flock` trio in [`mmap`], which carries its
+//! `mmap`/`munmap`/`flock` trio in the `mmap` module, which carries its
 //! rationale and is covered by `tests/miri.rs` (Miri runs the cache suite
 //! through the `read()`-backed fallback — real `mmap` syscalls are
 //! outside Miri's isolated execution model) and `tests/loom.rs` (the
@@ -36,7 +36,7 @@
 //! The crate-level `unsafe_code` permission lives in `Cargo.toml`
 //! (`[lints.rust] unsafe_code = "allow"`, invariant I10) — the source
 //! carries no allow attributes; the `unsafe` surface is confined to the
-//! [`mmap`] module with its own SAFETY rationale.
+//! private `mmap` module with its own SAFETY rationale.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -641,7 +641,7 @@ impl Cache {
         self.insert_with_failpoint(key, rec, &|_| false)
     }
 
-    /// [`insert`] with an injectable failpoint (`failpoint(nth_insert) ->
+    /// [`Cache::insert`] with an injectable failpoint (`failpoint(nth_insert) ->
     /// bool`): when it returns `true` after the `n`th insert, the record's
     /// bytes are written only partially (torn tail, the exact state a
     /// SIGKILL mid-write produces) and the write reports success. **The
