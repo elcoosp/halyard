@@ -25,6 +25,7 @@ use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_git::GitHistory;
 
+mod check;
 mod doctor;
 mod profile;
 mod render;
@@ -81,8 +82,10 @@ struct Cli {
     #[arg(long, global = true)]
     offline: bool,
 
-    /// Ignore the persistent per-commit cache (M2.5; accepted for
-    /// forward compatibility — planning is uncached today).
+    /// Ignore the persistent per-commit cache (M2.5, §8.7). The CLI
+    /// pipeline does not wire the cache yet (M2.6 close-out): planning
+    /// is uncached today, so the flag is accepted for forward
+    /// compatibility.
     #[arg(long, global = true)]
     no_cache: bool,
 
@@ -118,11 +121,33 @@ enum Command {
         #[arg(long)]
         dry: bool,
     },
+    /// Forecast the Release PR without touching a forge (M4.2b step 1,
+    /// §11.1 prepare phase): plan → §11.3 body → machine pass over the
+    /// dry-run adapter. Live mode lands with the M4.1b GitHub adapter.
+    Pr {
+        /// Forecast the prepare phase offline (the only implemented
+        /// mode; live mode needs the M4.1b forge adapter).
+        #[arg(long)]
+        dry: bool,
+    },
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
         /// The package name.
         #[arg(value_name = "PKG")]
         package: String,
+    },
+    /// Lint a squash-merge PR title and gate on pending releases
+    /// (§11.6): the title is the bump source in squash-merge repos, so
+    /// `check --pr-title` predicts — per pending package — the bump the
+    /// merge would convey; `--exit-code` turns a pending release into
+    /// exit code 3 (§15.4).
+    Check {
+        /// The squash-merge PR title to lint (§11.6).
+        #[arg(long, value_name = "TITLE")]
+        pr_title: Option<String>,
+        /// Exit 3 when a release is pending (§15.4 exit codes).
+        #[arg(long)]
+        exit_code: bool,
     },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
@@ -197,7 +222,7 @@ fn main() -> ExitCode {
     let result = run(&cli, &mut profiler);
     profiler.finish();
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(error) => {
             if cli.format == Format::Json {
                 let payload = serde_json::json!({
@@ -229,7 +254,7 @@ fn apply_color_policy(color: Color) -> bool {
     }
 }
 
-fn run(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
+fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
     if let Some(dir) = &cli.cwd {
         std::env::set_current_dir(dir).map_err(|e| {
             CliError::new(
@@ -239,24 +264,50 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
         })?;
     }
     match &cli.command {
-        Command::Plan { json, package } => cmd_plan(cli, profiler, *json, package.as_deref()),
-        Command::Apply { dry } => cmd_apply(cli, profiler, *dry),
-        Command::Explain { package } => cmd_explain(cli, profiler, package),
-        Command::Status => cmd_status(cli, profiler),
-        Command::Graph { format } => cmd_graph(cli, profiler, *format),
-        Command::Doctor => cmd_doctor(cli, profiler),
+        Command::Plan { json, package } => {
+            cmd_plan(cli, profiler, *json, package.as_deref())?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Apply { dry } => {
+            cmd_apply(cli, profiler, *dry)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Pr { dry } => {
+            cmd_pr(cli, profiler, *dry)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Explain { package } => {
+            cmd_explain(cli, profiler, package)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Check {
+            pr_title,
+            exit_code,
+        } => cmd_check(cli, profiler, pr_title.as_deref(), *exit_code),
+        Command::Status => {
+            cmd_status(cli, profiler)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Graph { format } => {
+            cmd_graph(cli, profiler, *format)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Doctor => {
+            cmd_doctor(cli, profiler)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Schema { what } => {
             let document = match what {
                 SchemaKind::Plan => include_str!("../../../schemas/halyard-plan-v1.json"),
                 SchemaKind::Config => include_str!("../../../schemas/halyard-config-v1.json"),
             };
             println!("{document}");
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         Command::Completions { shell } => {
             let mut command = Cli::command();
             generate(*shell, &mut command, "halyard", &mut std::io::stdout());
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -293,6 +344,93 @@ fn cmd_plan(
         print!("{}", render::plan_human(&plan));
     }
     Ok(())
+}
+
+/// The `pr` command (M4.2b step 1): the §11.1 prepare-phase forecast.
+/// `--dry` drives the machine over the dry-run adapter — plan → §11.3
+/// body → find/upsert/close pass — and reports the effects, the §11.5
+/// call budget and the rendered body. Nothing is written and no network
+/// is touched (I5); live mode lands with the M4.1b forge adapter
+/// (`E-CLI-PR`).
+fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
+    if !dry {
+        return Err(CliError::new(
+            "E-CLI-PR",
+            "live Release-PR mode needs a forge adapter (M4.1b, not implemented yet); \
+             use `halyard pr --dry` for the offline prepare-phase forecast",
+        ));
+    }
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    // §11.2: the release branch is `halyard/release/<base>`. The plan's
+    // `base_branch` stays `HEAD` until the live shell resolves the
+    // remote HEAD (planner.rs) — the forecast names exactly what a live
+    // run on this config would target.
+    let branch = halyard_forge::BranchName::new(&format!("halyard/release/{}", plan.base_branch))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The §11.3 body renders only when the plan has releases; an empty
+    // plan sends the machine on the close probe (§11.1 step 3).
+    let body = if plan.releases.is_empty() {
+        None
+    } else {
+        Some(
+            halyard_changelog::render_release_body(&plan)
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?,
+        )
+    };
+    // The prepare-phase input: nothing pending — the tag-phase
+    // reconciliation (manifest-vs-tags, §11.1 step 2) is the live run's
+    // shell work; the dry forecast states this in the report.
+    let title = release_pr_title(&plan);
+    let release_pr = body.clone().map(|body| halyard_forge::PrSpec {
+        branch: branch.clone(),
+        title: title.clone(),
+        body,
+    });
+    let report = profiler
+        .span("pr-dry", || {
+            halyard_forge::run_release_machine(
+                &halyard_forge::PreviewForge::new(),
+                &halyard_forge::MachineInput {
+                    branch: branch.clone(),
+                    pending_releases: Vec::new(),
+                    release_pr,
+                },
+            )
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    match cli.format {
+        Format::Json => {
+            let effects: Vec<serde_json::Value> =
+                report.effects.iter().map(render::pr_effect_json).collect();
+            print_pretty_json(&serde_json::json!({
+                "mode": "dry",
+                "title": title,
+                "branch": branch.as_str(),
+                "pending_plan": !plan.releases.is_empty(),
+                "effects": effects,
+                "calls": report.calls,
+                "body": body,
+            }))?;
+        }
+        Format::Gha => print!(
+            "{}",
+            render::pr_dry_gha(&title, branch.as_str(), &report, body.as_deref())
+        ),
+        Format::Human => print!(
+            "{}",
+            render::pr_dry_human(&title, branch.as_str(), &report, body.as_deref())
+        ),
+    }
+    Ok(())
+}
+
+/// The Release-PR title (§11.3): `chore: release <tags>` in the plan's
+/// package order — deterministic (I3) and conventional, so the merged
+/// squash subject later passes the `check` lint (§11.6).
+fn release_pr_title(plan: &halyard_core::Plan) -> String {
+    let tags: Vec<&str> = plan.releases.iter().map(|r| r.tag.as_str()).collect();
+    format!("chore: release {}", tags.join(", "))
 }
 
 /// The `explain` command.
@@ -364,6 +502,136 @@ fn cmd_doctor(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
         Format::Human => print!("{}", render::doctor_human(&report)),
     }
     Ok(())
+}
+
+/// The `check` command (§11.6): lint a squash-merge PR title against the
+/// resolved config (the same mapping the planner applies) and predict —
+/// per pending package — the bump the merge would convey; `--exit-code`
+/// gates CI on a pending release (§15.4 exit code 3). A rejected title
+/// fails with the `E-CLI-TITLE` diagnosis (§11.6: errors teach).
+fn cmd_check(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    pr_title: Option<&str>,
+    exit_code: bool,
+) -> Result<ExitCode, CliError> {
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    let pending = !plan.releases.is_empty();
+    let plan_config: PlanConfig = context.config.plan_config();
+    if let Some(title) = pr_title {
+        match check::lint(title, &plan_config) {
+            halyard_conventional::TitleVerdict::Accepted(lint) => {
+                // §11.6's precise diagnosis: an unmapped kind with a close
+                // known kind is a likely typo — fail loudly instead of
+                // silently releasing nothing. A genuinely unmapped kind
+                // (`chore:`, `docs:`) is a legitimate no-bump verdict.
+                if let Some(closest) = &lint.closest_known {
+                    return Err(CliError::new(
+                        "E-CLI-TITLE",
+                        format!(
+                            "PR title type {:?} is not a known release type — did you mean \
+                             {closest:?}? Known types: {}. Fix: reword the merge title; \
+                             unmapped types release nothing",
+                            lint.kind,
+                            known_types_csv(&plan_config),
+                        ),
+                    ));
+                }
+                let predictions = check::predict(&plan, &lint, &plan_config);
+                match cli.format {
+                    Format::Json => {
+                        let predicted: Vec<serde_json::Value> = predictions
+                            .iter()
+                            .map(|row| {
+                                serde_json::json!({
+                                    "package": row.package,
+                                    "from": row.from,
+                                    "bump": row.bump,
+                                    "remapped": row.remapped,
+                                })
+                            })
+                            .collect();
+                        print_pretty_json(&serde_json::json!({
+                            "title": title,
+                            "verdict": "accepted",
+                            "kind": lint.kind,
+                            "scope": lint.scope,
+                            "breaking": lint.breaking,
+                            "level": lint.level.as_str(),
+                            "predicted": predicted,
+                            "pending": pending,
+                        }))?;
+                    }
+                    Format::Gha => print!("{}", render::check_gha(title, &lint, &predictions)),
+                    Format::Human => {
+                        print!("{}", render::check_human(title, &lint, &predictions));
+                    }
+                }
+            }
+            halyard_conventional::TitleVerdict::NotConventional { reason } => {
+                return Err(CliError::new(
+                    "E-CLI-TITLE",
+                    format!(
+                        "PR title {title:?} is not a conventional commit: {reason}. \
+                         Fix: squash-merge repos derive the bump from the title \
+                         (§11.6); use `type(scope): description` (e.g. \
+                         `feat(parser): accept spans`)"
+                    ),
+                ));
+            }
+            halyard_conventional::TitleVerdict::FixupOrSquash => {
+                return Err(CliError::new(
+                    "E-CLI-TITLE",
+                    format!(
+                        "PR title {title:?} is a fixup!/squash! subject — autosquash \
+                         commits are never released (§8.5). Fix: reword the merge \
+                         title to a conventional commit"
+                    ),
+                ));
+            }
+        }
+    } else {
+        match cli.format {
+            Format::Json => {
+                let releases: Vec<serde_json::Value> = plan
+                    .releases
+                    .iter()
+                    .map(|release| {
+                        serde_json::json!({
+                            "package": release.package,
+                            "from": release.from,
+                            "to": release.to,
+                            "bump": release.bump,
+                        })
+                    })
+                    .collect();
+                print_pretty_json(
+                    &serde_json::json!({ "pending": pending, "releases": releases }),
+                )?;
+            }
+            Format::Gha => print!("{}", render::check_pending_gha(&plan)),
+            Format::Human => print!("{}", render::check_pending_human(&plan)),
+        }
+    }
+    // §15.4 exit codes: 3 = a release is pending (the `check --exit-code`
+    // CI gate). The title-lint failure path above exits 1 via CliError.
+    Ok(if exit_code && pending {
+        ExitCode::from(3)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The config's known release types, sorted, comma-separated (the
+/// `E-CLI-TITLE` diagnosis lists what the mapping accepts).
+fn known_types_csv(config: &PlanConfig) -> String {
+    config
+        .commit_types
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The shared pipeline context: discovery + resolved config + git history.
@@ -554,6 +822,9 @@ fn native_lockfile_refreshes(
             .refresh_lockfile_native(std::path::Path::new("."))
             .map_err(|e| CliError::new(e.code(), e.to_string()))?;
         let after = read_lock()?;
+        // An unresolvable package symbol is an internal inconsistency —
+        // fail closed with the stable code instead of silently verifying
+        // against an empty member list (which would pass any refresh).
         let members: Vec<String> = workspace
             .packages()
             .iter()
@@ -562,10 +833,19 @@ fn native_lockfile_refreshes(
                 workspace
                     .interner()
                     .get(package.name)
-                    .unwrap_or_default()
-                    .to_owned()
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        CliError::new(
+                            halyard_core::lockfile::NativeRefreshError::CODE,
+                            format!(
+                                "package symbol {} is not interned (internal error; the \
+                             native-refresh verification cannot proceed safely)",
+                                package.name.to_u32(),
+                            ),
+                        )
+                    })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let moved = match lock.ecosystem.as_str() {
             "cargo" => {
                 halyard_eco_cargo::lockfile::verify_native_refresh(&before, &after, &members)
