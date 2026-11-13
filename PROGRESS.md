@@ -14,6 +14,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M2 slice D (tree diff, cache, perf) | partial | feat/m2-tree-diff-cache-perf | M2.3/M2.4/M2.5 implemented: `halyard-core::trie` (build_trie + layout_hash, 4 tests), `halyard-git::tree_diff` (trie-guided lockstep walk, memo LRU, stats counters), `halyard-git::bloom` (BIDX/BDAT changed-path reader, murmur3 v2, verified against git's bloom.c), `halyard-git::merge` (MergePolicy FirstParentDiff/FirstParentMergeMessage/Off, in-window revert cancellation, out-of-window→fix, 6 tests), `halyard-cache` crate (append-only checksummed mmap cache, per-op flock, failpoint + real-SIGKILL kill-during-write tests, Miri/loom suites, dump example — 15 tests green incl. loom models), `halyard-conventional` revert_target/trailing_pr_number + golden/totality tests, `GitHistory::build_with_options` wiring (cache consulted before tree diff, attribution ∩ painted window), check-layers close-out (rules for git/changelog/cache + manifest regression test), broken Slice C example fixed | M2.6 NOT started (dhat re-audit/iai-callgrind/perf-gate extension/cache-check/pgo/CLI profile spans), D0 remainder (schema-check-plan + git-diff xtask subcommands, fuzz targets changelog_render/trie_diff/cache_read, docs/errors E-PLAN-*/E-GIT-*/E-CHLOG-*/E-CLI-*/E-CACHE-* pages, CLI README + snapshot tests, changelog golden tests + example, CI steps), the full Step-5 gate battery re-run, M2.7 replay (SKIP: corpus not fetched); halyard-git lib tests: 8/11 green at session end (3 bloom unit tests + a glob-path unit test hang/fail to triage — see the slice-D session log below); integration engine tests not re-run after the attribution change | 2026-11-12; see the slice-D session log below |
 
 | M3 apply slice (M3.1/M3.3/M3.6) | partial | main | M3.1 Cargo manifest patcher (`halyard-eco-cargo/src/edit.rs`: byte-level span patcher, quote-inclusive spans, dep-kind + `[workspace.dependencies]` + `[target.*]` sections, own `[package]` version, workspace-inherited rows skipped-and-counted, `E-EDIT-UNREWRITABLE` fail-closed, formatting/CRLF preserved), M3.3 package.json patcher (`halyard-eco-npm/src/edit.rs` + `JsonDoc::replace_span`; `catalog:`/`workspace:`/`link:`/`file:` skip-and-count via the M1.6 `classify_req`), `EcosystemAdapter::edit_versions` seam in core + both adapters (check-layers green, 14 crates), M3.6 `halyard-edit/src/plan_apply.rs` (`edit_set_from_plan`, `dry_run_preview`, `apply_plan` — staged in memory then atomic writes) + CLI `apply [--dry]` | M3.2 Cargo.lock patcher and M3.4 pnpm-lock patcher (lockfile slice, not started); perf-gate honest misses recorded (plan-200x40 p50 38 ms vs 25 ms budget; plan-1000x50k p50 1022 ms vs 400 ms — sandbox CPU ceiling, budgets untouched); bench byte-determinism impossible for wall-clock timings (only `docs/replay.md` is byte-gated) | 2026-11-13; clippy 0, tests 321/0, gate battery green (replay 6/6 = 100 % on conventional repos + byte-identical ×2, discover-diff 4/4 cargo, dhat 12/5 within bounds, git-diff attribution ✓); session log below |
+| M3.2 lockfile slice (patcher + native fallback) | done | main | M3.2 Cargo.lock patcher (`halyard-eco-cargo/src/lockfile.rs`: §9.2 rules 1–3, byte-in place, read-back verify, idempotent) + `EcosystemAdapter::patch_lockfile` seam (core `lockfile.rs`; default = documented `NeedsNative` fallback) + `apply_plan` lockfile stage (`LockfileSummary` in the report; decline reported, never guessed) + CLI render/JSON rows, M3.2 native fallback (`EcosystemAdapter::refresh_lockfile_native` + `verify_native_refresh` post-refresh gate + CLI orchestration, §9.2 rule 4), criterion bench (`lockfile_patch`), consumer example (`patch_lockfile.rs`), differential vs `cargo update -w --offline` byte-identical | M3.4 pnpm-lock patcher still open; the full §17 M3.2 acceptance runs "200 mutated fixtures" — this slice ships the differential harness with 1 fixture + unit-matrix coverage (scaling the fixture count is an xtask/nightly task); perf budgets untouched | 2026-11-13; see the session log below |
 
 ## Session log
 
@@ -172,3 +173,69 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   fixture `cargo update -w --offline` differential, (2) M3.4 pnpm-lock
   span patcher + npm/yarn/bun native fallback, (3) M3.5 changelog styles
   beyond keep-a-changelog if required, (4) then M4.1 forge adapter.
+
+### 2026-11-13 — M3.2 lockfile slice: Cargo.lock patcher + native fallback (branch `main`, no commits; tree left dirty)
+
+- **Inventory at session start.** The M3 apply slice was green (321
+  tests, clippy 0 on the 1.99 toolchain). Baseline re-run on the fresh
+  sandbox's clippy 1.100 found **three gate failures the older clippy
+  did not flag**: the deprecated-without-`serde` `minijinja
+  Environment::new()` in `halyard-changelog`, and `clippy::panic` in
+  `halyard-version`'s `tests/golden.rs`/`tests/props.rs` (the removed
+  `clippy.toml` used to carry `allow-*-in-tests`; the root Cargo.toml
+  comment still claimed otherwise). All fixed in this slice as
+  micro-debt (`Environment::empty()` + rationale; test panics →
+  `unreachable!`; comment corrected).
+- **M3.2 implemented (no stubs):**
+  - `halyard-core/src/lockfile.rs` — the lockfile seam:
+    `LockfileVersionChange` (derived from plan releases via
+    `from_release`: cargo ecosystem, real moves only), `LockfileOutcome`
+    (`Patched`/`NeedsNative`), `LockfileFailure` (`E-LOCK-PARSE`) and
+    `NativeRefreshError` (`E-LOCK-NATIVE`). `EcosystemAdapter` gained
+    `patch_lockfile` (default = the documented `NeedsNative` fallback,
+    §9.2 rule 4 — an honest decline, not a stub) and
+    `refresh_lockfile_native` (default = `Unsupported`).
+  - `halyard-eco-cargo/src/lockfile.rs` — the patcher: `toml_edit`
+    spans over the lockfile, member rows (no `source`) and
+    disambiguated `"name version [source]"` dependency entries rewritten
+    byte-in place (I4), read-back re-parse verification, idempotent.
+    Anything unrecognized (format header ≠ 3|4, sourced row for a
+    changed name, duplicate member row, missing member row, drift) →
+    `NeedsNative`; non-UTF-8/non-TOML/unusable change → `E-LOCK-PARSE`.
+  - `halyard-edit/src/plan_apply.rs` — the lockfile stage in `apply_plan`:
+    runs before any write (all-or-none holds), `ApplyReport.lockfile`
+    carries the `LockfileSummary` (a decline is a report row with
+    `native_reason`, never a guess); `EditError::LockfileParse` maps the
+    hard failure. CLI render + JSON rows added.
+  - Native fallback (§9.2 rule 4): `CargoAdapter::refresh_lockfile_native`
+    spawns `cargo update --workspace --offline` (argv array only, I7);
+    `halyard_eco_cargo::lockfile::verify_native_refresh` (pure)
+    post-verifies that only workspace members moved — a registry row
+    moving, a row appearing/disappearing, or a changed format header
+    fails closed; the CLI shell orchestrates read-before/after +
+    verification.
+- **Differential (the §9.2 acceptance arbiter):**
+  `halyard-eco-cargo/tests/differential.rs` builds a real cargo
+  workspace (path-only deps, hermetic `CARGO_HOME`, offline) and proves
+  our patch is **byte-identical** to cargo's own
+  `cargo update -w --offline` rewrite, plus that the native refresh +
+  verification flow moves exactly the bumped member. Skips honestly when
+  no cargo binary is available. Scaling to the full 200-mutated-fixture
+  matrix is an xtask/nightly follow-up.
+- **Tests/bench/example.** 13 unit tests (patcher) + 2 adapter tests + 4
+  `apply_plan` integration tests + 2 core seam tests + 3 differential
+  tests; criterion bench `lockfile_patch` (120-package lock, 40 moves,
+  ≈223 µs p50 in the bench profile); consumer example
+  `examples/patch_lockfile.rs`. Error pages `E-LOCK-PARSE`/
+  `E-LOCK-NATIVE` written; the missing `E-PLAN-CYCLE`/`E-PLAN-RELEASE-AS`/
+  `E-PLAN-UNREWRITABLE` pages (slice-C debt) landed; the errors README
+  index table was repaired (a stray blank line split it) and extended;
+  the §7.3 trait sketch was updated to the as-built signatures.
+- **Honest state at cut-off.** M3.4 (pnpm-lock span patcher) and the
+  200-fixture differential scale-up remain open. The plan-perf budgets
+  are untouched by this slice (the lockfile pass is not on the planning
+  path). Tree left dirty on `main` (no commits made).
+- **Next session start point.** (1) M3.4 pnpm-lock span patcher +
+  npm/yarn/bun native fallback, (2) the 200-fixture lockfile
+  differential as an xtask subcommand, (3) M3.5 changelog styles if
+  required, (4) then M4.1 forge adapter.
