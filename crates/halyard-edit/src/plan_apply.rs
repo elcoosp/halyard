@@ -2,9 +2,10 @@
 //! [`Plan`]'s edits into an [`EditSet`], routes each manifest through its
 //! ecosystem adapter's semantic patcher (`edit_versions`, M3.1/M3.3) and
 //! writes every edited file with the atomic protocol (temp sibling →
-//! fsync → rename, §9.1). The M3.2 lockfile stage patches the root
-//! `Cargo.lock` from the plan's version moves through the adapter's
-//! `patch_lockfile` seam (§7.3 lockfile subset, §9.2): a decline
+//! fsync → rename, §9.1). The M3.2/M3.4 lockfile stages patch the
+//! workspace's lockfiles from the plan's version moves through each
+//! adapter's `patch_lockfile` seam (§9.2 Cargo.lock, §9.3
+//! `pnpm-lock.yaml`): a decline
 //! ([`halyard_core::lockfile::LockfileOutcome::NeedsNative`]) is reported,
 //! never guessed.
 //!
@@ -28,9 +29,13 @@ use crate::EditSet;
 use crate::atomic::atomic_write;
 use crate::error::EditError;
 
-/// Repo-relative path of the Cargo workspace lockfile (§9.2): always at
-/// the repository root, never inside a member directory.
-const CARGO_LOCKFILE: &str = "Cargo.lock";
+/// The lockfile targets of the apply flow, as `(repo-relative path,
+/// ecosystem)` pairs: the root `Cargo.lock` (§9.2, M3.2) and the root
+/// `pnpm-lock.yaml` (§9.3, M3.4). Both live at the repository root, never
+/// inside a member directory. Other npm-family lockfiles
+/// (`package-lock.json`, `yarn.lock`, `bun.lock`) are native-only in v1
+/// and get no in-memory stage.
+const LOCKFILE_TARGETS: [(&str, &str); 2] = [("Cargo.lock", "cargo"), ("pnpm-lock.yaml", "npm")];
 
 /// Deterministic per-file result of one apply pass (M3.6 summary row).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,20 +49,24 @@ pub struct FileSummary {
     pub skipped: usize,
 }
 
-/// Deterministic result of the M3.2 lockfile stage for one apply pass.
+/// Deterministic result of one lockfile stage for one apply pass (M3.2
+/// Cargo.lock / M3.4 pnpm-lock.yaml).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LockfileSummary {
-    /// Repo-relative lockfile path (always `Cargo.lock`, §9.2).
+    /// Repo-relative lockfile path (`Cargo.lock`, `pnpm-lock.yaml`).
     pub file: RelPath,
-    /// Rows/entries the adapter rewrote (member version rows and
-    /// `"name version"` entries, §9.2 rules 1–2).
+    /// The ecosystem whose adapter ran the stage (`cargo`, `npm`).
+    pub ecosystem: String,
+    /// Rows/entries the adapter rewrote (§9.2 member version rows and
+    /// `"name version"` entries; §9.3 importer specifier/link-ref rows).
     pub applied: usize,
-    /// Rows/entries already at the target version (idempotent re-apply).
+    /// Rows/entries already at the target version or needing no change
+    /// (idempotent re-apply, protocol rows).
     pub skipped: usize,
     /// `Some(reason)` when the patcher declined
-    /// ([`LockfileOutcome::NeedsNative`], §9.2 rule 4): the lockfile was
-    /// left untouched and the orchestrator should run the native refresh
-    /// effect step (`cargo update --workspace --offline`).
+    /// ([`LockfileOutcome::NeedsNative`], §9.2 rule 4 / §9.3): the
+    /// lockfile was left untouched and the orchestrator should run the
+    /// ecosystem's native refresh effect step.
     pub native_reason: Option<String>,
 }
 
@@ -66,9 +75,10 @@ pub struct LockfileSummary {
 pub struct ApplyReport {
     /// Per-file summaries, sorted by path (invariant I3).
     pub files: Vec<FileSummary>,
-    /// The lockfile stage result: `None` when the plan carries no cargo
-    /// version moves or the repository has no root `Cargo.lock`.
-    pub lockfile: Option<LockfileSummary>,
+    /// The lockfile stage results, in [`LOCKFILE_TARGETS`] order: one row
+    /// per staged lockfile (a plan with no version moves for an
+    /// ecosystem, or without the lockfile on disk, contributes none).
+    pub lockfiles: Vec<LockfileSummary>,
 }
 
 impl ApplyReport {
@@ -98,18 +108,19 @@ pub fn edit_set_from_plan(plan: &Plan) -> Result<EditSet, EditError> {
 
 /// Applies a computed plan to the working tree under `root` (M3.6b, the
 /// local `apply` flow): discovery → plan (the caller's pipeline) →
-/// [`EditSet`] → adapter patchers → atomic writes, plus the M3.2 lockfile
-/// stage (the root `Cargo.lock` patched from the plan's version moves).
+/// [`EditSet`] → adapter patchers → atomic writes, plus the M3.2/M3.4
+/// lockfile stages (the workspace lockfiles patched from the plan's
+/// version moves through each adapter's `patch_lockfile` seam).
 ///
 /// The adapter for each edited manifest resolves from the workspace's
 /// packages (the manifest owner's ecosystem); unclaimed files (workspace
 /// root manifests) fall back to the manifest file name. Every file is
 /// patched in memory and verified by its adapter before anything is
 /// written (§9.1: re-parse + semantic read-back, all or none). The
-/// lockfile stage runs before any write as well: a hard lockfile failure
+/// lockfile stages run before any write as well: a hard lockfile failure
 /// (`E-LOCK-PARSE`) aborts the whole apply, while a decline
 /// ([`LockfileOutcome::NeedsNative`]) is reported in
-/// [`ApplyReport::lockfile`] with the file untouched.
+/// [`ApplyReport::lockfiles`] with the file untouched.
 ///
 /// # Errors
 ///
@@ -118,7 +129,7 @@ pub fn edit_set_from_plan(plan: &Plan) -> Result<EditSet, EditError> {
 /// [`EditError::Unrewritable`] for required-to-edit rows the rewriter
 /// cannot admit (`E-EDIT-UNREWRITABLE`), [`EditError::VerifyFailed`]
 /// when an edited manifest fails the read-back re-parse,
-/// [`EditError::LockfileParse`] when the lockfile patch pass fails
+/// [`EditError::LockfileParse`] when a lockfile patch pass fails
 /// outright (`E-LOCK-PARSE`), and [`EditError::Io`] for filesystem
 /// failures.
 pub fn apply_plan(
@@ -152,10 +163,11 @@ pub fn apply_plan(
             .map_err(|failure| map_failure(failure, &file))?;
         staged.push((file, outcome));
     }
-    // M3.2 lockfile stage (§9.2): the plan's cargo version moves drive
-    // the root Cargo.lock rewrite through the adapter's patch_lockfile
-    // seam. Runs before any write, so a hard failure aborts cleanly.
-    let staged_lockfile = stage_lockfile(root, plan, adapters)?;
+    // M3.2/M3.4 lockfile stages (§9.2/§9.3): the plan's per-ecosystem
+    // version moves drive the workspace lockfile rewrites through each
+    // adapter's patch_lockfile seam. Runs before any write, so a hard
+    // failure aborts cleanly.
+    let staged_lockfiles = stage_lockfiles(root, plan, adapters)?;
     // Every manifest patched and verified in memory — write them all.
     let mut files = Vec::with_capacity(staged.len());
     for (file, outcome) in &staged {
@@ -166,98 +178,101 @@ pub fn apply_plan(
             skipped: outcome.skipped,
         });
     }
-    let mut lockfile = staged_lockfile.summary;
-    if let Some((file, content, applied, skipped)) = staged_lockfile.written {
+    let mut lockfiles = staged_lockfiles.summaries;
+    for (file, content, applied, skipped) in staged_lockfiles.written {
         atomic_write(&root.join(file.to_path_buf()), &content)?;
-        if let Some(summary) = lockfile.as_mut() {
+        if let Some(summary) = lockfiles.iter_mut().find(|summary| summary.file == file) {
             summary.applied = applied;
             summary.skipped = skipped;
         }
     }
-    Ok(ApplyReport { files, lockfile })
+    Ok(ApplyReport { files, lockfiles })
 }
 
-/// The M3.2 lockfile stage outcome: the summary row plus, when the
-/// patcher produced new bytes, the (path, content, applied, skipped)
-/// tuple to write after the manifests land.
-struct StagedLockfile {
-    summary: Option<LockfileSummary>,
-    written: Option<(RelPath, Vec<u8>, usize, usize)>,
+/// The lockfile stages' outcome: the summary rows plus the (path,
+/// content, applied, skipped) tuples to write after the manifests land.
+struct StagedLockfiles {
+    summaries: Vec<LockfileSummary>,
+    written: Vec<(RelPath, Vec<u8>, usize, usize)>,
 }
 
-/// Patches the root `Cargo.lock` in memory from the plan's version moves
-/// (§9.2). No cargo releases, no lockfile on disk, or an empty move set
-/// → a no-op stage (`summary: None`).
-fn stage_lockfile(
+/// Patches the workspace lockfiles in memory from the plan's
+/// per-ecosystem version moves (§9.2/§9.3). No releases for an
+/// ecosystem, no lockfile on disk, or an empty move set → no stage row.
+fn stage_lockfiles(
     root: &Path,
     plan: &Plan,
     adapters: &[&dyn EcosystemAdapter],
-) -> Result<StagedLockfile, EditError> {
-    let changes: Vec<LockfileVersionChange> = plan
-        .releases
-        .iter()
-        .filter_map(LockfileVersionChange::from_release)
-        .collect();
-    if changes.is_empty() {
-        return Ok(StagedLockfile {
-            summary: None,
-            written: None,
-        });
-    }
-    let lock_path = root.join(CARGO_LOCKFILE);
-    if !lock_path.exists() {
-        // A cargo workspace without a committed lockfile has nothing to
-        // patch (I5: halyard never invents or fetches one).
-        return Ok(StagedLockfile {
-            summary: None,
-            written: None,
-        });
-    }
-    let adapter = adapters
-        .iter()
-        .copied()
-        .find(|adapter| adapter.id() == "cargo")
-        .ok_or_else(|| EditError::InvalidPatches {
-            reason: format!(
-                "plan releases cargo packages but no cargo adapter is registered; cannot patch \
-                 {CARGO_LOCKFILE}"
-            ),
+) -> Result<StagedLockfiles, EditError> {
+    let mut staged = StagedLockfiles {
+        summaries: Vec::new(),
+        written: Vec::new(),
+    };
+    for (lock_name, ecosystem) in LOCKFILE_TARGETS {
+        let changes: Vec<LockfileVersionChange> = plan
+            .releases
+            .iter()
+            .filter_map(|release| {
+                LockfileVersionChange::from_release_for_ecosystem(release, ecosystem)
+            })
+            .collect();
+        if changes.is_empty() {
+            continue;
+        }
+        let lock_path = root.join(lock_name);
+        if !lock_path.exists() {
+            // A workspace without a committed lockfile has nothing to
+            // patch (I5: halyard never invents or fetches one).
+            continue;
+        }
+        let adapter = adapters
+            .iter()
+            .copied()
+            .find(|adapter| adapter.id() == ecosystem)
+            .ok_or_else(|| EditError::InvalidPatches {
+                reason: format!(
+                    "plan releases {ecosystem} packages but no {ecosystem} adapter is \
+                     registered; cannot patch {lock_name}"
+                ),
+            })?;
+        let file = RelPath::new(lock_name).ok_or(EditError::InvalidPatches {
+            reason: format!("{lock_name} is not a valid repo-relative path"),
         })?;
-    let file = RelPath::new(CARGO_LOCKFILE).ok_or(EditError::InvalidPatches {
-        reason: format!("{CARGO_LOCKFILE} is not a valid repo-relative path"),
-    })?;
-    let original = std::fs::read(&lock_path).map_err(|source| EditError::Io {
-        path: CARGO_LOCKFILE.to_owned(),
-        source,
-    })?;
-    match adapter.patch_lockfile(&file, &original, &changes) {
-        Ok(LockfileOutcome::Patched {
-            content,
-            applied,
-            skipped,
-        }) => Ok(StagedLockfile {
-            summary: Some(LockfileSummary {
-                file: file.clone(),
+        let original = std::fs::read(&lock_path).map_err(|source| EditError::Io {
+            path: lock_name.to_owned(),
+            source,
+        })?;
+        match adapter.patch_lockfile(&file, &original, &changes) {
+            Ok(LockfileOutcome::Patched {
+                content,
                 applied,
                 skipped,
-                native_reason: None,
-            }),
-            written: Some((file, content, applied, skipped)),
-        }),
-        Ok(LockfileOutcome::NeedsNative { reason }) => Ok(StagedLockfile {
-            // The decline is a report, not an error: the lockfile stays
-            // untouched and the orchestrator refreshes natively (§9.2
-            // rule 4).
-            summary: Some(LockfileSummary {
-                file,
-                applied: 0,
-                skipped: 0,
-                native_reason: Some(reason),
-            }),
-            written: None,
-        }),
-        Err(failure) => Err(map_lockfile_failure(failure)),
+            }) => {
+                staged.summaries.push(LockfileSummary {
+                    file: file.clone(),
+                    ecosystem: ecosystem.to_owned(),
+                    applied,
+                    skipped,
+                    native_reason: None,
+                });
+                staged.written.push((file, content, applied, skipped));
+            }
+            Ok(LockfileOutcome::NeedsNative { reason }) => {
+                // The decline is a report, not an error: the lockfile
+                // stays untouched and the orchestrator refreshes natively
+                // (§9.2 rule 4 / §9.3).
+                staged.summaries.push(LockfileSummary {
+                    file,
+                    ecosystem: ecosystem.to_owned(),
+                    applied: 0,
+                    skipped: 0,
+                    native_reason: Some(reason),
+                });
+            }
+            Err(failure) => return Err(map_lockfile_failure(failure)),
+        }
     }
+    Ok(staged)
 }
 
 /// Maps the adapter's [`LockfileFailure`] onto the stable [`EditError`]
