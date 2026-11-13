@@ -1,0 +1,8 @@
+---
+source: crates/halyard-changelog/src/lib.rs
+assertion_line: 490
+expression: out
+---
+## [0.2.0]
+- reshape contract
+- grow surface
