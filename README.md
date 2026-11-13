@@ -5,8 +5,8 @@ world. Zero-config for Cargo + pnpm + single-package repos, extensible to
 every ecosystem, with a *Release PR* UX better than release-please and a
 runtime measured in milliseconds.
 
-**Status: milestone M1 in progress — foundation slice landed (M1.1–M1.4,
-M1.8).** The architecture and multi-year master plan lives in
+**Status: M3 apply slice landed (M3.1, M3.3, M3.6 + the M3.2 Cargo.lock
+slice; M3.4 pnpm-lock slice).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -77,7 +77,9 @@ docs/                    architecture, ADRs, research notes, error pages
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic
+# pedantic + restriction lints live in [workspace.lints]; the CLI
+# carries only -D warnings (a CLI -W would override the curated allows)
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo test --workspace --benches
 cargo run -p xtask -- check-layers     # §7.2 layer rules
@@ -90,6 +92,8 @@ cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
 cargo run -p halyard-config --example resolve_layers
+cargo run -p halyard-eco-cargo --example patch_lockfile
+cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
 ```
 
 Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
