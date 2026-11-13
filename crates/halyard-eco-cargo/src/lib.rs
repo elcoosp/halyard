@@ -14,17 +14,18 @@
 //! nested-workspace rejection and version-less packages (unpublishable +
 //! warning, §6.3).
 
-use halyard_core::discover::{
-    DiscoverCtx, DiscoverError, ManifestFormat, RawDep, RawPackage,
-};
+use halyard_core::discover::{DiscoverCtx, DiscoverError, ManifestFormat, RawDep, RawPackage};
+use halyard_core::edit::{EditFailure, EditOutcome};
 use halyard_core::package::{Ecosystem, Span, TagTemplate};
-use halyard_core::{EcosystemAdapter, DiscoveryWarning};
+use halyard_core::plan::PlanPatch;
+use halyard_core::{DiscoveryWarning, EcosystemAdapter};
 
+pub mod edit;
 mod parse;
 
 use parse::{ManifestDraft, WorkspaceFacts};
 
-/// The Cargo adapter (§7.3 discovery subset).
+/// The Cargo adapter (§7.3 discovery + manifest-edit subset).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CargoAdapter;
 
@@ -43,7 +44,7 @@ impl EcosystemAdapter for CargoAdapter {
     fn discover(&self, ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError> {
         // No root manifest → not a Cargo repository; the orchestrator
         // merges adapters, so an empty result is correct here.
-        let Some(root_bytes) = read_manifest(ctx, "Cargo.toml")? else {
+        let Some(root_bytes) = read_manifest(ctx, "Cargo.toml") else {
             return Ok(Vec::new());
         };
         let root_raw = manifest_str(&root_bytes, "Cargo.toml")?;
@@ -72,7 +73,7 @@ impl EcosystemAdapter for CargoAdapter {
             } else {
                 format!("{dir}/Cargo.toml")
             };
-            let Some(bytes) = read_manifest(ctx, &manifest_path)? else {
+            let Some(bytes) = read_manifest(ctx, &manifest_path) else {
                 return Err(DiscoverError::Glob {
                     pattern: manifest_path.clone(),
                     message: "member directory has no Cargo.toml".to_owned(),
@@ -88,13 +89,39 @@ impl EcosystemAdapter for CargoAdapter {
                     inner: manifest_path,
                 });
             }
-            let draft =
-                parse::package_draft(&doc, &manifest_path, &facts, dir.as_str())?;
+            let draft = parse::package_draft(&doc, &manifest_path, &facts, dir.as_str())?;
             packages.push(build_raw_package(dir, manifest_path, draft));
         }
         fill_raw_texts(ctx, &mut packages);
         Ok(packages)
     }
+
+    fn edit_versions(
+        &self,
+        file: &halyard_core::RelPath,
+        content: &[u8],
+        patches: &[PlanPatch],
+    ) -> Result<EditOutcome, EditFailure> {
+        let raw = manifest_edit_str(file, content)?;
+        let out = edit::edit_versions(raw, file.as_str(), patches)?;
+        Ok(EditOutcome {
+            content: out.text.into_bytes(),
+            applied: out.counts.applied,
+            skipped: out.counts.skipped,
+        })
+    }
+}
+
+/// Decodes manifest bytes for an edit pass; non-UTF-8 manifests are
+/// `E-EDIT-VERIFY` (nothing can be rewritten losslessly).
+fn manifest_edit_str<'a>(
+    file: &halyard_core::RelPath,
+    bytes: &'a [u8],
+) -> Result<&'a str, EditFailure> {
+    std::str::from_utf8(bytes).map_err(|_| EditFailure::Parse {
+        file: file.to_string(),
+        message: "manifest is not valid UTF-8".to_owned(),
+    })
 }
 
 /// Decodes manifest bytes; non-UTF-8 manifests are `E-DISC-MANIFEST`.
@@ -107,37 +134,39 @@ fn manifest_str<'a>(bytes: &'a [u8], path: &str) -> Result<&'a str, DiscoverErro
     })
 }
 
-/// Reads a manifest from the context; `Ok(None)` when absent.
-fn read_manifest(ctx: &DiscoverCtx, path: &str) -> Result<Option<Vec<u8>>, DiscoverError> {
-    match ctx.file(path) {
-        Some(bytes) => Ok(Some(bytes.to_vec())),
-        None => {
-            // Distinguish "absent" from "present but unreadable": the
-            // orchestrator registers every file it walked, so absence here
-            // means the manifest is not in the committed tree.
-            Ok(None)
-        }
-    }
+/// Reads a manifest from the context; `None` when absent (the
+/// orchestrator registers every file it walked, so absence here means the
+/// manifest is not in the committed tree).
+fn read_manifest(ctx: &DiscoverCtx, path: &str) -> Option<Vec<u8>> {
+    let bytes = ctx.file(path)?;
+    Some(bytes.to_vec())
 }
 
 /// Expands the member list: explicit paths and globs against the committed
 /// directory inventory, minus `exclude`, sorted (§6.2).
-fn enumerate_members(ctx: &DiscoverCtx, facts: &WorkspaceFacts) -> Result<Vec<String>, DiscoverError> {
+fn enumerate_members(
+    ctx: &DiscoverCtx,
+    facts: &WorkspaceFacts,
+) -> Result<Vec<String>, DiscoverError> {
     let dirs = ctx.dirs();
     let Some(patterns) = &facts.workspace_members else {
         // Single-package mode: the root package only.
         return Ok(vec![String::new()]);
     };
     let mut members: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // Members named explicitly in `members` (cargo semantics: `exclude`
+    // never removes an explicitly-listed member — only glob-matched ones).
+    let mut explicit: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for pattern in patterns {
         if halyard_core::glob::matches(pattern, "") || !has_glob_meta(pattern) {
             // Explicit directory member (or the workspace root itself).
-            if dirs.iter().any(|d| *d == pattern.as_str())
+            if dirs.contains(&pattern.as_str())
                 || pattern.is_empty()
                 || ctx.file(&format!("{pattern}/Cargo.toml")).is_some()
                 || ctx.file("Cargo.toml").is_some() && pattern.is_empty()
             {
                 members.insert(pattern.clone());
+                explicit.insert(pattern.clone());
                 continue;
             }
             return Err(DiscoverError::Glob {
@@ -157,7 +186,11 @@ fn enumerate_members(ctx: &DiscoverCtx, facts: &WorkspaceFacts) -> Result<Vec<St
     for pattern in &facts.workspace_excludes {
         let excluded: Vec<String> = members
             .iter()
-            .filter(|dir| halyard_core::glob::matches(pattern, dir) && !dir.is_empty())
+            .filter(|dir| {
+                halyard_core::glob::matches(pattern, dir)
+                    && !dir.is_empty()
+                    && !explicit.contains(*dir)
+            })
             .cloned()
             .collect();
         for dir in excluded {
@@ -215,14 +248,33 @@ fn build_raw_package(dir: String, manifest: String, draft: ManifestDraft) -> Raw
 /// the planner's rewriter needs the text as written, not `VersionReq`'s
 /// normalized `Display`). Empty when the site carries no span or the span
 /// does not round-trip (defensive: discovery-produced spans always do).
+///
+/// `toml_edit` string spans cover the quoted literal, so one matching
+/// pair of surrounding quote delimiters is stripped: the requirement text
+/// "as written" is the string's content, not the TOML syntax around it.
 fn slice_site(bytes: &[u8], site: &halyard_core::ManifestSite) -> halyard_core::BString {
     let Some(span) = site.spans.first() else {
         return halyard_core::BString::default();
     };
     let (start, end) = (span.start as usize, span.end as usize);
-    match bytes.get(start..end) {
-        Some(text) => halyard_core::BString::from(text),
-        None => halyard_core::BString::default(),
+    let Some(text) = bytes.get(start..end) else {
+        return halyard_core::BString::default();
+    };
+    halyard_core::BString::from(strip_quote_pair(text))
+}
+
+/// Strips one matching pair of surrounding `"` or `'` delimiters (the
+/// `toml_edit` string-literal syntax, not part of the requirement text).
+fn strip_quote_pair(text: &[u8]) -> &[u8] {
+    let quote = match text.first() {
+        Some(b'"') => b'"',
+        Some(b'\'') => b'\'',
+        _ => return text,
+    };
+    if text.len() >= 2 && text.last() == Some(&quote) {
+        text.get(1..text.len() - 1).unwrap_or(text)
+    } else {
+        text
     }
 }
 
@@ -304,8 +356,14 @@ mod tests {
             normalize_join("crates/a", "../core").as_deref(),
             Some("crates/core")
         );
-        assert_eq!(normalize_join("crates/a", "./sub").as_deref(), Some("crates/a/sub"));
-        assert_eq!(normalize_join("", "Cargo.toml").as_deref(), Some("Cargo.toml"));
+        assert_eq!(
+            normalize_join("crates/a", "./sub").as_deref(),
+            Some("crates/a/sub")
+        );
+        assert_eq!(
+            normalize_join("", "Cargo.toml").as_deref(),
+            Some("Cargo.toml")
+        );
         // Escaping the repository root is not a valid repo-relative path.
         assert_eq!(normalize_join("a", "../../b"), None);
         assert_eq!(normalize_join("a/b", "../..").as_deref(), Some(""));
