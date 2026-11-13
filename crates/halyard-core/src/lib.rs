@@ -30,6 +30,8 @@
 //!   `RawPackage` and `E-DISC-*` errors (§6, §7.3).
 //! * [`edit`] — the adapter edit seam outcomes/failures (§7.3 edit
 //!   subset, M3.1/M3.3).
+//! * [`lockfile`] — the adapter lockfile seam outcomes/changes/failures
+//!   (§7.3 lockfile subset, §9.2, M3.2).
 //! * [`graph`] — CSR adjacency, topological order, SCCs, `E-GRAPH-CYCLE`
 //!   with the dev-cycle exemption (§6.6, M1.7).
 //! * [`link`] — polyglot link rules (§6.5, M1.7).
@@ -45,6 +47,7 @@ pub mod graph;
 pub mod history;
 pub mod id;
 pub mod link;
+pub mod lockfile;
 pub mod package;
 pub mod plan;
 pub mod planner;
@@ -67,6 +70,7 @@ pub use history::{
 };
 pub use id::{Interner, PkgId, Sym};
 pub use link::{ExplicitLinkSpec, LinkEdge, LinkMode, LinkRule, detect_links};
+pub use lockfile::{LockfileFailure, LockfileOutcome, LockfileVersionChange, NativeRefreshError};
 pub use package::{
     DepEdge, DepKind, Ecosystem, Group, GroupId, GroupPolicy, ManifestSite, Package, PathFilter,
     RelPath, ReqSpec, Span, TagTemplate, TagTemplateError, VersionSource, Workspace,
