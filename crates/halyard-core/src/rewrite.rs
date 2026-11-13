@@ -84,6 +84,14 @@ impl VersionError {
         }
     }
 
+    /// Public constructor for the adapter edit paths (M3.1/M3.3): the
+    /// requirement text at a patch span failed to parse as a semver
+    /// requirement, so no rewrite can admit `new_version`. The rewriter
+    /// itself reports the same reason (`E-EDIT-UNREWRITABLE`).
+    pub fn unparseable(req: &str, new_version: &Version) -> Self {
+        Self::new(req, new_version, UnrewritableReason::Unparseable)
+    }
+
     /// Stable error code, equal to [`VersionError::CODE`].
     pub fn code(&self) -> &'static str {
         Self::CODE
