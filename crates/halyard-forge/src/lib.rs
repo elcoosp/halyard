@@ -10,10 +10,11 @@
 //!
 //! The [`MemoryForge`] reference adapter models the semantics the §11.1
 //! state machine relies on (find-by-branch upserts, GET-by-tag-first
-//! release creation, synthetic API commits) and doubles as the §7.1 mock
-//! forge: its call log backs the §11.5 "≤ 2 calls on the update path"
-//! budget assertion, and its failpoint harness is the §15.2 failure
-//! injector for the M4.2 matrix.
+//! release creation, synthetic API commits, open/closed PR state) and
+//! doubles as the §7.1 mock forge: its call log backs the §11.5 "≤ 2 calls
+//! on the update path" budget assertion, and its failpoint harness is the
+//! §15.2 failure injector — first consumed by the machine itself
+//! ([`state`], M4.2a).
 //!
 //! ```no_run
 //! use halyard_forge::{BranchName, Forge, MemoryForge, PrSpec};
@@ -36,28 +37,32 @@
 //!
 //! # Status
 //!
-//! M4.1a ships the seam + reference adapter; the GitHub REST adapter
-//! (ETag conditionals, backoff, App-JWT auth) and the §11.1 state machine
-//! are the remaining M4.1/M4.2 slices — the nightly `forge-smoke` job
-//! stays latent until the adapter exists.
+//! M4.1a ships the seam + reference adapter; M4.2a ships the §11.1
+//! machine over it ([`state::run_release_machine`]) with the
+//! [`Forge::close_pr`] capability. The remaining M4.1b/M4.2b slices are
+//! the GitHub REST adapter (`ETag` conditionals, backoff, App-JWT auth)
+//! and the shell's git-side tag/push effects — the nightly `forge-smoke`
+//! job stays latent until the adapter exists.
 
 #![forbid(unsafe_code)]
 
 pub mod error;
 pub mod memory;
 pub mod spec;
+pub mod state;
 
 pub use error::ForgeError;
 pub use memory::{CallRecord, MemoryForge};
 pub use spec::{ApiCommit, ApiFile, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
+pub use state::{MachineEffect, MachineInput, MachineReport, run_release_machine};
 
 /// The forge contract (§11.4): every operation the Release-PR state
 /// machine (§11.1) performs against a forge. Object-safe — adapters are
 /// handed around as `&dyn Forge` behind the shell's layering (§7.2).
 ///
 /// Not-found outcomes are values, never errors: a missing Release PR is
-/// [`None`](Option::None), a missing release is `false`. The
-/// [`ForgeError`](self::ForgeError) set is reserved for transport, auth,
+/// [`None`], a missing release is `false`. The [`ForgeError`] set is
+/// reserved for transport, auth,
 /// budget and conflict failures.
 ///
 /// Idempotence (I1) is the adapter's obligation: `upsert_pr` re-finds by
@@ -98,6 +103,30 @@ pub trait Forge: Send + Sync {
     /// [`ForgeError`] (`E-FORGE-*`); [`ForgeError::Request`] for an empty
     /// tag.
     fn create_release(&self, spec: &ReleaseSpec) -> Result<Release, ForgeError>;
+
+    /// Closes the open Release PR on `branch` (§11.1 step 3: the plan is
+    /// empty and a stale Release PR must go). Returns `false` when no
+    /// open PR exists on the branch — a not-found outcome is a value,
+    /// never an error (§11.4), and the re-close is a no-op (I1). A closed
+    /// PR is never reused: a later [`Forge::upsert_pr`] on the same
+    /// branch opens a fresh one, because real forges cannot reopen a
+    /// closed PR under its number.
+    ///
+    /// The trait default is the documented honest decline
+    /// ([`ForgeError::Unsupported`], `E-FORGE-UNSUPPORTED`), mirroring
+    /// [`Forge::commit_via_api`]'s default and the lockfile seam's
+    /// default-decline convention (§7.3): forges without a close
+    /// endpoint name themselves and the §11.1 machine surfaces the
+    /// decline fail-closed instead of guessing.
+    ///
+    /// # Errors
+    ///
+    /// [`ForgeError::Unsupported`] by default; adapter-specific failures
+    /// otherwise.
+    fn close_pr(&self, branch: &BranchName) -> Result<bool, ForgeError> {
+        let _ = branch;
+        Err(ForgeError::unsupported(std::any::type_name::<Self>()))
+    }
 
     /// Creates a commit through the forge's Git Data API so the forge
     /// signs it (`commit_mode = "api"`, §11.5: "Verified" commits). The
