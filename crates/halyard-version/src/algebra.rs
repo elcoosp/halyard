@@ -6,7 +6,7 @@
 
 use semver::{BuildMetadata, Prerelease, Version};
 
-pub use halyard_core::bump::{apply_bump, CommitBumpMapping, PreMajorPolicy};
+pub use halyard_core::bump::{CommitBumpMapping, PreMajorPolicy, apply_bump};
 
 /// A validated prerelease channel name (§10.3): one semver identifier —
 /// alphanumerics and hyphens, non-empty, no leading/trailing hyphen.
@@ -105,10 +105,15 @@ mod tests {
         // The ADR-0008 re-export path: the M1.3 behavior contract must
         // hold through `halyard_version`'s public surface.
         let policy = PreMajorPolicy::CARGO_COMPATIBLE;
-        assert_eq!(policy.remap(halyard_core::Bump::Major), halyard_core::Bump::Minor);
+        assert_eq!(
+            policy.remap(halyard_core::Bump::Major),
+            halyard_core::Bump::Minor
+        );
         let mapping = CommitBumpMapping::default();
         assert_eq!(mapping.bump_for("feat", false), halyard_core::Bump::Minor);
-        let v = Version::parse("0.4.1").map_err(|_| ()).unwrap_or(Version::new(0, 4, 1));
+        let v = Version::parse("0.4.1")
+            .map_err(|_| ())
+            .unwrap_or(Version::new(0, 4, 1));
         // Cargo-compatible pre-major remap: Minor → Patch on 0.y.z.
         assert_eq!(
             apply_bump(&v, halyard_core::Bump::Minor, &policy).to_string(),
