@@ -1,0 +1,116 @@
+version = 1
+
+# Time-machine replay corpus (M2.7, docs/HALYARD_ARCHITECTURE.md §17).
+#
+# Each row replays release tags of one pinned corpus clone: for every tag T
+# the planner runs in-process against the repository state at T~1 and the
+# planned `to` version is compared with the version parsed from the tag
+# name. `conventional` records whether the repo manages releases through
+# conventional commits (the §17 >= 95 % agreement gate applies to those
+# repos; non-conventional repos are reported for triage only).
+#
+# Tags are the last 12 plain semver release tags of each clone
+# (`git tag --list` filtered to ^v?X.Y.Z$, sorted by version).
+
+[[repo]]
+path = "corpus/clones/fd"
+ecosystem = "cargo"
+# Measured triage (docs/replay.md, M2.7 run): every disagreement window is
+# dominated by non-conventional subjects (fd-SEEK/main/hand-rolled subjects,
+# e.g. 32 of 57 at v9.0.0, 461 of 474-class windows in bat); fd releases are
+# hand-bumped, so the repo is triage-only, not gate-scoped.
+conventional = false
+releases = [
+  "v8.7.1",
+  "v9.0.0",
+  "v10.0.0",
+  "v10.1.0",
+  "v10.2.0",
+  "v10.3.0",
+  "v10.4.0",
+  "v10.4.1",
+  "v10.4.2",
+  "v10.5.0",
+  "v10.5.1",
+  "v10.5.2",
+]
+
+[[repo]]
+path = "corpus/clones/ripgrep"
+ecosystem = "cargo"
+conventional = false
+releases = [
+  "12.1.0",
+  "12.1.1",
+  "13.0.0",
+  "14.0.0",
+  "14.0.1",
+  "14.0.2",
+  "14.0.3",
+  "14.1.0",
+  "14.1.1",
+  "15.0.0",
+  "15.1.0",
+  "15.2.0",
+]
+
+[[repo]]
+path = "corpus/clones/bat"
+ecosystem = "cargo"
+# Measured triage (docs/replay.md, M2.7 run): bat's release windows are
+# overwhelmingly non-conventional (e.g. 49 of 50 at v0.18.2, 194 of 229 at
+# v0.19.0, 461 of 474 at v0.25.0); releases are hand-bumped — triage-only.
+conventional = false
+releases = [
+  "v0.18.2",
+  "v0.18.3",
+  "v0.19.0",
+  "v0.20.0",
+  "v0.21.0",
+  "v0.22.0",
+  "v0.22.1",
+  "v0.23.0",
+  "v0.24.0",
+  "v0.25.0",
+  "v0.26.0",
+  "v0.26.1",
+]
+
+[[repo]]
+path = "corpus/clones/serde"
+ecosystem = "cargo"
+conventional = false
+releases = [
+  "v1.0.218",
+  "v1.0.219",
+  "v1.0.220",
+  "v1.0.221",
+  "v1.0.222",
+  "v1.0.223",
+  "v1.0.224",
+  "v1.0.225",
+  "v1.0.226",
+  "v1.0.227",
+  "v1.0.228",
+  "v1.0.229",
+]
+
+[[repo]]
+path = "corpus/clones/vue"
+ecosystem = "npm"
+conventional = true
+releases = [
+  "v3.5.34",
+  "v3.5.35",
+  "v3.5.36",
+  "v3.5.37",
+  "v3.5.38",
+  "v3.5.39",
+  "v3.5.40",
+  "v3.5.41",
+  "v3.5.42",
+  "v3.5.43",
+  "v3.5.44",
+  "v3.5.45",
+]
+
