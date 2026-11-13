@@ -15,14 +15,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use miette::Diagnostic;
 
 use crate::profile::Profiler;
-use halyard_config::{env_layer, load as config_load, resolve, Layer, ResolvedConfig};
-use halyard_core::planner::{plan as core_plan, PlanConfig, Snapshot};
+use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, resolve};
+use halyard_core::planner::{PlanConfig, Snapshot, plan as core_plan};
 use halyard_core::{HistoryProvider, ReleaseRefs};
-use halyard_discover::{discover_repo, DiscoverInput};
+use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_git::GitHistory;
 
 mod doctor;
@@ -86,7 +86,7 @@ struct Cli {
     #[arg(long, global = true)]
     no_cache: bool,
 
-    /// Emit a Chrome-trace JSON of command phases to $HALYARD_PROFILE_PATH
+    /// Emit a Chrome-trace JSON of command phases to `$HALYARD_PROFILE_PATH`
     /// (or stderr when unset).
     #[arg(long, global = true)]
     profile: bool,
@@ -95,10 +95,10 @@ struct Cli {
     command: Command,
 }
 
-/// The v1 command surface (§16.2; the effectful commands — `apply`, `pr`,
-/// `release`, `publish`, `fetch`, `check`, `migrate`, `init`, `action` —
-/// land with their milestones M3.6–M4.x and are absent rather than
-/// stubbed).
+/// The v1 command surface (§16.2; the remaining effectful commands —
+/// `pr`, `release`, `publish`, `fetch`, `check`, `migrate`, `init`,
+/// `action` — land with their milestones M4.x and are absent rather than
+/// stubbed; `apply` joined in M3.6).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -109,6 +109,14 @@ enum Command {
         /// Restrict the output to one package.
         #[arg(long, value_name = "P")]
         package: Option<String>,
+    },
+    /// Apply the computed plan's manifest edits to the working tree
+    /// (M3.6 local flow): discover → history → plan → edit set →
+    /// adapter patchers → atomic writes.
+    Apply {
+        /// Print the edit set without writing anything.
+        #[arg(long)]
+        dry: bool,
     },
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
@@ -184,7 +192,7 @@ impl CliError {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let _color = apply_color_policy(&cli.color);
+    let _color = apply_color_policy(cli.color);
     let mut profiler = Profiler::start(cli.profile);
     let result = run(&cli, &mut profiler);
     profiler.finish();
@@ -211,7 +219,7 @@ fn main() -> ExitCode {
 /// `NO_COLOR`/`CLICOLOR` conventions (§16.3). Read-only: `std::env::set_var`
 /// is `unsafe` in edition 2024 and this crate forbids `unsafe`, so the
 /// decision is passed to renderers instead of mutating the environment.
-fn apply_color_policy(color: &Color) -> bool {
+fn apply_color_policy(color: Color) -> bool {
     let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     let forced = std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| v == "1");
     match color {
@@ -231,121 +239,12 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
         })?;
     }
     match &cli.command {
-        Command::Plan { json, package } => {
-            let plan = compute_plan(cli, profiler)?;
-            let plan = filtered(plan, package.as_deref());
-            if *json || cli.format == Format::Json {
-                let value = serde_json::to_value(&plan)
-                    .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&value)
-                        .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                );
-            } else if cli.format == Format::Gha {
-                print!("{}", render::plan_gha(&plan));
-            } else {
-                print!("{}", render::plan_human(&plan));
-            }
-            Ok(())
-        }
-        Command::Explain { package } => {
-            let plan = compute_plan(cli, profiler)?;
-            let release = plan
-                .releases
-                .iter()
-                .find(|r| r.package == *package)
-                .ok_or_else(|| {
-                    CliError::new(
-                        "E-CLI-NO-PACKAGE",
-                        format!(
-                            "no pending release for {package:?} (it is either not in the \
-                             workspace or skipped); run `halyard status` to see every package"
-                        ),
-                    )
-                })?;
-            match cli.format {
-                Format::Json => {
-                    let value = serde_json::json!({
-                        "package": release.package,
-                        "from": release.from,
-                        "to": release.to,
-                        "bump": release.bump,
-                        "tag": release.tag,
-                        "reasons": release.reasons,
-                    });
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&value)
-                            .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                    );
-                }
-                Format::Gha => print!("{}", render::explain_gha(release)),
-                Format::Human => print!("{}", render::explain_human(release)),
-            }
-            Ok(())
-        }
-        Command::Status => {
-            let context = context(cli, profiler)?;
-            match cli.format {
-                Format::Json => {
-                    let value = serde_json::to_value(&render::status_rows(&context))
-                        .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?;
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&value)
-                            .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                    );
-                }
-                Format::Gha => print!("{}", render::status_gha(&context)),
-                Format::Human => print!("{}", render::status_human(&context)),
-            }
-            Ok(())
-        }
-        Command::Graph { format } => {
-            let context = context(cli, profiler)?;
-            match cli.format {
-                Format::Json => {
-                    let edges = render::graph_edges(&context);
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&edges)
-                            .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                    );
-                }
-                _ => match format {
-                    GraphFormat::Text => print!("{}", render::graph_text(&context)),
-                    GraphFormat::Mermaid => print!("{}", render::graph_mermaid(&context)),
-                    GraphFormat::Dot => print!("{}", render::graph_dot(&context)),
-                    GraphFormat::Json => {
-                        let edges = render::graph_edges(&context);
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&edges)
-                                .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                        );
-                    }
-                },
-            }
-            Ok(())
-        }
-        Command::Doctor => {
-            let report = doctor::check(cli, profiler)?;
-            match cli.format {
-                Format::Json => {
-                    let value = serde_json::to_value(&report)
-                        .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?;
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&value)
-                            .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?
-                    );
-                }
-                Format::Gha => print!("{}", render::doctor_gha(&report)),
-                Format::Human => print!("{}", render::doctor_human(&report)),
-            }
-            Ok(())
-        }
+        Command::Plan { json, package } => cmd_plan(cli, profiler, *json, package.as_deref()),
+        Command::Apply { dry } => cmd_apply(cli, profiler, *dry),
+        Command::Explain { package } => cmd_explain(cli, profiler, package),
+        Command::Status => cmd_status(cli, profiler),
+        Command::Graph { format } => cmd_graph(cli, profiler, *format),
+        Command::Doctor => cmd_doctor(cli, profiler),
         Command::Schema { what } => {
             let document = match what {
                 SchemaKind::Plan => include_str!("../../../schemas/halyard-plan-v1.json"),
@@ -360,6 +259,110 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
             Ok(())
         }
     }
+}
+
+/// Serializes `value` into a `serde_json::Value` (`E-CLI-RENDER` on
+/// failure).
+fn json_value<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, CliError> {
+    serde_json::to_value(value).map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))
+}
+
+/// Pretty-prints one JSON value (the shared JSON output path).
+fn print_pretty_json(value: &serde_json::Value) -> Result<(), CliError> {
+    let rendered = serde_json::to_string_pretty(value)
+        .map_err(|e| CliError::new("E-CLI-RENDER", e.to_string()))?;
+    println!("{rendered}");
+    Ok(())
+}
+
+/// The `plan` command.
+fn cmd_plan(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    json: bool,
+    package: Option<&str>,
+) -> Result<(), CliError> {
+    let plan = compute_plan(cli, profiler)?;
+    let plan = filtered(plan, package);
+    if json || cli.format == Format::Json {
+        print_pretty_json(&json_value(&plan)?)?;
+    } else if cli.format == Format::Gha {
+        print!("{}", render::plan_gha(&plan));
+    } else {
+        print!("{}", render::plan_human(&plan));
+    }
+    Ok(())
+}
+
+/// The `explain` command.
+fn cmd_explain(cli: &Cli, profiler: &mut Profiler, package: &str) -> Result<(), CliError> {
+    let plan = compute_plan(cli, profiler)?;
+    let release = plan
+        .releases
+        .iter()
+        .find(|r| r.package == package)
+        .ok_or_else(|| {
+            CliError::new(
+                "E-CLI-NO-PACKAGE",
+                format!(
+                    "no pending release for {package:?} (it is either not in the \
+                     workspace or skipped); run `halyard status` to see every package"
+                ),
+            )
+        })?;
+    match cli.format {
+        Format::Json => {
+            let value = serde_json::json!({
+                "package": release.package,
+                "from": release.from,
+                "to": release.to,
+                "bump": release.bump,
+                "tag": release.tag,
+                "reasons": release.reasons,
+            });
+            print_pretty_json(&value)?;
+        }
+        Format::Gha => print!("{}", render::explain_gha(release)),
+        Format::Human => print!("{}", render::explain_human(release)),
+    }
+    Ok(())
+}
+
+/// The `status` command.
+fn cmd_status(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
+    let context = context(cli, profiler)?;
+    match cli.format {
+        Format::Json => print_pretty_json(&json_value(&render::status_rows(&context))?)?,
+        Format::Gha => print!("{}", render::status_gha(&context)),
+        Format::Human => print!("{}", render::status_human(&context)),
+    }
+    Ok(())
+}
+
+/// The `graph` command.
+fn cmd_graph(cli: &Cli, profiler: &mut Profiler, format: GraphFormat) -> Result<(), CliError> {
+    let context = context(cli, profiler)?;
+    match cli.format {
+        Format::Json => print_pretty_json(&json_value(&render::graph_edges(&context))?)?,
+        _ => match format {
+            GraphFormat::Text => print!("{}", render::graph_text(&context)),
+            GraphFormat::Mermaid => print!("{}", render::graph_mermaid(&context)),
+            GraphFormat::Dot => print!("{}", render::graph_dot(&context)),
+            GraphFormat::Json => print_pretty_json(&json_value(&render::graph_edges(&context))?)?,
+        },
+    }
+    Ok(())
+}
+
+/// The `doctor` command.
+fn cmd_doctor(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
+    let report = doctor::check(cli, profiler)?;
+    match cli.format {
+        Format::Json => print_pretty_json(&json_value(&report)?)?,
+        Format::Gha => print!("{}", render::doctor_gha(&report)),
+        Format::Human => print!("{}", render::doctor_human(&report)),
+    }
+    Ok(())
 }
 
 /// The shared pipeline context: discovery + resolved config + git history.
@@ -413,15 +416,24 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig, CliError> {
         let config = config_load(&path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
         layers.push(Layer::File(config));
     }
-    layers.push(Layer::Env(env_layer().map_err(
-        |e| CliError::new(e.code(), e.to_string()),
-    )?));
+    layers.push(Layer::Env(
+        env_layer().map_err(|e| CliError::new(e.code(), e.to_string()))?,
+    ));
     resolve(&layers).map_err(|e| CliError::new(e.code(), e.to_string()))
 }
 
 /// Runs the full pure pipeline and returns the plan.
 fn compute_plan(cli: &Cli, profiler: &mut Profiler) -> Result<halyard_core::Plan, CliError> {
     let context = context(cli, profiler)?;
+    plan_from_context(&context, profiler)
+}
+
+/// The pure planning step over an established [`Context`] (shared by
+/// `plan`, `explain` and `apply` — the same pipeline, §16.2).
+fn plan_from_context(
+    context: &Context,
+    profiler: &mut Profiler,
+) -> Result<halyard_core::Plan, CliError> {
     profiler.span("plan", || {
         let bases = context.history.digest().bases.clone();
         let refs = ReleaseRefs::from_bases(bases);
@@ -432,6 +444,74 @@ fn compute_plan(cli: &Cli, profiler: &mut Profiler) -> Result<halyard_core::Plan
         };
         let plan_config: PlanConfig = context.config.plan_config();
         core_plan(&snapshot, &plan_config).map_err(|e| CliError::new(e.code(), e.to_string()))
+    })
+}
+
+/// The `apply` command (M3.6): plan → edit set → adapter patchers →
+/// atomic writes. `--dry` prints the deterministic edit-set preview and
+/// touches nothing.
+fn cmd_apply(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    if dry {
+        let preview = halyard_edit::dry_run_preview(&plan)
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+        match cli.format {
+            Format::Json => {
+                let files: Vec<serde_json::Value> = preview
+                    .iter()
+                    .map(|(file, patches)| {
+                        serde_json::json!({
+                            "file": file,
+                            "patches": patches.iter().map(|p| serde_json::json!({
+                                "start": p.start, "end": p.end, "text": p.text,
+                            })).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect();
+                let total: usize = preview.values().map(Vec::len).sum();
+                print_pretty_json(&serde_json::json!({ "files": files, "patches": total }))?;
+            }
+            Format::Gha | Format::Human => print!("{}", render::apply_dry(&preview)),
+        }
+        return Ok(());
+    }
+    let adapters = halyard_discover::registered_adapters();
+    let report = profiler
+        .span("apply", || {
+            halyard_edit::apply_plan(
+                std::path::Path::new("."),
+                &plan,
+                &context.discovery.workspace,
+                &adapters,
+            )
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    match cli.format {
+        Format::Json => print_pretty_json(&apply_report_json(&report))?,
+        Format::Gha | Format::Human => print!("{}", render::apply_report(&report)),
+    }
+    Ok(())
+}
+
+/// The `apply` JSON summary (deterministic field order via `serde_json::json!`;
+/// built here so `halyard-edit` stays dependency-free, §7.2).
+fn apply_report_json(report: &halyard_edit::ApplyReport) -> serde_json::Value {
+    let files: Vec<serde_json::Value> = report
+        .files
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "file": file.file.to_string(),
+                "applied": file.applied,
+                "skipped": file.skipped,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "files": files,
+        "applied": report.total_applied(),
+        "skipped": report.total_skipped(),
     })
 }
 
@@ -478,4 +558,3 @@ fn filtered(plan: halyard_core::Plan, package: Option<&str>) -> halyard_core::Pl
         skipped,
     }
 }
-
