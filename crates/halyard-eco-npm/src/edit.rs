@@ -14,7 +14,7 @@
 //!    `version` or a requirement string inside `dependencies`,
 //!    `devDependencies`, `peerDependencies`, `optionalDependencies`.
 //! 2. **Classifies** the requirement with the M1.6 parser's
-//!    [`classify_req`](crate::classify_req) so skip-and-count rows match
+//!    `classify_req` so skip-and-count rows match
 //!    discovery's [`ReqSpec`] decisions exactly: `VersionReq` rows
 //!    rewrite; `workspace:`/`catalog:`/`link:`/`file:` protocols and
 //!    foreign grammars (`>=8 <10`, URLs) are skip-and-count — the planner
