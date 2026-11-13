@@ -217,6 +217,102 @@ fn commit_via_api_defaults_to_unsupported() {
 }
 
 #[test]
+fn close_pr_reports_false_when_no_open_pr_exists() {
+    drive(|forge| {
+        let branch = main_branch();
+        assert!(
+            !forge.close_pr(&branch)?,
+            "a missing PR is `false`, not an error (§11.4 not-found convention)"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn close_pr_closes_in_place_and_find_stops_returning_it() {
+    drive(|forge| {
+        let branch = main_branch();
+        let spec = PrSpec {
+            branch: branch.clone(),
+            title: "chore: release v0.1.0".to_owned(),
+            body: "stale plan".to_owned(),
+        };
+        let pr = forge.upsert_pr(&spec)?;
+        assert!(forge.close_pr(&branch)?, "closing an open PR reports true");
+        assert_eq!(
+            forge.find_release_pr(&branch)?,
+            None,
+            "a closed PR is no longer found (the §11.1 re-run sees nothing stale)"
+        );
+        assert!(!forge.close_pr(&branch)?, "the re-close is a no-op (I1)");
+        let _ = pr;
+        Ok(())
+    });
+}
+
+#[test]
+fn upsert_after_close_opens_a_fresh_pr() {
+    drive(|forge| {
+        let branch = main_branch();
+        let spec = PrSpec {
+            branch: branch.clone(),
+            title: "chore: release v0.1.0".to_owned(),
+            body: "old plan".to_owned(),
+        };
+        let closed = forge.upsert_pr(&spec)?;
+        assert!(forge.close_pr(&branch)?, "fixture: the PR is closed");
+        let fresh = forge.upsert_pr(&spec)?;
+        assert_ne!(
+            closed.number, fresh.number,
+            "a closed PR is never rewritten in place — a new PR is opened (real forges \
+             cannot reopen a closed PR under the same number)"
+        );
+        Ok(())
+    });
+}
+
+#[test]
+fn close_pr_defaults_to_unsupported() {
+    // The trait's default implementation is the documented honest
+    // decline (mirrors `commit_via_api`): forges without a close
+    // endpoint name themselves instead of lying.
+    struct NoCloseForge(MemoryForge);
+    impl Forge for NoCloseForge {
+        fn find_release_pr(
+            &self,
+            branch: &BranchName,
+        ) -> Result<Option<halyard_forge::Pr>, ForgeError> {
+            self.0.find_release_pr(branch)
+        }
+        fn upsert_pr(&self, spec: &PrSpec) -> Result<halyard_forge::Pr, ForgeError> {
+            self.0.upsert_pr(spec)
+        }
+        fn release_exists(&self, tag: &str) -> Result<bool, ForgeError> {
+            self.0.release_exists(tag)
+        }
+        fn create_release(&self, spec: &ReleaseSpec) -> Result<halyard_forge::Release, ForgeError> {
+            self.0.create_release(spec)
+        }
+        fn rate_limit(&self) -> halyard_forge::RateInfo {
+            self.0.rate_limit()
+        }
+        fn calls(&self) -> Vec<halyard_forge::CallRecord> {
+            self.0.calls()
+        }
+        // `close_pr` intentionally left at the trait default.
+    }
+    let forge = NoCloseForge(MemoryForge::new());
+    let Err(err) = forge.close_pr(&main_branch()) else {
+        unreachable!("the default impl must decline the close");
+    };
+    assert_eq!(err.code(), "E-FORGE-UNSUPPORTED");
+    assert!(
+        err.to_string().contains("NoCloseForge"),
+        "the decline names the adapter: {err}"
+    );
+}
+
+#[test]
 fn rate_limit_reports_a_deterministic_budget() {
     drive(|forge| {
         let info = forge.rate_limit();
