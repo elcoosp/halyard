@@ -21,13 +21,24 @@ impl Lcg {
     fn next(&mut self) -> u64 {
         self.0 = self
             .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         self.0 >> 33
     }
 
     fn below(&mut self, bound: u64) -> u64 {
         self.next() % bound.max(1)
+    }
+}
+
+/// Picks one subject: `below` guarantees an in-bounds index, so an
+/// out-of-range draw is unreachable by construction.
+fn pick<'a>(rng: &mut Lcg, subjects: &[&'a str]) -> &'a str {
+    let bound = u64::try_from(subjects.len()).unwrap_or(u64::MAX);
+    let idx = usize::try_from(rng.below(bound)).unwrap_or(0);
+    match subjects.get(idx) {
+        Some(s) => s,
+        None => unreachable!("rng.below bound guarantees an in-bounds index"),
     }
 }
 
@@ -44,12 +55,17 @@ const SUBJECTS: [&str; 8] = [
 
 /// Builds one pseudo-random repo: commits on main, side branches, no-ff
 /// merges, and `count` release tags on random commits.
-fn build_random_repo(label: &str, seed: u64, commits: usize, tags: usize) -> Result<GitFixture, halyard_test_support::FixtureError> {
+fn build_random_repo(
+    label: &str,
+    seed: u64,
+    commits: usize,
+    tags: usize,
+) -> Result<GitFixture, halyard_test_support::FixtureError> {
     let mut rng = Lcg(seed);
     let mut fx = GitFixture::new(label)?;
     let mut oids: Vec<String> = Vec::new();
     for i in 0..commits {
-        let subject = SUBJECTS[(rng.below(SUBJECTS.len() as u64)) as usize];
+        let subject = pick(&mut rng, &SUBJECTS);
         let spec = CommitSpec::files(
             vec![(
                 format!("src/file{}.rs", rng.below(4)),
@@ -62,10 +78,10 @@ fn build_random_repo(label: &str, seed: u64, commits: usize, tags: usize) -> Res
         if i > 0 && rng.below(5) == 0 {
             let branch = format!("side-{i}");
             fx.checkout_new(&branch, None)?;
-            let subject = SUBJECTS[(rng.below(SUBJECTS.len() as u64)) as usize];
+            let subject = pick(&mut rng, &SUBJECTS);
             let spec = CommitSpec::files(
                 vec![(
-                    format!("src/side{i}.rs",),
+                    format!("src/side{i}.rs"),
                     format!("pub const S: u32 = {};\n", rng.below(1000)),
                 )],
                 subject,
@@ -77,13 +93,17 @@ fn build_random_repo(label: &str, seed: u64, commits: usize, tags: usize) -> Res
             oids.push(head);
         }
     }
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut tagged: HashSet<String> = HashSet::new();
     let mut placed = 0usize;
     let mut tag_no = 0usize;
     while placed < tags && tag_no < tags * 4 {
         tag_no += 1;
-        let oid = &oids[(rng.below(oids.len() as u64)) as usize];
-        if seen.insert(oid.clone()) {
+        let bound = u64::try_from(oids.len()).unwrap_or(u64::MAX);
+        let idx = usize::try_from(rng.below(bound)).unwrap_or(0);
+        let oid = oids
+            .get(idx)
+            .unwrap_or_else(|| unreachable!("rng.below bound guarantees an in-bounds index"));
+        if tagged.insert(oid.clone()) {
             fx.checkout(oid)?;
             fx.tag_light(&format!("v0.{tag_no}.0"))?;
             placed += 1;
@@ -99,13 +119,16 @@ fn single_pkg_workspace() -> Workspace {
         id: PkgId::FIRST,
         name: ws.intern("app"),
         ecosystem: Ecosystem::Cargo,
-        root: RelPath::new("").unwrap(),
-        manifest: RelPath::new("Cargo.toml").unwrap(),
+        root: RelPath::new("")
+            .unwrap_or_else(|| unreachable!("empty root is always a valid RelPath")),
+        manifest: RelPath::new("Cargo.toml")
+            .unwrap_or_else(|| unreachable!("root manifest path is always a valid RelPath")),
         version: Some(semver::Version::new(0, 1, 0)),
         version_source: VersionSource::Local,
         publishable: true,
         deps: Vec::new(),
-        tag_template: TagTemplate::parse("v{version}").unwrap(),
+        tag_template: TagTemplate::parse("v{version}")
+            .unwrap_or_else(|_| unreachable!("'v{{version}}' is always a valid template")),
         changelog: None,
         version_site: None,
         include: PathFilter::new(Vec::new(), Vec::new()),
@@ -121,8 +144,13 @@ fn randomized_histories_match_rev_list() {
     const SAMPLES: usize = 60;
     let mut checked = 0usize;
     for seed in 0..SAMPLES as u64 {
-        let fx = build_random_repo("rand", seed, 8 + (seed % 5) as usize, 1 + (seed % 3) as usize)
-            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let fx = build_random_repo(
+            "rand",
+            seed,
+            8 + (seed % 5) as usize,
+            1 + (seed % 3) as usize,
+        )
+        .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         let ws = single_pkg_workspace();
         let history = GitHistory::build(fx.root(), &ws, 10_000).unwrap();
         let digest = history.digest();
@@ -135,7 +163,10 @@ fn randomized_histories_match_rev_list() {
                 let peeled = fx
                     .resolve(&format!("{tag}^{{commit}}"))
                     .unwrap_or_else(|_| fx.resolve(&tag).unwrap_or_default());
-                expected.extend(fx.rev_list(&["HEAD", &format!("^{peeled}")]).unwrap_or_default());
+                expected.extend(
+                    fx.rev_list(&["HEAD", &format!("^{peeled}")])
+                        .unwrap_or_default(),
+                );
             }
             None => {
                 expected.extend(fx.rev_list(&["HEAD"]).unwrap_or_default());
@@ -144,7 +175,9 @@ fn randomized_histories_match_rev_list() {
         let expected_conventional: BTreeSet<String> = expected
             .into_iter()
             .filter(|oid| {
-                let show = fx.run_git(&["show", "--format=%B", "-s", oid]).unwrap_or_default();
+                let show = fx
+                    .run_git(&["show", "--format=%B", "-s", oid])
+                    .unwrap_or_default();
                 halyard_conventional::parse(show.as_bytes()).is_some()
             })
             .collect();
@@ -152,7 +185,11 @@ fn randomized_histories_match_rev_list() {
         assert_eq!(got, expected_conventional, "seed {seed}");
         // Digest commit oids are unique (no double-emission).
         let unique: HashSet<String> = digest.commits.iter().map(|c| c.oid.to_string()).collect();
-        assert_eq!(unique.len(), digest.commits.len(), "seed {seed}: duplicates");
+        assert_eq!(
+            unique.len(),
+            digest.commits.len(),
+            "seed {seed}: duplicates"
+        );
         checked += 1;
     }
     assert_eq!(checked, SAMPLES);
