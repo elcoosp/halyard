@@ -1,0 +1,22 @@
+---
+source: crates/halyard-changelog/src/lib.rs
+expression: out
+---
+# Changelog
+
+All notable changes to this project are documented here.
+
+## [Unreleased]
+
+<!-- halyard:insert -->
+
+## [0.2.0]
+
+### ⚠ BREAKING CHANGES
+
+- reshape contract
+
+
+### Features
+
+- grow surface
