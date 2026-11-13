@@ -3,6 +3,7 @@ resolver = "3"
 # Crates are added as their milestones land (ADR-0002): the §7.1 layout is
 # reached incrementally so the tree never contains empty scaffolding.
 members = [
+    "crates/halyard-cache",
     "crates/halyard-changelog",
     "crates/halyard-cli",
     "crates/halyard-config",
@@ -61,6 +62,7 @@ missing_errors_doc = "allow"
 
 [workspace.dependencies]
 halyard-core = { path = "crates/halyard-core" }
+halyard-cache = { path = "crates/halyard-cache" }
 halyard-config = { path = "crates/halyard-config" }
 halyard-conventional = { path = "crates/halyard-conventional" }
 halyard-discover = { path = "crates/halyard-discover" }
