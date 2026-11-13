@@ -68,7 +68,7 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Color::Auto, global = true)]
     color: Color,
 
-    /// Run as if started in <dir> (§16.2 `-C`).
+    /// Run as if started in `<dir>` (§16.2 `-C`).
     #[arg(short = 'C', value_name = "DIR", global = true)]
     cwd: Option<PathBuf>,
 
