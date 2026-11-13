@@ -4,6 +4,6 @@
 //! Every M1.3 public path is preserved.
 
 pub use halyard_core::rewrite::{
-    rewrite_requirement, RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy,
-    VersionError,
+    RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy, VersionError,
+    rewrite_requirement,
 };
