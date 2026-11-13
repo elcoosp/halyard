@@ -86,7 +86,12 @@ pub fn render_release(release: &PlanRelease, style: &str) -> Result<String, Chan
             requested: style.to_owned(),
         });
     }
-    let mut env = Environment::new();
+    // `empty()` (no globals/filters, no auto-escape) instead of the
+    // deprecated-without-`serde` `new()`: the keep-a-changelog template is
+    // plain Jinja over the plan's own values — no builtin filters or
+    // globals — so behavior is identical and no `serde` feature is pulled
+    // into the layer-restricted dependency set (§7.2).
+    let mut env = Environment::empty();
     env.add_template("release", RELEASE_TEMPLATE)
         .map_err(|e| ChangelogError::Style {
             requested: format!("template error: {e}"),
@@ -294,42 +299,57 @@ mod tests {
         }
     }
 
+    /// House-style render helper: `?`-propagating (no `unwrap` in tests;
+    /// impossible paths are `unreachable!`).
+    fn golden(plan: &Plan, existing: Option<&str>) -> Result<String, ChangelogError> {
+        render_plan(plan, "keep-a-changelog", existing)
+    }
+
     #[test]
-    fn fresh_document_has_breaking_first() {
+    fn fresh_document_has_breaking_first() -> Result<(), Box<dyn std::error::Error>> {
         let plan = sample_plan();
-        let out = render_plan(&plan, "keep-a-changelog", None).unwrap();
-        let breaking = out.find("⚠ BREAKING CHANGES").unwrap();
-        let features = out.find("### Features").unwrap();
+        let out = golden(&plan, None)?;
+        let breaking = out
+            .find("⚠ BREAKING CHANGES")
+            .ok_or("breaking section rendered")?;
+        let features = out
+            .find("### Features")
+            .ok_or("features section rendered")?;
         assert!(breaking < features);
         assert!(out.contains("## [0.2.0]"));
         insta::assert_snapshot!(out);
+        Ok(())
     }
 
     #[test]
-    fn rerun_is_byte_identical() {
+    fn rerun_is_byte_identical() -> Result<(), Box<dyn std::error::Error>> {
         let plan = sample_plan();
-        let first = render_plan(&plan, "keep-a-changelog", None).unwrap();
-        let second = render_plan(&plan, "keep-a-changelog", Some(&first)).unwrap();
+        let first = golden(&plan, None)?;
+        let second = golden(&plan, Some(&first))?;
         assert_eq!(first, second);
+        Ok(())
     }
 
     #[test]
-    fn unreleased_section_is_replaced_only() {
+    fn unreleased_section_is_replaced_only() -> Result<(), Box<dyn std::error::Error>> {
         let plan = sample_plan();
         let existing = "# Changelog\n\n## [Unreleased]\n\n- old note\n\n## [0.1.0] - 2020-01-01\n\n### Added\n\n- initial\n";
-        let out = render_plan(&plan, "keep-a-changelog", Some(existing)).unwrap();
+        let out = golden(&plan, Some(existing))?;
         assert!(out.contains("## [0.2.0]"));
         assert!(!out.contains("old note"));
         assert!(out.contains("## [0.1.0] - 2020-01-01"));
         assert!(out.contains("### Added"));
         // Idempotent on the merged document too.
-        let again = render_plan(&plan, "keep-a-changelog", Some(&out)).unwrap();
+        let again = golden(&plan, Some(&out))?;
         assert_eq!(out, again);
+        Ok(())
     }
 
     #[test]
     fn unknown_style_is_an_error() {
-        let err = render_plan(&sample_plan(), "compact", None).unwrap_err();
-        assert_eq!(err.code(), "E-CHLOG-STYLE");
+        match render_plan(&sample_plan(), "compact", None) {
+            Err(err) => assert_eq!(err.code(), "E-CHLOG-STYLE"),
+            Ok(out) => unreachable!("unknown style must error, got {out:?}"),
+        }
     }
 }
