@@ -1,0 +1,23 @@
+[package]
+name = "halyard-forge"
+description = "The Forge seam (§11.4, M4.1a): the forge-agnostic Release-PR/release trait, its data vocabulary and the deterministic MemoryForge reference adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# §7.2: `forge` depends on core only. The seam is plain data plus the
+# trait — the effectful HTTP lives in future forge adapters (M4.1b).
+halyard-core = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "memory_forge"
+harness = false
+
+[lints]
+workspace = true
