@@ -79,6 +79,39 @@ pub fn config_schema() -> Result<Value, String> {
     halyard_config::model::schema_document()
 }
 
+/// Verify (or rewrite) only the `halyard-plan/v1` plan schema (D0
+/// remainder): mirrors [`schema_check`] restricted to the plan document.
+pub fn schema_check_plan(write: bool) -> Result<(), String> {
+    let root = workspace_root()?;
+    let rel = PLAN_SCHEMA_PATH;
+    let path = root.join(rel);
+    let want = pretty(&plan_schema()?)?;
+    match std::fs::read_to_string(&path) {
+        Ok(have) if have == want => {
+            println!("ok    {rel}");
+            Ok(())
+        }
+        Ok(_) if write => {
+            std::fs::write(&path, &want).map_err(|e| format!("write {}: {e}", path.display()))?;
+            println!("wrote {rel}");
+            Ok(())
+        }
+        Ok(_) => Err(format!(
+            "schema drift in {rel:?}; run `cargo run -p xtask -- schema-check-plan --write` \
+             and review the diff"
+        )),
+        Err(_) if write => {
+            std::fs::write(&path, &want).map_err(|e| format!("write {}: {e}", path.display()))?;
+            println!("wrote {rel}");
+            Ok(())
+        }
+        Err(_) => Err(format!(
+            "missing {rel:?}; run `cargo run -p xtask -- schema-check-plan --write` to \
+             generate it"
+        )),
+    }
+}
+
 fn pretty(value: &Value) -> Result<String, String> {
     let mut out =
         serde_json::to_string_pretty(value).map_err(|e| format!("pretty-print failed: {e}"))?;
@@ -158,5 +191,10 @@ mod tests {
     #[test]
     fn checked_in_schemas_match_types() {
         schema_check(false).expect("schemas are in sync (drift test)");
+    }
+
+    #[test]
+    fn checked_in_plan_schema_matches_types() {
+        schema_check_plan(false).expect("plan schema is in sync (drift test)");
     }
 }
