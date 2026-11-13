@@ -10,15 +10,27 @@ use halyard_core::package::{
     DepEdge, DepKind, Ecosystem, GroupId, ManifestSite, Package, PathFilter, RelPath, ReqSpec,
     TagTemplate, VersionSource, Workspace,
 };
-use halyard_core::planner::{plan, PlanConfig, Snapshot};
+use halyard_core::planner::{PlanConfig, Snapshot, plan};
 use halyard_core::{Oid, PkgId, ReleaseRefs};
 use proptest::prelude::*;
 use semver::{Version, VersionReq};
 
-/// Hex oid from an index (deterministic, unique per test run).
-fn oid(index: u32) -> Oid {
+/// Hex oid from an index (deterministic, unique per test run). The
+/// generated text is always 40 lowercase hex chars, so `from_hex`
+/// succeeds; the error only fires on a broken generator.
+fn oid(index: u32) -> Result<Oid, TestCaseError> {
     let text = format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa{index:08}");
-    Oid::from_hex(text.as_bytes()).unwrap()
+    Oid::from_hex(text.as_bytes()).ok_or_else(|| TestCaseError::fail("invalid generated oid"))
+}
+
+/// Repo-relative path from a test string.
+fn rel(raw: &str) -> Result<RelPath, TestCaseError> {
+    RelPath::new(raw).ok_or_else(|| TestCaseError::fail(format!("invalid rel path {raw}")))
+}
+
+/// Tag template from a test string.
+fn template(raw: &str) -> Result<TagTemplate, TestCaseError> {
+    TagTemplate::parse(raw).map_err(|_| TestCaseError::fail(format!("invalid template {raw}")))
 }
 
 /// Random workspace + history: package count, edge set, per-package
@@ -33,46 +45,53 @@ struct Fixture {
 }
 
 fn fixture_strategy() -> impl Strategy<Value = Fixture> {
-    (1usize..=6usize, 0u64..64u64).prop_flat_map(move |(pkg_count, seed)| {
-        (
-            Just(pkg_count),
-            Just(seed),
-            prop::collection::vec(0u64..3, pkg_count),
-            prop::collection::vec(any::<bool>(), pkg_count),
-            prop::collection::vec(any::<bool>(), pkg_count),
-            prop::collection::vec(0u8..3, 2 * pkg_count),
+    (1usize..=6usize, 0u64..64u64)
+        .prop_flat_map(move |(pkg_count, seed)| {
+            (
+                Just(pkg_count),
+                Just(seed),
+                prop::collection::vec(0u64..3, pkg_count),
+                prop::collection::vec(any::<bool>(), pkg_count),
+                prop::collection::vec(any::<bool>(), pkg_count),
+                prop::collection::vec(0u8..3, 2 * pkg_count),
+            )
+        })
+        .prop_map(
+            |(pkg_count, seed, majors, breaking, has_commits, raw_edges)| {
+                // The seed fits far inside `usize`, so the checked
+                // conversion cannot saturate on any supported target.
+                let seed = usize::try_from(seed).unwrap_or(0);
+                let mut edges: Vec<(usize, usize, &'static str)> = Vec::new();
+                for (slot, req_kind) in raw_edges.into_iter().enumerate() {
+                    let from = slot % pkg_count;
+                    let to = (slot / pkg_count + seed) % pkg_count;
+                    if from == to {
+                        continue;
+                    }
+                    let req = match req_kind {
+                        0 => ">=0.0.0",
+                        1 => "^1.0.0",
+                        _ => "0.1.0",
+                    };
+                    let candidate = (from, to, req);
+                    if !edges.contains(&candidate) {
+                        edges.push(candidate);
+                    }
+                }
+                Fixture {
+                    majors,
+                    edges,
+                    breaking,
+                    has_commits,
+                    base_flags: (0..pkg_count).map(|i| (i + seed) % 2 == 0).collect(),
+                }
+            },
         )
-    })
-    .prop_map(|(pkg_count, seed, majors, breaking, has_commits, raw_edges)| {
-        let mut edges: Vec<(usize, usize, &'static str)> = Vec::new();
-        for (slot, req_kind) in raw_edges.into_iter().enumerate() {
-            let from = slot % pkg_count;
-            let to = (slot / pkg_count + seed as usize) % pkg_count;
-            if from == to {
-                continue;
-            }
-            let req = match req_kind {
-                0 => ">=0.0.0",
-                1 => "^1.0.0",
-                _ => "0.1.0",
-            };
-            let candidate = (from, to, req);
-            if !edges.contains(&candidate) {
-                edges.push(candidate);
-            }
-        }
-        Fixture {
-            majors,
-            edges,
-            breaking,
-            has_commits,
-            base_flags: (0..pkg_count).map(|i| (i + seed as usize) % 2 == 0).collect(),
-        }
-    })
 }
 
-/// One planned fixture with all invariants asserted.
-fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
+/// Builds the workspace half of the fixture: one package per major plus
+/// the deduplicated normal-edge set.
+fn build_workspace(f: &Fixture) -> Result<(Workspace, Vec<Version>), TestCaseError> {
     let mut ws = Workspace::new();
     let mut versions: Vec<Version> = Vec::new();
     for (i, major) in f.majors.iter().enumerate() {
@@ -81,16 +100,16 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
             id: PkgId::FIRST,
             name: ws.intern(&format!("p{i}")),
             ecosystem: Ecosystem::Cargo,
-            root: RelPath::new(&format!("crates/p{i}")).unwrap(),
-            manifest: RelPath::new(&format!("crates/p{i}/Cargo.toml")).unwrap(),
+            root: rel(&format!("crates/p{i}"))?,
+            manifest: rel(&format!("crates/p{i}/Cargo.toml"))?,
             version: Some(version.clone()),
             version_source: VersionSource::Local,
             publishable: true,
             deps: Vec::new(),
-            tag_template: TagTemplate::parse("{name}-v{version}").unwrap(),
+            tag_template: template("{name}-v{version}")?,
             changelog: None,
             version_site: Some(ManifestSite {
-                file: RelPath::new(&format!("crates/p{i}/Cargo.toml")).unwrap(),
+                file: rel(&format!("crates/p{i}/Cargo.toml"))?,
                 spans: vec![halyard_core::package::Span { start: 1, end: 6 }],
             }),
             include: PathFilter::new(Vec::new(), Vec::new()),
@@ -101,7 +120,10 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
         ws.push_package(pkg);
     }
     for (from, to, req) in &f.edges {
-        let (from_id, to_id) = (PkgId::new(*from as u32), PkgId::new(*to as u32));
+        // Package indices are far below u32 range; saturation keeps the
+        // helper total.
+        let from_id = PkgId::new(u32::try_from(*from).unwrap_or(u32::MAX));
+        let to_id = PkgId::new(u32::try_from(*to).unwrap_or(u32::MAX));
         if ws.package(from_id).is_none() || ws.package(to_id).is_none() {
             continue;
         }
@@ -109,15 +131,24 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
             pkg.deps.push(DepEdge {
                 to: to_id,
                 kind: DepKind::Normal,
-                req: ReqSpec::VersionReq(VersionReq::parse(req).unwrap()),
+                req: ReqSpec::VersionReq(
+                    VersionReq::parse(req)
+                        .map_err(|_| TestCaseError::fail(format!("invalid req {req}")))?,
+                ),
                 site: ManifestSite {
-                    file: RelPath::new(&format!("crates/p{from}/Cargo.toml")).unwrap(),
+                    file: rel(&format!("crates/p{from}/Cargo.toml"))?,
                     spans: vec![halyard_core::package::Span { start: 3, end: 9 }],
                 },
                 raw: (*req).into(),
             });
         }
     }
+    Ok((ws, versions))
+}
+
+/// Builds the history half of the fixture: one commit per flag, per-package
+/// commit lists and release bases.
+fn build_history(f: &Fixture) -> Result<(FixedHistory, ReleaseRefs), TestCaseError> {
     let mut commits: Vec<RelevantCommit> = Vec::new();
     let mut per_pkg: Vec<Vec<usize>> = vec![Vec::new(); f.majors.len()];
     let mut commit_index = 0usize;
@@ -133,7 +164,7 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
             format!("{kind}: change {commit_index}")
         };
         commits.push(RelevantCommit {
-            oid: oid(commit_index as u32),
+            oid: oid(u32::try_from(commit_index).unwrap_or(u32::MAX))?,
             subject: subject.into(),
             body_range: 0..0,
             parsed: ParsedCommit {
@@ -150,16 +181,20 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
             trailers: smallvec::SmallVec::new(),
             touched: halyard_core::SmallBitset::new(),
         });
-        per_pkg[pkg_index].push(commit_index);
+        // `per_pkg` is sized to the package count, so the slot exists.
+        if let Some(slot) = per_pkg.get_mut(pkg_index) {
+            slot.push(commit_index);
+        }
         commit_index += 1;
     }
+    let base_oid = oid(9000)?;
     let bases: Vec<Option<BaseRef>> = f
         .base_flags
         .iter()
         .map(|has_base| {
             has_base.then(|| BaseRef {
                 tag: "base-v0.0.1".into(),
-                oid: oid(9000),
+                oid: base_oid.clone(),
             })
         })
         .collect();
@@ -168,8 +203,14 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
         per_pkg,
         bases: bases.clone(),
     };
-    let history = FixedHistory::new(Some(oid(9999)), digest);
-    let refs = ReleaseRefs::from_bases(bases);
+    let history = FixedHistory::new(Some(oid(9999)?), digest);
+    Ok((history, ReleaseRefs::from_bases(bases)))
+}
+
+/// One planned fixture with all invariants asserted.
+fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
+    let (ws, _versions) = build_workspace(f)?;
+    let (history, refs) = build_history(f)?;
     let snapshot = Snapshot {
         workspace: &ws,
         history: &history,
@@ -186,9 +227,15 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
 
     // 1. Every release strictly increases the version.
     for release in &plan.releases {
-        let from = Version::parse(&release.from).unwrap();
-        let to = Version::parse(&release.to).unwrap();
-        prop_assert!(to > from, "release {} regressed: {from} -> {to}", release.package);
+        let from = Version::parse(&release.from)
+            .map_err(|e| TestCaseError::fail(format!("bad from {e}")))?;
+        let to =
+            Version::parse(&release.to).map_err(|e| TestCaseError::fail(format!("bad to {e}")))?;
+        prop_assert!(
+            to > from,
+            "release {} regressed: {from} -> {to}",
+            release.package
+        );
         // 2. The rendered tag carries the target version.
         prop_assert!(release.tag.contains(&release.to));
         // 3. A bumped dependent never jumps beyond patch from cascade
@@ -205,9 +252,9 @@ fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
     }
     // 4. Determinism (I3): re-planning the same snapshot yields the
     //    identical hash.
-    let again = halyard_core::planner::plan(&snapshot, &config).unwrap();
+    let again = halyard_core::planner::plan(&snapshot, &config)
+        .map_err(|e| TestCaseError::fail(format!("re-plan failed: {e}")))?;
     prop_assert_eq!(plan.plan_hash, again.plan_hash);
-    let _ = versions;
     Ok(())
 }
 
