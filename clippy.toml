@@ -1,7 +1,0 @@
-# Clippy configuration for the HALYARD workspace.
-# Restriction lints (§15.3) are denied workspace-wide; test code gets explicit
-# allowances here. `indexing_slicing` intentionally has no test allowance.
-allow-unwrap-in-tests = true
-allow-expect-in-tests = true
-allow-panic-in-tests = true
-allow-dbg-in-tests = true
