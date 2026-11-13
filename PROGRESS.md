@@ -17,8 +17,86 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M3.2 lockfile slice (patcher + native fallback) | done | main | M3.2 Cargo.lock patcher (`halyard-eco-cargo/src/lockfile.rs`: §9.2 rules 1–3, byte-in place, read-back verify, idempotent) + `EcosystemAdapter::patch_lockfile` seam (core `lockfile.rs`; default = documented `NeedsNative` fallback) + `apply_plan` lockfile stage (`LockfileSummary` in the report; decline reported, never guessed) + CLI render/JSON rows, M3.2 native fallback (`EcosystemAdapter::refresh_lockfile_native` + `verify_native_refresh` post-refresh gate + CLI orchestration, §9.2 rule 4), criterion bench (`lockfile_patch`), consumer example (`patch_lockfile.rs`), differential vs `cargo update -w --offline` byte-identical | M3.4 pnpm-lock patcher still open; the full §17 M3.2 acceptance runs "200 mutated fixtures" — this slice ships the differential harness with 1 fixture + unit-matrix coverage (scaling the fixture count is an xtask/nightly task); perf budgets untouched | 2026-11-13; see the session log below |
 | M3.4 pnpm-lock slice (patcher + native fallback) | done | feat/pnpm-lock-patcher | M3.4 `pnpm-lock.yaml` patcher (`halyard-eco-npm/src/lockfile.rs`: restricted importer-grammar scanner, specifier advance through the canonical `rewrite_requirement`, `<version>(link:…)` ref moves, importers-only byte patches, read-back re-analysis verify, idempotent) + `NpmAdapter::patch_lockfile` routing (package-lock.json/yarn.lock/bun.lock native-only declines) + `NpmAdapter::refresh_lockfile_native` dispatch (`pnpm install --lockfile-only --offline` / `npm install --package-lock-only` / `yarn install --mode update-lockfile` / `bun install --lockfile-only`; pure `refresh_command` table) + pnpm `verify_native_refresh` (importer-row snapshots, resolution-key/header changes fail closed) + core `LockfileVersionChange::from_release_for_ecosystem` + generalized `apply_plan` lockfile stage (`ApplyReport.lockfiles`, per-ecosystem rows incl. `ecosystem`) + CLI render/JSON rows and per-declined-row native refresh with verifier dispatch + criterion bench `lockfile_patch` + consumer example `patch_pnpm_lockfile` + differential vs real pnpm (skips honestly when pnpm absent) + CLI `--package` edit filter now resolves package roots from the workspace (was a hardcoded `crates/…` layout) | M3.4 §9.3 acceptance runs "pnpm differential on corpus" — this slice ships the workspace-protocol + linked-plain-semver differential harness (runs when a pnpm binary is present); the corpus-wide pnpm differential and the npm/yarn/bun lockfile patchers (native-only in v1 by design) remain open; perf budgets untouched | 2026-11-13; see the session log below |
 | M3.5b changelog styles slice (style registry + conventional/compact) | done | feat/pnpm-lock-patcher | M3.5b `Style` registry (`halyard-changelog`: `Style::{parse,name}` replacing the `style != "keep-a-changelog"` string check; `render_release`/`render_plan` dispatch through it), `conventional` style (planner section titles mapped through the documented type map — Features→feat, Bug Fixes/Fixed→fix, Performance→perf, Reverts→revert, unknown pass through verbatim; `### ⚠ BREAKING CHANGES` first), `compact` style (flat bullet list, breaking entries first), both idempotent with goldens; `github-release-notes` stays unshipped (needs forge context — documented); E-CHLOG-STYLE message + page updated to name the shipped set; `render` example now renders all three styles | minijinja template path (user-supplied template files) still open; `github-release-notes` waits for the forge milestone | 2026-11-13; see the session log below |
+| M4.1a forge seam slice (trait + reference adapter + taxonomy) | done | main | M4.1a `halyard-forge` crate (ADR-0011): the §11.4 `Forge` trait (object-safe, `&dyn`), the data vocabulary (`Pr`/`PrSpec`/`Release`/`ReleaseSpec`/`ApiCommit`/`ApiFile`/`BranchName`/`RateInfo`), the `E-FORGE-*` taxonomy with docs pages, the deterministic `MemoryForge` reference adapter (find-by-branch upserts, GET-by-tag-first releases, synthetic `fe`-prefixed commits, call log, failpoint harness), `commit_via_api` default honest decline, contract tests, `memory_forge` bench, `release_lifecycle` example, test-support re-exports, layer rule `forge → core` | M4.1b GitHub REST adapter (ETag/backoff/App-JWT, wiremock) open — nightly `forge-smoke` stays latent; PROGRESS row + README status were not updated when the slice landed (drift, repaired 2026-11-13) | 2026-11-13 (committed before the M4.2a/M4.3a session; row added retroactively) |
+| M4.2a state machine + M4.3a PR body slice | done | main (dirty; no commits) | M4.2a `halyard-forge::state` (`run_release_machine` over `&dyn Forge`: §11.1 tag phase with GET-by-tag-first idempotence + PROPAGATE gating, prepare phase find→upsert/`PrUnchanged` no-op/close; §11.5 call budgets counted from the adapter log; fail-closed input validation) + `Forge::close_pr` seam (default honest decline, §11.4 not-found-is-a-value convention) + `MemoryForge` open/closed PR modeling (closed PRs not re-found, upsert-after-close opens fresh) + 12 machine tests incl. the §15.2 failure-injection matrix (fail at every operation → re-run reaches the uninterrupted state, zero duplicates) + `state_machine` bench (5 pass shapes) + `release_machine` example; M4.3a `halyard-changelog::pr_body` (§11.3 body: plan table with deterministic Why map, Skipped line §16.3, changelog preview, override footer, embedded plan = canonical JSON → DEFLATE → base64 with recomputed `plan_hash`; `extract_embedded_plan` I8 verifier fails closed on missing/corrupt/hash-mismatched markers, `E-CHLOG-PRBODY` + docs page) + 10 tests + golden snapshot + `render_pr_body` example + forge example wired through the renderer (dev-dep) + layer rule widened (`changelog`: minijinja/serde_json/flate2/base64) | M4.1b GitHub REST adapter; M4.2b shell git-side tag/push effects (annotated tags, `--force-with-lease` CAS) and the CLI `pr`/`release` commands that consume the machine; corpus-wide pnpm differential xtask; M2.6 perf-budget close-out | 2026-11-13; see the session log below |
 
 ## Session log
+
+### 2026-11-13 — M4.2a Release-PR state machine + M4.3a PR body renderer (branch `main`, tree left dirty, no commits)
+
+- **Inventory at session start.** The forge seam (M4.1a, ADR-0011) was
+  green on main with 14 commits landed after the last PROGRESS row
+  (docs drift: README status said "M3 apply slice"; the M4.1a row was
+  missing — both repaired this session). Baseline `cargo test
+  --workspace --all-features` re-run green on a fresh toolchain
+  (stable 1.100.0); full workspace clippy 1.100 clean apart from the
+  forge benches' `format_push_string`/`write_with_newline` debt and a
+  `doc_markdown` in the release_lifecycle example (all fixed as
+  micro-debt; the M4.2a/M4.3a work below is otherwise the only delta).
+- **M4.2a implemented (no stubs), TDD with one full red→green cycle**
+  (12 machine tests + 4 `close_pr` contract pins written first, run red
+  against missing API/fail-closed bodies, then implemented):
+  - `halyard-forge/src/state.rs` — the §11.1 machine:
+    `run_release_machine(&dyn Forge, &MachineInput) -> MachineReport`.
+    Tag phase first (one `create_release` per pending release — the
+    adapter's GET-by-tag-first idempotence distinguishes
+    `ReleaseCreated`/`ReleaseExisted`), PROPAGATE gating (pending ⇒
+    prepare skipped, §11.1 step 2), prepare phase (find →
+    `PrOpened`/`PrUpdated`/`PrUnchanged` — an identical title+body
+    spends the one find probe and nothing else — or `PrClosed` under an
+    empty plan). `MachineReport.calls` counts this pass's forge calls
+    from the adapter's own log (§11.5: the budget is observable), input
+    validation fails closed before any call, and every failure aborts
+    the pass with the adapter's error verbatim.
+  - `Forge::close_pr` seam (§11.1 step 3): default honest decline
+    (`E-FORGE-UNSUPPORTED`, mirroring `commit_via_api`/§7.3);
+    not-found is a value (`Ok(false)`), the re-close is a no-op (I1).
+  - `MemoryForge` now models open/closed PR state: `find_release_pr`
+    returns open PRs only, a closed PR is never rewritten in place
+    (upsert-after-close opens a fresh one — real forges cannot reuse
+    the number), `close_pr` closes exactly once. 4 contract pins.
+  - §15.2 failure-injection matrix: auth/rate-limit/conflict injected
+    at the tag phase and the prepare phase, plus the close path — each
+    re-run reaches the uninterrupted baseline state with zero duplicate
+    PRs/releases (I2).
+  - Bench `state_machine` (5 pass shapes, criterion) and example
+    `release_machine` (six passes: propagate → open → no-op → update →
+    close → re-close, with the call log printed).
+  - `halyard-test-support` re-exports the machine types (the E2E lane
+    imports fixtures + machine from one crate).
+- **M4.3a implemented in the same session (M1 green end-to-end → M2
+  authorized), TDD red→green (10 tests first):**
+  `halyard-changelog/src/pr_body.rs` — `render_release_body(&Plan)`
+  renders the §11.3 skeleton (heading, `Package|Current|Next|Bump|Why`
+  table with a deterministic Why map over the reason chain, §16.3
+  Skipped line, verbatim changelog preview, override footer) and closes
+  with the embedded plan: canonical JSON (ADR-0005) with the
+  recomputed `plan_hash` filled in, DEFLATE-compressed, base64-encoded
+  (`flate2` + `base64`, the only new deps, layer rule widened
+  consciously). `extract_embedded_plan` is the I8 inverse: decode →
+  decompress → re-parse → re-hash, rejecting missing markers, bad
+  base64/deflate/JSON, self-inconsistent documents and marker/plan hash
+  mismatches fail-closed (`E-CHLOG-PRBODY`, new error variant + docs
+  page + README index row). Renderer determinism (I3) is what turns the
+  machine's identical-body pass into a zero-mutating-call no-op — the
+  `release_machine` example composes the two.
+  Golden snapshot `pr_body__pr_body_matches_the_golden_snapshot.snap`
+  reviewed and accepted.
+- **Tests/bench/example totals.** 16 new forge tests (12 machine + 4
+  contract), 10 new pr_body tests (9 + 1 unit), 5 bench groups, 2 new
+  examples; `check-layers` ✓ (15 crates, changelog rule widened),
+  `schema-check` ✓.
+- **Honest state at cut-off.** M4.1b (GitHub REST adapter), M4.2b (the
+  shell's git-side tag/push effects + CLI `pr`/`release` commands),
+  the corpus-wide pnpm differential and M2.6 perf close-out remain
+  open. The nightly `forge-smoke` job stays latent until M4.1b (its
+  `forge-smoke` CLI subcommand does not exist yet — the job is opt-in
+  gated, not broken). Tree left dirty on `main` (no commits made).
+- **Next session start point.** (1) M4.2b: wire `run_release_machine`
+  into a CLI `pr --dry` / `release` command over the git effects,
+  (2) M4.1b REST adapter (VERIFY-tagged research first, ADR per §0.3),
+  (3) the corpus-wide pnpm differential as an xtask subcommand,
+  (4) M2.6 perf-budget close-out.
 
 ### 2026-11-13 — M3.4 pnpm-lock slice: importer patcher + native fallback (branch `feat/pnpm-lock-patcher`, base 8189fb1)
 
