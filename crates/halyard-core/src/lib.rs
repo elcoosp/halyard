@@ -47,6 +47,7 @@ pub mod plan;
 pub mod planner;
 pub mod reason;
 pub mod rewrite;
+pub mod trie;
 
 pub use bitset::SmallBitset;
 pub use bstr::BString;
@@ -77,3 +78,4 @@ pub use rewrite::{
     rewrite_requirement, RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy,
     VersionError,
 };
+pub use trie::{build_trie, layout_hash, Trie, TrieNode};
