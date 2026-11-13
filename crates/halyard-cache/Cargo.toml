@@ -1,0 +1,41 @@
+[package]
+name = "halyard-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Persistent per-commit cache (M2.5, §8.7): append-only, checksummed, mmap-backed; the only crate permitted `unsafe` (invariant I10)"
+
+[dependencies]
+halyard-core = { workspace = true }
+# §8.7: content-addressed keys (`blake3(commit_oid ‖ layout_hash ‖ config_hash)`).
+blake3 = { workspace = true }
+# The `unsafe` surface (src/mmap.rs, §2 I10): mmap/munmap and the advisory
+# flock acquire/release path. Both are POSIX syscalls with no safe std
+# equivalent; the module carries the rationale and Miri/loom coverage
+# (tests/miri.rs, tests/loom.rs).
+libc = "0.2"
+# §14.3: hit/miss counters ride `tracing` spans so the profiler (M2.6)
+# can read cache behaviour without touching the planner (I6).
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+halyard-test-support = { workspace = true }
+tempfile = { workspace = true }
+# loom models the lock/append state machine (tests/loom.rs); the feature
+# is off by default and enabled only by `cargo test -p halyard-cache
+# --features loom --release` (§15.1 concurrency layer).
+loom = "0.7"
+
+[features]
+# Miri-only test scaffolding (tests/miri.rs): the real mmap syscalls are
+# outside Miri's isolated execution model, so the miri feature switches
+# tests (not the implementation) to the read()-backed path. Never
+# combined with `loom` in one build.
+miri = []
+# Loom model checking of the record/lock state machine (tests/loom.rs).
+loom = []
+
+[lints]
+workspace = true
