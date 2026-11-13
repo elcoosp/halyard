@@ -39,7 +39,7 @@ use halyard_core::{PkgId, SmallBitset, Trie};
 use tracing::trace;
 
 use crate::bloom::ChangedPathBloom;
-use crate::{map_git_err, GitError};
+use crate::{GitError, map_git_err};
 
 /// Counters for the §17 acceptance ("≥ 10× fewer tree entries read than
 /// naive diff — counted"): read by the differential tests and the perf
@@ -204,9 +204,10 @@ impl<'r> TreeDiffer<'r> {
         commit_position: Option<usize>,
     ) -> Result<SmallBitset, GitError> {
         if let (Some(bloom), Some(position)) = (&self.bloom, commit_position) {
-            let all_negative = self.probes().iter().all(|path| {
-                !bloom.possibly_changed(position, path.as_bytes())
-            });
+            let all_negative = self
+                .probes()
+                .iter()
+                .all(|path| !bloom.possibly_changed(position, path.as_bytes()));
             if all_negative {
                 self.stats.bloom_skips += 1;
                 trace!("tree_diff: bloom negative for all package roots — skipping");
@@ -218,14 +219,8 @@ impl<'r> TreeDiffer<'r> {
             .roots_here(Trie::ROOT)
             .cloned()
             .unwrap_or_default();
-        let result = self.walk_keyed(
-            Some(tree_c),
-            tree_p,
-            Trie::ROOT,
-            &active,
-            &mut Vec::new(),
-        )?;
-        self.apply_filters(result)
+        let result = self.walk_keyed(Some(tree_c), tree_p, Trie::ROOT, &active, &mut Vec::new())?;
+        Ok(self.apply_filters(&result))
     }
 
     /// Probe paths for the Bloom pre-check: every package root plus the
@@ -244,7 +239,7 @@ impl<'r> TreeDiffer<'r> {
     /// filtered attribution (the raw one stays visible in
     /// [`Walk::touched`]-carrying internals and in the cache payload,
     /// which stores the raw tree-diff result).
-    fn apply_filters(&self, result: Walk) -> Result<SmallBitset, GitError> {
+    fn apply_filters(&self, result: &Walk) -> SmallBitset {
         let mut filtered = SmallBitset::new();
         for pkg in result.touched.iter() {
             let Some(filter) = self.filters.get(pkg.to_usize()) else {
@@ -255,19 +250,16 @@ impl<'r> TreeDiffer<'r> {
                 filtered.set(pkg);
                 continue;
             }
-            let passes = result
-                .paths
-                .get(&pkg)
-                .is_some_and(|paths| {
-                    paths
-                        .iter()
-                        .any(|path| path_matches(filter, path, pkg, &self.roots))
-                });
+            let passes = result.paths.get(&pkg).is_some_and(|paths| {
+                paths
+                    .iter()
+                    .any(|path| path_matches(filter, path, pkg, &self.roots))
+            });
             if passes {
                 filtered.set(pkg);
             }
         }
-        Ok(filtered)
+        filtered
     }
 
     /// Reads and sorts one tree's entries (git order: directories compare
@@ -286,9 +278,11 @@ impl<'r> TreeDiffer<'r> {
         }
         let mut entries: Vec<Entry> = Vec::new();
         let mut iter = gix::objs::TreeRefIter::from_bytes(object.data.as_ref(), oid.kind());
-        while let Some(entry) = iter.next().transpose().map_err(|e| {
-            map_git_err("E-GIT-OBJECT", format!("malformed tree {oid}: {e}"))
-        })? {
+        while let Some(entry) = iter
+            .next()
+            .transpose()
+            .map_err(|e| map_git_err("E-GIT-OBJECT", format!("malformed tree {oid}: {e}")))?
+        {
             self.stats.entries_read += 1;
             entries.push(Entry {
                 name: BString::from(entry.filename),
@@ -296,7 +290,7 @@ impl<'r> TreeDiffer<'r> {
                 is_tree: entry.mode.is_tree(),
             });
         }
-        entries.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+        entries.sort_by_key(Entry::sort_key);
         Ok(entries)
     }
 
@@ -305,7 +299,6 @@ impl<'r> TreeDiffer<'r> {
     /// empty tree); `active` carries the deepest package roots matched so
     /// far; `prefix` is the repo-relative directory path of the current
     /// position.
-    #[allow(clippy::too_many_lines)]
     fn walk_keyed(
         &mut self,
         c: Option<ObjectId>,
@@ -375,7 +368,6 @@ impl<'r> TreeDiffer<'r> {
 
     /// Handles one differing entry: trie routing, package attribution,
     /// recursion into trees, blob path collection.
-    #[allow(clippy::too_many_lines)]
     fn descend(
         &mut self,
         c: Option<&Entry>,
@@ -395,7 +387,8 @@ impl<'r> TreeDiffer<'r> {
         let trie_child = self.trie.child(node, name);
         if trie_child.is_some_and(|child| self.trie.is_shared(child)) {
             for i in 0..self.filters.len() {
-                out.touched.set(PkgId::new(i as u32));
+                out.touched
+                    .set(PkgId::new(u32::try_from(i).unwrap_or(u32::MAX)));
             }
             return Ok(());
         }
@@ -466,10 +459,7 @@ fn path_matches(
     pkg: PkgId,
     roots: &[BString],
 ) -> bool {
-    let root = roots
-        .get(pkg.to_usize())
-        .map(|r| r.as_bytes())
-        .unwrap_or(b"");
+    let root: &[u8] = roots.get(pkg.to_usize()).map_or(&[][..], |r| r.as_bytes());
     let rel: &[u8] = if root.is_empty() {
         path.as_bytes()
     } else {
@@ -477,9 +467,8 @@ fn path_matches(
     };
     let rel = rel.strip_prefix(b"/").unwrap_or(rel);
     let rel = std::str::from_utf8(rel).unwrap_or_default();
-    let glob_matches = |g: &BString| {
-        halyard_core::glob::matches(std::str::from_utf8(g).unwrap_or_default(), rel)
-    };
+    let glob_matches =
+        |g: &BString| halyard_core::glob::matches(std::str::from_utf8(g).unwrap_or_default(), rel);
     if !filter.include().is_empty() && !filter.include().iter().any(glob_matches) {
         return false;
     }
@@ -511,10 +500,8 @@ mod tests {
     #[test]
     fn path_filter_semantics() {
         let roots = vec![BString::from("crates/core")];
-        let filter = halyard_core::PathFilter::new(
-            vec!["src/**".to_owned()],
-            vec!["**/*.snap".to_owned()],
-        );
+        let filter =
+            halyard_core::PathFilter::new(vec!["src/**".to_owned()], vec!["**/*.snap".to_owned()]);
         let pkg = PkgId::new(0);
         assert!(path_matches(
             &filter,
