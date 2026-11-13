@@ -16,8 +16,8 @@ use halyard_core::package::{
     Ecosystem, GroupId, Package, PathFilter, RelPath, TagTemplate, VersionSource, Workspace,
 };
 use halyard_core::{HistoryProvider, PkgId};
-use halyard_git::refs::Generations;
 use halyard_git::GitHistory;
+use halyard_git::refs::Generations;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
@@ -39,8 +39,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             id: PkgId::FIRST,
             name: ws.intern(name),
             ecosystem: Ecosystem::Cargo,
-            root: RelPath::new("").unwrap(),
-            manifest: RelPath::new("Cargo.toml").unwrap(),
+            root: RelPath::new("").ok_or("empty root is always a valid RelPath")?,
+            manifest: RelPath::new("Cargo.toml")
+                .ok_or("root manifest path is always a valid RelPath")?,
             version: None,
             version_source: VersionSource::Local,
             publishable: true,
@@ -56,7 +57,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let history = GitHistory::build(std::path::Path::new(&path), &ws, 10_000)?;
-    println!("head: {}", history.head_oid().map(|o| o.to_string()).unwrap_or_default());
+    println!(
+        "head: {}",
+        history
+            .head_oid()
+            .map(|o| o.to_string())
+            .unwrap_or_default()
+    );
     println!("degraded (no commit-graph): {}", history.degraded);
     println!("truncated (initial bound): {}", history.truncated);
     for pkg in ws.packages() {
@@ -76,17 +83,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let base_oids: Vec<Option<ObjectId>> = history
         .bases()
         .iter()
-        .map(|b| b.as_ref().and_then(|base| ObjectId::from_hex(base.oid.as_bytes()).ok()))
+        .map(|b| {
+            b.as_ref()
+                .and_then(|base| ObjectId::from_hex(base.oid.as_bytes()).ok())
+        })
         .collect();
     let painted = halyard_git::walk::paint(&repo, head, &base_oids, 10_000, &mut generations)?;
-    println!("painted commits (fresh for some package): {}", painted.commits.len());
+    println!(
+        "painted commits (fresh for some package): {}",
+        painted.commits.len()
+    );
     for commit in painted.commits.iter().take(20) {
         let packages: Vec<String> = commit
             .new_for
             .iter()
             .map(|id| id.to_u32().to_string())
             .collect();
-        println!("  {} gen={} new_for=[{}]", commit.oid, commit.generation, packages.join(","));
+        println!(
+            "  {} gen={} new_for=[{}]",
+            commit.oid,
+            commit.generation,
+            packages.join(",")
+        );
     }
     Ok(())
 }
