@@ -106,11 +106,12 @@ const RULES: &[LayerRule] = &[
     // parser leaf; slice D adds `halyard-cache` (§8.7 — the cache is
     // consulted before the tree diff) and `tracing` for the §14.3 span
     // counters. `gix`/`gix-commitgraph` are the sanctioned object-access
-    // crates; `semver` parses tag versions.
+    // crates; `semver` parses tag versions; `bstr` carries commit
+    // messages/paths as bytes (§5.7 — `BString` fields of the digest).
     LayerRule {
         name: "halyard-git",
         workspace: &["halyard-core", "halyard-conventional", "halyard-cache"],
-        external: Some(&["gix", "gix-commitgraph", "semver", "tracing"]),
+        external: Some(&["gix", "gix-commitgraph", "semver", "tracing", "bstr"]),
     },
     // M3.5 changelog renderer (§9.4): consumes the Plan; `minijinja` is
     // the template engine named by the spec.
@@ -294,10 +295,9 @@ mod tests {
             .and_then(std::path::Path::parent)
             .expect("workspace root");
         for crate_name in ["halyard-git", "halyard-cli"] {
-            let manifest = std::fs::read_to_string(
-                root.join("crates").join(crate_name).join("Cargo.toml"),
-            )
-            .unwrap_or_else(|e| panic!("read {crate_name} manifest: {e}"));
+            let manifest =
+                std::fs::read_to_string(root.join("crates").join(crate_name).join("Cargo.toml"))
+                    .unwrap_or_else(|e| panic!("read {crate_name} manifest: {e}"));
             let value: Value =
                 toml::from_str(&manifest).unwrap_or_else(|e| panic!("parse {crate_name}: {e}"));
             let deps = value
@@ -313,7 +313,12 @@ mod tests {
                 let allowed = if is_workspace_crate {
                     rule.workspace.iter().any(|w| *w == dep || *w == "*")
                 } else {
-                    rule.external.is_none()
+                    // Mirror the gate: an unrestricted rule (None) allows
+                    // every external dep, an allow-list must contain it.
+                    match rule.external {
+                        None => true,
+                        Some(list) => list.contains(&dep.as_str()),
+                    }
                 };
                 assert!(
                     allowed,
