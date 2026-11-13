@@ -12,6 +12,14 @@ halyard-core = { workspace = true }
 # ADR-0009: the walk emits parsed commits (§5.7); the parser is a
 # zero-dependency leaf, so the layer edge stays cycle-free.
 halyard-conventional = { workspace = true }
+# M2.5 (§8.7): the persistent per-commit cache is consulted before the
+# tree diff (git → cache → core, no cycle).
+halyard-cache = { workspace = true }
+# §14.3: the tree-diff counters ride `tracing` spans (read by tests and
+# the M2.6 perf pass; no subscriber = no-op).
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+# §8.4: tree entry names are raw bytes (`BString`).
+bstr = { workspace = true }
 # §8.1: gix with minimal features. The architecture doc's
 # `max-performance-safe` feature no longer exists in gix 0.90 (drift
 # noted in the PR body); the minimal functional set for in-process
