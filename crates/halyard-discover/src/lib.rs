@@ -19,17 +19,17 @@
 
 use std::path::Path;
 
+use halyard_core::PkgId;
 use halyard_core::discover::{
     DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, ManifestFormat, RawDep,
     RawPackage, RawVersionSource,
 };
+use halyard_core::graph::WorkspaceGraph;
+use halyard_core::link::{ExplicitLinkSpec, detect_links};
 use halyard_core::package::{
     DepEdge, Ecosystem, GroupId, GroupPolicy, Package, PathFilter, RelPath, TagTemplate,
     VersionSource, Workspace,
 };
-use halyard_core::link::{detect_links, ExplicitLinkSpec};
-use halyard_core::graph::WorkspaceGraph;
-use halyard_core::PkgId;
 
 pub use halyard_core::graph::GraphError;
 
@@ -72,6 +72,17 @@ fn adapters() -> Vec<AdapterEntry> {
             adapter: Box::new(halyard_eco_npm::NpmAdapter::new()),
         },
     ]
+}
+
+/// The registered adapters in fixed dispatch order (§6.1), as trait
+/// objects. The effectful shells (M3.6 `apply` in `halyard-edit` /
+/// `halyard-cli`) route manifest edits through them without depending on
+/// the eco crates directly (§7.2 layering: the adapter trait lives in
+/// core, the implementations here).
+pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
+    static CARGO: halyard_eco_cargo::CargoAdapter = halyard_eco_cargo::CargoAdapter;
+    static NPM: halyard_eco_npm::NpmAdapter = halyard_eco_npm::NpmAdapter;
+    vec![&CARGO, &NPM]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -126,7 +137,7 @@ pub fn discover_from_ctx(
         group_name,
         GroupPolicy::Independent,
         members,
-        TagTemplate::parse("{name}-v{version}").expect("default tag template is always valid"),
+        default_tag_template(),
     );
 
     // Resolve proven-internal dependency rows to edges (§5.3: out edges
@@ -185,10 +196,14 @@ fn register_package(
         span: None,
     };
     let root = RelPath::new(&row.root).ok_or_else(|| {
-        manifest_error(&row.manifest, "package root is not a normalized path".to_owned())
+        manifest_error(
+            &row.manifest,
+            "package root is not a normalized path".to_owned(),
+        )
     })?;
-    let manifest = RelPath::new(&row.manifest)
-        .ok_or_else(|| manifest_error(&row.manifest, "manifest path is not normalized".to_owned()))?;
+    let manifest = RelPath::new(&row.manifest).ok_or_else(|| {
+        manifest_error(&row.manifest, "manifest path is not normalized".to_owned())
+    })?;
     let version_source = match &row.version_source {
         RawVersionSource::Local => VersionSource::Local,
         RawVersionSource::WorkspaceInherited { file, key_path } => {
@@ -229,8 +244,14 @@ fn register_package(
 }
 
 /// `{name}-v{version}` — the independent-package default (appendix A.3).
+/// The literal is a compile-time constant that satisfies every
+/// `TagTemplate` validation rule; a parse failure is impossible by
+/// construction, so it aborts loudly instead of inventing a fallback.
 fn default_tag_template() -> TagTemplate {
-    TagTemplate::parse("{name}-v{version}").expect("default tag template is always valid")
+    match TagTemplate::parse("{name}-v{version}") {
+        Ok(t) => t,
+        Err(e) => unreachable!("default tag template is always valid: {e}"),
+    }
 }
 
 /// Resolves one raw dependency: proven-internal rows match a same-
@@ -281,7 +302,7 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
             }
             !matches!(
                 entry.file_name().to_str(),
-                Some(".git") | Some("target") | Some("node_modules")
+                Some(".git" | "target" | "node_modules")
             )
         })
         .build();
