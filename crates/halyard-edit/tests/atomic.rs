@@ -83,13 +83,18 @@ fn file_mode_is_preserved() {
 
 #[test]
 fn atomic_write_creates_new_files_and_no_temp_litter() {
-    let path = temp_path("new");
+    // A private directory: the system temp dir is shared with any
+    // concurrent halyard process, whose in-flight `.halyard-edit-` temp
+    // file would trip the litter scan.
+    let dir =
+        std::env::temp_dir().join(format!("halyard-edit-atomic-{}-litter", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("mkdir: {e}"));
+    let path = dir.join("new");
     atomic_write(&path, b"created\n").unwrap_or_else(|e| panic!("write: {e}"));
     let on_disk = std::fs::read(&path).unwrap_or_else(|e| panic!("read: {e}"));
     assert_eq!(on_disk, b"created\n");
     // No temp files left in the directory.
-    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let litter: Vec<_> = std::fs::read_dir(dir)
+    let litter: Vec<_> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("readdir: {e}"))
         .filter_map(std::result::Result::ok)
         .filter(|entry| {
@@ -101,6 +106,7 @@ fn atomic_write_creates_new_files_and_no_temp_litter() {
         .collect();
     assert!(litter.is_empty(), "temp litter: {litter:?}");
     std::fs::remove_file(&path).unwrap_or_else(|e| panic!("cleanup: {e}"));
+    std::fs::remove_dir(&dir).unwrap_or_else(|e| panic!("rmdir: {e}"));
 }
 
 #[test]
