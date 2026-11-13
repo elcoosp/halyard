@@ -1,7 +1,7 @@
 //! The discovery seam (§6, §7.3): the [`EcosystemAdapter`] trait, the
 //! [`DiscoverCtx`] input the orchestrator hands to adapters, and the
 //! [`RawPackage`]/[`RawDep`] rows adapters return before the orchestrator
-//! merges them into a [`Workspace`].
+//! merges them into a `Workspace`.
 //!
 //! Design notes:
 //!
@@ -10,7 +10,7 @@
 //!   filesystem or spawn processes (invariant I5/I6). The orchestrator
 //!   (`halyard-discover`) owns the walk and the reads.
 //! * Everything is a plain-data row with `String` names; the orchestrator
-//!   interns them into the [`Workspace`] interner (§5.1).
+//!   interns them into the `Workspace` interner (§5.1).
 //! * The trait carries the implemented §7.3 surface: `discover`
 //!   (M1.5/M1.6) and `edit_versions` (M3.1/M3.3 — the manifest edit
 //!   subset over the plan's byte patches, §5.8/§9.1). The remaining §7.3
@@ -375,7 +375,7 @@ impl std::error::Error for DiscoverError {}
 /// end-to-end would be a stub, and stubs are forbidden (TASK §2.2).
 /// `edit_versions` joined the trait in M3 with its first two end-to-end
 /// implementations; `patch_lockfile` joined in M3.2 with the Cargo
-/// implementation and the documented [`crate::lockfile::NeedsNative`]
+/// implementation and the documented `NeedsNative` decline
 /// fallback as the default for adapters without an in-memory patcher.
 pub trait EcosystemAdapter: Send + Sync {
     /// Adapter identifier (`cargo`, `npm`), used in logs and diagnostics.
@@ -394,7 +394,7 @@ pub trait EcosystemAdapter: Send + Sync {
     /// [`crate::rewrite::rewrite_requirement`] does, rewrite in place
     /// preserving formatting) and verify by re-parse before returning, so
     /// untouched bytes survive verbatim (invariant I4) and a drifted
-    /// working tree fails closed ([`EditFailure::SpanMismatch`]). Pure
+    /// working tree fails closed (`EditFailure::SpanMismatch`). Pure
     /// parse+mutate over the given bytes: no process spawn, no I/O.
     fn edit_versions(
         &self,
