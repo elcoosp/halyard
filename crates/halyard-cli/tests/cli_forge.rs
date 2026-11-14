@@ -299,18 +299,31 @@ fn forge_smoke_probes_read_only_over_loopback() -> Result<(), BoxError> {
     Ok(())
 }
 
-/// `forge-smoke` without a token fails closed with `E-FORGE-AUTH`
-/// before any network attempt (the nightly job's opt-in contract).
+/// `forge-smoke` without credentials fails closed with `E-FORGE-AUTH`
+/// before any network attempt (the nightly job's opt-in contract). The
+/// code is asserted via the JSON error payload — the human render
+/// carries the message, not the stable code.
 #[test]
 fn forge_smoke_needs_a_token() -> Result<(), BoxError> {
     let fx = build_workspace("smoke-no-token")?;
     let (code, out) = halyard_with_env(
         fx.root(),
-        &["forge-smoke", "--repo", "octo/halyard-demo"],
+        &[
+            "forge-smoke",
+            "--repo",
+            "octo/halyard-demo",
+            "--format",
+            "json",
+        ],
         &[("HALYARD_FORGE_TOKEN", ""), ("GITHUB_TOKEN", "")],
     )?;
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("E-FORGE-AUTH"), "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let code_field = value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str);
+    assert_eq!(code_field, Some("E-FORGE-AUTH"), "{out}");
     Ok(())
 }
 
@@ -354,9 +367,12 @@ fn forge_smoke_surfaces_the_auth_failure() -> Result<(), BoxError> {
 #[test]
 fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
     let mut fx = build_workspace("pr-live")?;
-    // The post-merge state: the manifest says 0.1.1, only v0.1.0 is
-    // tagged — the plan carries the release, the prepare phase opens
-    // the PR.
+    // The post-merge state (the §11.1 machine PROPAGATEs while anything
+    // is pending, so the prepare phase only runs once the manifest
+    // version is tagged): v0.1.0 tagged, the release commit carries
+    // v0.1.1 and is itself tagged (the tag phase's own doing), and one
+    // fresh `feat` commit lands after the release — the plan proposes
+    // 0.1.2, the prepare phase opens the Release PR.
     fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
     fx.commit_with(&CommitSpec::files(
         vec![(
@@ -364,6 +380,14 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
             "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
         )],
         "chore(main): release v0.1.1",
+    ))?;
+    fx.tag_annotated("v0.1.1", "solo v0.1.1")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: extend the crate surface",
     ))?;
     fx.run_git(&[
         "remote",
@@ -419,7 +443,7 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
     assert_eq!(effects.len(), 1, "{out}");
     let effect = effects.first().expect("one effect");
     assert_eq!(
-        effect.get("effect").and_then(serde_json::Value::as_str),
+        effect.get("type").and_then(serde_json::Value::as_str),
         Some("pr_opened")
     );
     assert_eq!(
@@ -439,6 +463,121 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
         base,
         "the base is the §11.2 prefix inverse — no extra probe spent"
     );
-    assert_eq!(field(&payload, "title"), "chore: release v0.1.1");
+    assert_eq!(field(&payload, "title"), "chore: release v0.1.2");
+    Ok(())
+}
+
+/// `forge-smoke` over the GitHub App env (M4.1c, ADR-0014): the shell
+/// resolves the App credentials (PEM → JWT → installation token), the
+/// mint rides `POST /app/installations/{id}/access_tokens` with the
+/// JWT as the bearer, and the probe carries the minted installation
+/// token — the full e2e shape over the real transport and loopback
+/// forge.
+#[test]
+fn forge_smoke_authenticates_app_over_loopback() -> Result<(), BoxError> {
+    let fx = build_workspace("smoke-app")?;
+    let (forge, base, server) = FakeForge::new(vec![
+        (
+            201,
+            "{\"token\":\"installation-token-1\",\"expires_at\":\"2030-01-01T00:00:00Z\"}"
+                .to_owned(),
+        ),
+        (404, "{\"message\":\"Not Found\"}".to_owned()),
+    ])?;
+    let key_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../halyard-forge-github/tests/fixtures/app_key_pkcs1.pem"
+    );
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "forge-smoke",
+            "--repo",
+            "octo/halyard-demo",
+            "--format",
+            "json",
+        ],
+        &[
+            ("GITHUB_API_URL", &base),
+            ("GITHUB_TOKEN", ""),
+            ("HALYARD_FORGE_TOKEN", ""),
+            ("HALYARD_APP_ID", "12345"),
+            ("HALYARD_APP_INSTALLATION_ID", "42"),
+            ("HALYARD_APP_PRIVATE_KEY_PATH", key_path),
+        ],
+    )?;
+    server
+        .join()
+        .expect("the fake forge served the mint + probe");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    assert_eq!(
+        value.get("auth_mode").and_then(serde_json::Value::as_str),
+        Some("app"),
+        "the report names the credential mode: {out}"
+    );
+    assert_eq!(
+        value
+            .get("release_exists")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "the probe rides the minted installation token"
+    );
+    let received = forge.received();
+    assert_eq!(received.len(), 2, "mint + probe: {out}");
+    let mint = received.first().expect("one capture");
+    assert_eq!(field(mint, "method"), "POST");
+    assert_eq!(
+        field(mint, "path"),
+        "/app/installations/42/access_tokens",
+        "the mint posts to the documented endpoint"
+    );
+    let authorization = field(mint, "authorization");
+    let jwt = authorization
+        .strip_prefix("Bearer ")
+        .ok_or("the mint rides Authorization: Bearer <jwt>")?
+        .to_owned();
+    assert_eq!(
+        jwt.split('.').count(),
+        3,
+        "the bearer is a three-segment JWT: {authorization:.40}…"
+    );
+    let probe = received.get(1).expect("two captures");
+    assert_eq!(
+        field(probe, "path"),
+        "/repos/octo/halyard-demo/releases/tags/halyard-forge-smoke-probe"
+    );
+    assert_eq!(
+        field(probe, "authorization"),
+        "Bearer installation-token-1",
+        "the repo call carries the minted installation token"
+    );
+    Ok(())
+}
+
+/// A partial `HALYARD_APP_*` set commits the run to App mode and fails
+/// closed naming what is missing — never a guessed fallback to the
+/// static token (ADR-0014).
+#[test]
+fn forge_smoke_fails_closed_on_a_partial_app_env() -> Result<(), BoxError> {
+    let fx = build_workspace("smoke-app-partial")?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "forge-smoke",
+            "--repo",
+            "octo/halyard-demo",
+            "--format",
+            "json",
+        ],
+        &[
+            ("GITHUB_TOKEN", ""),
+            ("HALYARD_FORGE_TOKEN", ""),
+            ("HALYARD_APP_ID", "12345"),
+        ],
+    )?;
+    assert_ne!(code, 0, "a partial App env is a fail-closed error: {out}");
+    assert!(out.contains("HALYARD_APP_INSTALLATION_ID"), "{out}");
+    assert!(out.contains("HALYARD_APP_PRIVATE_KEY"), "{out}");
     Ok(())
 }
