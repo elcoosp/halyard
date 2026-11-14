@@ -45,6 +45,22 @@ impl NpmAdapter {
     }
 }
 
+/// The release version the `package.json` **bytes** carry (`None` when
+/// the bytes are not a parsable JSON object or carry no semver `version`)
+/// — the probe input the tag-target pinpoint walk consumes for the npm
+/// ecosystem (see `halyard_git::tag_target::ManifestVersionProbe`; the
+/// git engine never parses manifests itself).
+pub fn manifest_version(bytes: &[u8]) -> Option<String> {
+    let doc = json_span::JsonDoc::parse(bytes).ok()?;
+    match &doc.get("version")?.value {
+        json_span::JsonValue::String { decoded, .. } => {
+            let version = semver::Version::parse(decoded).ok()?;
+            Some(version.to_string())
+        }
+        _ => None,
+    }
+}
+
 /// The workspace-level sources of member globs, in detection order.
 struct GlobSources {
     /// pnpm `packages` patterns (negations included).
@@ -532,6 +548,18 @@ pub(crate) fn classify_req(text: &str) -> (ReqSpec, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_version_reads_the_json_version() {
+        let manifest = b"{\n  \"name\": \"a\",\n  \"version\": \"2.3.1\"\n}\n";
+        assert_eq!(manifest_version(manifest).as_deref(), Some("2.3.1"));
+        // A package.json without a version (unpublishable, §6.4).
+        assert_eq!(manifest_version(b"{ \"name\": \"a\" }\n"), None);
+        // A non-semver version is not a release version.
+        assert_eq!(manifest_version(b"{ \"version\": \"2.x\" }\n"), None);
+        // Malformed JSON is not a parsable manifest.
+        assert_eq!(manifest_version(b"{ not json"), None);
+    }
 
     fn ctx_with(files: &[(&str, &str)]) -> DiscoverCtx {
         let mut ctx = DiscoverCtx::new();
