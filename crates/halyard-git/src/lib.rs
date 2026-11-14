@@ -6,8 +6,13 @@
 //! seam.
 //!
 //! This crate is imperative-shell territory: it owns `gix` access, ODB
-//! reads and shallow-clone detection. It performs **no subprocess** (no
-//! `git` binary, invariant I6) and no network (I5). The planner consumes
+//! reads and shallow-clone detection. The *planning read path* performs
+//! **no subprocess** (no `git` binary, invariant I6) and no network
+//! (I5). The two sanctioned exceptions are the §11.1 release-flow effect
+//! steps: the tag-phase write path ([`tag`], in-process `gix` writes)
+//! and the tag push ([`push`], which spawns `git` argv arrays with
+//! `GIT_TERMINAL_PROMPT=0` — the architecture lists "push tags (single
+//! `git push`)" as an effect step; ADR-0012). The planner consumes
 //! only the materialized [`HistoryDigest`];
 //! the cache is consulted *before* the tree diff and never leaks into
 //! `halyard-core` (planner purity, §4).
@@ -22,6 +27,7 @@
 
 pub mod bloom;
 pub mod merge;
+pub mod push;
 pub mod refs;
 pub mod tag;
 pub mod tag_target;
@@ -96,6 +102,15 @@ pub enum GitError {
         /// The commit the directive asked for.
         requested: String,
     },
+    /// The tag-push effect failed (`E-GIT-PUSH`, §11.1 step 2 /
+    /// §11.2): the `git` binary could not run, the remote could not be
+    /// probed (unreachable, auth refused — never a prompt), or the push
+    /// produced no parseable status. Per-tag rejections surface as
+    /// report rows, not this error.
+    TagPush {
+        /// What went wrong (includes the remote or offending tag).
+        message: String,
+    },
 }
 
 impl GitError {
@@ -109,6 +124,7 @@ impl GitError {
             Self::Object { .. } => "E-GIT-OBJECT",
             Self::TagWrite { .. } => "E-GIT-TAG",
             Self::TagConflict { .. } => "E-GIT-TAG-CONFLICT",
+            Self::TagPush { .. } => "E-GIT-PUSH",
         }
     }
 }
@@ -142,6 +158,7 @@ impl std::fmt::Display for GitError {
                  owes {requested}; release tags are never moved — delete or re-point {tag} \
                  deliberately and re-run"
             ),
+            Self::TagPush { message } => write!(f, "[E-GIT-PUSH] {message}"),
         }
     }
 }
