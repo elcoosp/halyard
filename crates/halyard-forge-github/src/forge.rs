@@ -28,6 +28,7 @@
 //!   any call.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::PoisonError;
@@ -40,19 +41,27 @@ use halyard_forge::{
     ApiCommit, ApiFile, BranchName, CallRecord, Forge, Pr, PrSpec, RateInfo, Release, ReleaseSpec,
 };
 
+use crate::app_auth::{
+    AppCredentials, EpochClock, ForgeCredentials, INSTALLATION_TOKEN_TTL_SECS, system_epoch,
+};
 use crate::wire::{
     self, API_VERSION, ForgeEndpoint, RELEASE_BRANCH_PREFIX, RestCommitObject, RestPr, RestRef,
 };
 
 /// The adapter's mutable state: the `ETag` cache per release branch, the
-/// last-observed rate snapshot and the call log. Poisoning cannot
-/// corrupt any invariant (every mutation is a total replace or append),
-/// so guards are recovered and the panic propagates from the original
-/// site — the `MemoryForge` discipline.
+/// cached installation token (App credentials), the last-observed rate
+/// snapshot and the call log. Poisoning cannot corrupt any invariant
+/// (every mutation is a total replace or append), so guards are
+/// recovered and the panic propagates from the original site — the
+/// `MemoryForge` discipline.
 #[derive(Debug)]
 struct AdapterState {
     /// `branch → (etag, cached find result)` — the conditional cache.
     etags: HashMap<String, (String, Option<Pr>)>,
+    /// The minted installation token with its validity bound in epoch
+    /// seconds (`None` before the first mint, token credentials never
+    /// touch this).
+    installation_token: Option<(String, u64)>,
     /// Last observed `x-ratelimit-*` snapshot (zeros before any
     /// response — nothing observed yet).
     rate: RateInfo,
@@ -64,6 +73,7 @@ impl Default for AdapterState {
     fn default() -> Self {
         Self {
             etags: HashMap::new(),
+            installation_token: None,
             rate: RateInfo {
                 limit: 0,
                 remaining: 0,
@@ -75,14 +85,19 @@ impl Default for AdapterState {
 
 /// The GitHub REST [`Forge`]. Generic over the transport so benches and
 /// tests can pin the wire behavior offline; the CLI injects the real
-/// client.
+/// client. Credentials are the M4.1b static token or the M4.1c GitHub
+/// App (the JWT → installation-token mint is this adapter's own
+/// exchange, ADR-0014).
 pub struct GitHubRestForge<T: HttpTransport> {
     endpoint: ForgeEndpoint,
-    /// The bearer token; empty ⇒ every method fails closed with
-    /// `E-FORGE-AUTH` before any call.
-    token: String,
+    /// The resolved-to-bearer credentials; an empty token fails closed
+    /// with `E-FORGE-AUTH` before any call.
+    credentials: ForgeCredentials,
     transport: T,
     state: Mutex<AdapterState>,
+    /// The injected clock for the App path's token-expiry state (never
+    /// read anywhere else — determinism I3 is a pure function of it).
+    clock: EpochClock,
 }
 
 impl<T: HttpTransport> GitHubRestForge<T> {
@@ -91,11 +106,55 @@ impl<T: HttpTransport> GitHubRestForge<T> {
     /// injected transport.
     #[must_use]
     pub fn with_transport(endpoint: ForgeEndpoint, token: &str, transport: T) -> Self {
+        Self::with_credentials_and_clock(
+            endpoint,
+            ForgeCredentials::from_token(token),
+            transport,
+            Arc::new(system_epoch),
+        )
+    }
+
+    /// Builds the adapter with GitHub App credentials (M4.1c): the
+    /// installation token is minted on demand through the injected
+    /// transport, one POST per
+    /// [`INSTALLATION_TOKEN_TTL_SECS`](crate::INSTALLATION_TOKEN_TTL_SECS).
+    #[must_use]
+    pub fn with_app_transport(endpoint: ForgeEndpoint, app: AppCredentials, transport: T) -> Self {
+        Self::with_credentials_and_clock(
+            endpoint,
+            ForgeCredentials::App(Box::new(app)),
+            transport,
+            Arc::new(system_epoch),
+        )
+    }
+
+    /// Builds the adapter over explicit credentials with the default
+    /// (system) clock.
+    #[must_use]
+    pub fn with_credentials(
+        endpoint: ForgeEndpoint,
+        credentials: ForgeCredentials,
+        transport: T,
+    ) -> Self {
+        Self::with_credentials_and_clock(endpoint, credentials, transport, Arc::new(system_epoch))
+    }
+
+    /// Builds the adapter over explicit credentials and an injected
+    /// clock — the tests' and examples' determinism surface: the App
+    /// path's expiry state is a pure function of the clock (I3).
+    #[must_use]
+    pub fn with_credentials_and_clock(
+        endpoint: ForgeEndpoint,
+        credentials: ForgeCredentials,
+        transport: T,
+        clock: EpochClock,
+    ) -> Self {
         Self {
             endpoint,
-            token: token.to_owned(),
+            credentials,
             transport,
             state: Mutex::new(AdapterState::default()),
+            clock,
         }
     }
 
@@ -104,28 +163,78 @@ impl<T: HttpTransport> GitHubRestForge<T> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The mandatory GitHub headers (research §1), gated on credentials:
-    /// an anonymous adapter fails closed before anything reaches the
-    /// wire.
-    fn headers(&self) -> Result<Vec<(String, String)>, ForgeError> {
-        if self.token.is_empty() {
-            return Err(ForgeError::auth(
-                "no forge token configured; export GITHUB_TOKEN (or HALYARD_FORGE_TOKEN) \
-                 and re-run `halyard doctor` to verify it can reach the repository",
-            ));
+    /// Resolves the credentials to a bearer and builds the mandatory
+    /// GitHub headers (research §1): an unusable credential set fails
+    /// closed before anything reaches the wire, and App credentials
+    /// mint through the transport when their cached token expired.
+    fn headers(&self, state: &mut AdapterState) -> Result<Vec<(String, String)>, ForgeError> {
+        let bearer = self.bearer(state)?;
+        Ok(mandatory_headers(&bearer))
+    }
+
+    /// Resolves the credential set to the full `Authorization` header
+    /// value. Token credentials ride as `Bearer <token>` (empty fails
+    /// closed); App credentials ride `Bearer <installation token>` from
+    /// the cache until [`INSTALLATION_TOKEN_TTL_SECS`] expires it, then
+    /// re-mint.
+    fn bearer(&self, state: &mut AdapterState) -> Result<String, ForgeError> {
+        match &self.credentials {
+            ForgeCredentials::Token(token) => {
+                if token.is_empty() {
+                    return Err(ForgeError::auth(
+                        "no forge token configured; export GITHUB_TOKEN (or \
+                         HALYARD_FORGE_TOKEN) and re-run `halyard doctor` to verify it can \
+                         reach the repository",
+                    ));
+                }
+                Ok(format!("Bearer {token}"))
+            }
+            ForgeCredentials::App(app) => {
+                let now = (self.clock)();
+                if let Some((token, valid_until)) = &state.installation_token
+                    && now < *valid_until
+                {
+                    return Ok(format!("Bearer {token}"));
+                }
+                let token = self.mint_installation_token(state, app, now)?;
+                Ok(format!("Bearer {token}"))
+            }
         }
-        Ok(vec![
-            (
-                "Accept".to_owned(),
-                "application/vnd.github+json".to_owned(),
-            ),
-            ("X-GitHub-Api-Version".to_owned(), API_VERSION.to_owned()),
-            (
-                "User-Agent".to_owned(),
-                format!("halyard/{}", env!("CARGO_PKG_VERSION")),
-            ),
-            ("Authorization".to_owned(), format!("Bearer {}", self.token)),
-        ])
+    }
+
+    /// The App path's mint exchange (M4.1c, research §7): one
+    /// `POST /app/installations/{id}/access_tokens` with the RS256 JWT
+    /// as the bearer, the `{ "token": … }` body parsed from the 201 —
+    /// recorded like any other call (§11.5), cached with its own
+    /// conservative TTL (the wire's `expires_at` is deliberately not
+    /// parsed). A failed mint fails closed before any repo call; the
+    /// taxonomy maps the mint's statuses exactly like every other
+    /// exchange's.
+    fn mint_installation_token(
+        &self,
+        state: &mut AdapterState,
+        app: &AppCredentials,
+        now: u64,
+    ) -> Result<String, ForgeError> {
+        let jwt = app.mint_jwt(now)?;
+        let headers = mandatory_headers(&format!("Bearer {jwt}"));
+        let path = format!("/app/installations/{}/access_tokens", app.installation_id());
+        let request = HttpRequest {
+            method: "POST",
+            url: self.endpoint.url(&path),
+            headers,
+            body: None,
+        };
+        let response = self.call(state, "POST", request)?;
+        if !(200..300).contains(&response.status) {
+            return Err(Self::map_status(&response, "the installation-token mint"));
+        }
+        let token = wire::parse_installation_token(&response.body)?;
+        state.installation_token = Some((
+            token.clone(),
+            now.saturating_add(INSTALLATION_TOKEN_TTL_SECS),
+        ));
+        Ok(token)
     }
 
     /// Records one call (path + query as the target) — every adapter
@@ -227,7 +336,7 @@ impl<T: HttpTransport> GitHubRestForge<T> {
         branch: &BranchName,
         context: &str,
     ) -> Result<Option<Pr>, ForgeError> {
-        let mut headers = self.headers()?;
+        let mut headers = self.headers(state)?;
         if let Some((etag, _)) = state.etags.get(branch.as_str()) {
             headers.push(("If-None-Match".to_owned(), etag.clone()));
         }
@@ -294,7 +403,7 @@ impl<T: HttpTransport> GitHubRestForge<T> {
         tag: &str,
         context: &str,
     ) -> Result<Option<Release>, ForgeError> {
-        let headers = self.headers()?;
+        let headers = self.headers(state)?;
         let path = format!(
             "{}/releases/tags/{}",
             self.endpoint.repo_prefix(),
@@ -357,6 +466,24 @@ fn retry_wait(response: &halyard_forge::transport::HttpResponse) -> Option<u64> 
     })
 }
 
+/// The mandatory GitHub headers (research §1) over a resolved bearer —
+/// pure: the credential resolution (and the App path's mint) lives on
+/// the adapter.
+fn mandatory_headers(bearer: &str) -> Vec<(String, String)> {
+    vec![
+        (
+            "Accept".to_owned(),
+            "application/vnd.github+json".to_owned(),
+        ),
+        ("X-GitHub-Api-Version".to_owned(), API_VERSION.to_owned()),
+        (
+            "User-Agent".to_owned(),
+            format!("halyard/{}", env!("CARGO_PKG_VERSION")),
+        ),
+        ("Authorization".to_owned(), bearer.to_owned()),
+    ]
+}
+
 /// Maps a parsed wire PR onto the seam vocabulary.
 fn into_seam_pr(pr: RestPr, branch: &str) -> Pr {
     Pr {
@@ -395,7 +522,7 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
         let existing = self.find_pr_exchange(&mut state, &spec.branch, "the upsert lookup")?;
         if let Some(found) = existing {
             // Same branch ⇒ same PR, rewritten in place (I1).
-            let headers = self.headers()?;
+            let headers = self.headers(&mut state)?;
             let path = format!("{}/pulls/{}", self.endpoint.repo_prefix(), found.number);
             let request = HttpRequest {
                 method: "PATCH",
@@ -410,7 +537,7 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
             let pr = wire::parse_pr(&response.body)?;
             Ok(into_seam_pr(pr, spec.branch.as_str()))
         } else {
-            let headers = self.headers()?;
+            let headers = self.headers(&mut state)?;
             let request = HttpRequest {
                 method: "POST",
                 url: self
@@ -448,7 +575,7 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
             found.created = false;
             return Ok(found);
         }
-        let headers = self.headers()?;
+        let headers = self.headers(&mut state)?;
         let request = HttpRequest {
             method: "POST",
             url: self
@@ -475,7 +602,7 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
             // Not-found is a value (§11.4); the re-close is a no-op (I1).
             return Ok(false);
         };
-        let headers = self.headers()?;
+        let headers = self.headers(&mut state)?;
         let request = HttpRequest {
             method: "PATCH",
             url: self.endpoint.url(&format!(
@@ -501,7 +628,7 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
 
     fn commit_via_api(&self, spec: &ApiCommit) -> Result<Oid, ForgeError> {
         let mut state = self.state();
-        let headers = self.headers()?;
+        let headers = self.headers(&mut state)?;
         // 1–2. Read the ref (the release branch the shell's git side
         // pushed) and its commit's root tree. A missing branch is a moved
         // state — the re-run recreates it before the API commit (I2).
