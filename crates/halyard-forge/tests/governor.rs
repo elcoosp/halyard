@@ -122,7 +122,7 @@ impl FailFirstForge {
         let mut remaining = self
             .remaining
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if *remaining > 0 {
             *remaining -= 1;
             true
@@ -140,7 +140,7 @@ impl FailFirstForge {
     ) -> Result<T, ForgeError> {
         self.calls
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(CallRecord {
                 method,
                 target: target.to_owned(),
@@ -192,7 +192,7 @@ impl Forge for FailFirstForge {
     fn calls(&self) -> Vec<CallRecord> {
         self.calls
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }
@@ -227,7 +227,7 @@ fn passive_governor_is_transparent() {
     assert!(
         script
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .sleeps
             .is_empty(),
         "no waits without a policy"
@@ -248,7 +248,11 @@ fn pacing_spaces_content_calls_not_probes() {
     let governor = Governor::new(&forge, policy, clock, sleeper);
 
     governor
-        .create_release(&one_pending_release()[0])
+        .create_release(
+            one_pending_release()
+                .first()
+                .unwrap_or_else(|| unreachable!("one pending release")),
+        )
         .unwrap_or_else(|e| unreachable!("first release must succeed: {e}"));
     governor
         .find_release_pr(&main_branch())
@@ -259,7 +263,7 @@ fn pacing_spaces_content_calls_not_probes() {
 
     let script = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(
         script.sleeps,
         vec![1_000],
@@ -335,12 +339,16 @@ fn rate_limit_retry_honors_retry_after() {
     let governor = Governor::new(&forge, policy, clock, sleeper);
 
     let release = governor
-        .create_release(&one_pending_release()[0])
+        .create_release(
+            one_pending_release()
+                .first()
+                .unwrap_or_else(|| unreachable!("one pending release")),
+        )
         .unwrap_or_else(|e| unreachable!("retry must succeed: {e}"));
     assert!(release.created, "the retried call created the release");
     let script = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(script.sleeps, vec![30_000], "Retry-After honored exactly");
     assert_eq!(
         governor.events(),
@@ -379,7 +387,7 @@ fn transport_backoff_is_deterministic_exponential() {
         .unwrap_or_else(|e| unreachable!("backoff run must succeed: {e}"));
     let script = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(script.sleeps, vec![500, 1_000], "base, then 2×base");
     assert_eq!(
         governor.events(),
@@ -417,7 +425,7 @@ fn backoff_is_capped_at_the_policy_cap() {
         .unwrap_or_else(|e| unreachable!("capped run must succeed: {e}"));
     let script = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(
         script.sleeps,
         vec![2_000, 4_000, 5_000, 5_000],
@@ -439,7 +447,11 @@ fn retries_exhausted_return_the_last_error() {
     let governor = Governor::new(&forge, policy, clock, sleeper);
 
     let error = governor
-        .create_release(&one_pending_release()[0])
+        .create_release(
+            one_pending_release()
+                .first()
+                .unwrap_or_else(|| unreachable!("one pending release")),
+        )
         .unwrap_err_or_else_refused();
     assert_eq!(
         error,
@@ -468,7 +480,7 @@ fn non_retryable_errors_pass_through_without_waiting() {
     assert_eq!(error, ForgeError::auth("bad token"));
     let script = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert!(script.sleeps.is_empty(), "no wait on a non-retryable error");
     assert!(governor.events().is_empty(), "no retry events");
     assert_eq!(governor.spent(), 1, "the failed attempt is still spend");
@@ -564,7 +576,7 @@ fn rate_limit_probe_is_passthrough() {
     let governor = Governor::new(&forge, policy, clock, sleeper);
     assert_eq!(governor.rate_limit(), RateInfo::MODEL_DEFAULT);
     assert_eq!(governor.spent(), 0, "the read is not spend");
-    assert!(governor.events().is_empty());
+    assert_eq!(governor.events(), Vec::new());
 }
 
 /// The error side of a `Result` the test asserts is an error; keeps the

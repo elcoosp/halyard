@@ -7,6 +7,14 @@
 use halyard_forge::error::ForgeError;
 use halyard_forge::transport::{HttpRequest, HttpResponse, HttpTransport, MemoryTransport};
 
+/// The Nth scripted request (the `indexing_slicing`-safe accessor the
+/// restriction lint leaves in place; tests allow `unreachable!`).
+fn at<T>(items: &[T], index: usize) -> &T {
+    items
+        .get(index)
+        .unwrap_or_else(|| unreachable!("item {index} was recorded; {} were", items.len()))
+}
+
 /// House-style render helper: `?`-propagating (no `unwrap` in tests;
 /// impossible paths are `unreachable!`).
 fn transport() -> MemoryTransport {
@@ -67,10 +75,10 @@ fn sent_log_records_requests() -> Result<(), ForgeError> {
     t.execute(second)?;
     let sent = t.sent();
     assert_eq!(sent.len(), 2);
-    assert_eq!(sent[0].method, "GET");
-    assert_eq!(sent[1].method, "POST");
+    assert_eq!(at(&sent, 0).method, "GET");
+    assert_eq!(at(&sent, 1).method, "POST");
     assert_eq!(
-        sent[1].body.as_deref(),
+        at(&sent, 1).body.as_deref(),
         Some("{\"head\":\"x\"}"),
         "the request body rides the log verbatim"
     );
