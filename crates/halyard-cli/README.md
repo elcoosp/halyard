@@ -70,7 +70,7 @@ halyard check --exit-code
 | `explain <pkg>` | available (M1.10) |
 | `status` | available (M1.10) |
 | `graph [--format]` | available (M1.10) |
-| `doctor` | available (M1.10) |
+| `doctor [--registries]` | available (M1.10; M5.1 adds the opt-in `--registries` probe — crates.io + npm reachability and protocol comprehension through the `Registry` seam, network touched only by the flag, I5) |
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
 | `apply [--dry]` | available (M3.6) |
@@ -78,7 +78,8 @@ halyard check --exit-code
 | `check [--pr-title] [--exit-code]` | available (M4.3) |
 | `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter — through the §11.5 governor (M5.5) — when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
 | `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`; M5.5 adds the governor row) |
-| `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
+| `fetch` | available (§8.8, M4.6 step 1, ADR-0016): probes `origin`'s tags, selects each package's latest release tag through the planner's template rule, fetches those tags plus the base branch in one minimal `git fetch` (blob-less; shallow clones deepen bounded by the previous releases; a failing minimal fetch retries once as the full fetch of the same refs); idempotent (I1) — tags already local at the probed target are not requested; a remote without a configured URL is an honest no-op; no `--dry` by design (the remote listing is the one input an offline forecast cannot have) |
+| `publish` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 ## Forge credentials (M4.1c, ADR-0014)
 
