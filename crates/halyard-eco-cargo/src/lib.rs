@@ -405,9 +405,49 @@ pub(crate) fn parse_tag_template(
     })
 }
 
+/// The release version the manifest **bytes** carry (`None` when the
+/// bytes are not a parsable `[package]` manifest or carry no semver
+/// `version`) — the probe input the tag-target pinpoint walk consumes
+/// for the cargo ecosystem (see `halyard_git::tag_target::
+/// ManifestVersionProbe`; the git engine never parses manifests itself).
+///
+/// An inherited version (`version.workspace = true`) does not live in the
+/// member manifest — callers route the pinpoint walk at the authoritative
+/// file instead (`halyard_core::package::VersionSource::WorkspaceInherited`'s
+/// `file`), which is what the shell's probe dispatch does.
+pub fn manifest_version(bytes: &[u8]) -> Option<String> {
+    let raw = std::str::from_utf8(bytes).ok()?;
+    let doc = parse::parse_document(raw, "Cargo.toml").ok()?;
+    let version = doc
+        .get("package")?
+        .as_table()?
+        .get("version")?
+        .as_value()?
+        .as_str()?;
+    let version = semver::Version::parse(version).ok()?;
+    Some(version.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_version_reads_the_package_version() {
+        let manifest = b"[package]\nname = \"a\"\nversion = \"0.4.2\"\n";
+        assert_eq!(manifest_version(manifest).as_deref(), Some("0.4.2"));
+        // A manifest without a `[package]` table (the virtual workspace
+        // root) carries no own version.
+        assert_eq!(manifest_version(b"[workspace]\nmembers = [\"a\"]\n"), None);
+        // A non-semver version is not a release version (discovery's
+        // \u{a7}6.3 rule).
+        assert_eq!(
+            manifest_version(b"[package]\nname = \"a\"\nversion = \"1.0\"\n"),
+            None
+        );
+        // Non-UTF-8 bytes are not a parsable manifest.
+        assert_eq!(manifest_version(&[0xff, 0xfe]), None);
+    }
 
     #[test]
     fn non_utf8_lockfile_is_e_lock_parse() {
