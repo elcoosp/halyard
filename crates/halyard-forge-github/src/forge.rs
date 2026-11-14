@@ -23,7 +23,7 @@
 //!   conflicts never force (`force: false` is explicit on the ref
 //!   update).
 //! * **`base` derivation** — `upsert_pr` strips the §11.2
-//!   [`RELEASE_BRANCH_PREFIX`](crate::wire::RELEASE_BRANCH_PREFIX); a
+//!   [`RELEASE_BRANCH_PREFIX`]; a
 //!   non-release branch is an [`ForgeError::Request`] caller bug before
 //!   any call.
 
@@ -117,7 +117,7 @@ impl<T: HttpTransport> GitHubRestForge<T> {
     /// Builds the adapter with GitHub App credentials (M4.1c): the
     /// installation token is minted on demand through the injected
     /// transport, one POST per
-    /// [`INSTALLATION_TOKEN_TTL_SECS`](crate::INSTALLATION_TOKEN_TTL_SECS).
+    /// [`INSTALLATION_TOKEN_TTL_SECS`].
     #[must_use]
     pub fn with_app_transport(endpoint: ForgeEndpoint, app: AppCredentials, transport: T) -> Self {
         Self::with_credentials_and_clock(
