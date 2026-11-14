@@ -22,8 +22,10 @@ use halyard_core::package::Workspace;
 
 use crate::{GitError, map_git_err};
 
-/// One tag candidate: name, peeled commit and (per package) the parsed
-/// version (§8.2 step 3: invalid versions are ignored, not fatal).
+/// One tag candidate: name and peeled commit (§8.2). The per-package
+/// version is derived on demand through the package's template
+/// ([`TagTemplate::extract_version`]) — never stored on the candidate,
+/// because the same tag parses differently per package template.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagCandidate {
     /// Short tag name (`core-v0.4.1`, scope-stripped of `refs/tags/`).
@@ -31,9 +33,6 @@ pub struct TagCandidate {
     /// The peeled commit the tag points at (annotated tags peel once,
     /// §8.2 step 5).
     pub peeled: ObjectId,
-    /// The version extracted through a package's template, when the tag
-    /// matches it (`None` during raw enumeration).
-    pub version: Option<semver::Version>,
 }
 
 /// Maps a [`gix::hash::ObjectId`] onto the core [`Oid`] (hex-carrier).
@@ -80,7 +79,6 @@ pub fn enumerate(repo: &gix::Repository) -> Result<Vec<TagCandidate>, GitError> 
         out.push(TagCandidate {
             name,
             peeled: peeled.detach(),
-            version: None,
         });
     }
     // Deterministic order regardless of packed-refs/loose layout (I3).
