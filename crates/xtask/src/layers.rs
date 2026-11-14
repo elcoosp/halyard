@@ -12,6 +12,8 @@
 //! * `halyard-edit` — depends on `halyard-core` only.
 //! * `halyard-forge` — depends on `halyard-core` only (§11.4 seam; the
 //!   REST adapter in M4.1b inherits the rule).
+//! * `halyard-registry` — depends on `halyard-forge` only (M5.1, §13:
+//!   the transport vocabulary is injected; no HTTP client, no core).
 //! * `halyard-test-support` — may depend on `halyard-core` and
 //!   `halyard-forge` (the mock-forge re-export, §7.1).
 //! * `halyard-version` — depends on `halyard-core` + `semver`.
@@ -92,6 +94,16 @@ const RULES: &[LayerRule] = &[
         name: "halyard-forge-github",
         workspace: &["halyard-core", "halyard-forge"],
         external: Some(&["serde", "serde_json", "ureq", "base64", "ring"]),
+    },
+    // M5.1 registry existence probes (§13): the `Registry` seam over the
+    // forge's transport vocabulary — the client owns no HTTP client
+    // (transports are injected; the blocking one lives in
+    // halyard-forge-github) and speaks plain names/versions, so no
+    // halyard-core dependency.
+    LayerRule {
+        name: "halyard-registry",
+        workspace: &["halyard-forge"],
+        external: Some(&["serde_json"]),
     },
     LayerRule {
         name: "halyard-test-support",
