@@ -581,3 +581,251 @@ fn forge_smoke_fails_closed_on_a_partial_app_env() -> Result<(), BoxError> {
     assert!(out.contains("HALYARD_APP_PRIVATE_KEY"), "{out}");
     Ok(())
 }
+
+/// A released workspace (v0.1.0 tagged, the release commit carries
+/// v0.1.1 and is itself tagged, one fresh `feat` commit after): the
+/// plan proposes 0.1.2, the live prepare phase opens the Release PR —
+/// the shape the §11.5 governor tests drive.
+fn build_released_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "Cargo.toml".to_owned(),
+            "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+        )],
+        "chore(main): release v0.1.1",
+    ))?;
+    fx.tag_annotated("v0.1.1", "solo v0.1.1")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: extend the crate surface",
+    ))?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/octo/halyard-demo.git",
+    ])?;
+    Ok(fx)
+}
+
+/// The §11.5 governor's summary rides the live `pr` JSON document
+/// (M5.5, ADR-0015): the resolved policy, the op-level spend ledger
+/// (find + upsert = 2 forwarded attempts) and the (empty) event log.
+/// The adapter's HTTP ledger and the governor's ledger reconcile: the
+/// two `Forge::calls` visible in the machine report are 3 HTTP calls,
+/// the governor's spend counts operations, not requests.
+#[test]
+fn governor_summary_rides_the_live_pr_report() -> Result<(), BoxError> {
+    let fx = build_released_workspace("governor-summary")?;
+    let branch = "halyard/release/main";
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (201, pr_body(9, branch)),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--format", "json"],
+        &[
+            ("GITHUB_API_URL", &api),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("HALYARD_FORGE_MIN_CALL_SPACING_MS", "0"),
+            ("HALYARD_FORGE_MAX_CALLS", "10"),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let governor = value
+        .get("governor")
+        .ok_or("the live document carries the governor row")?;
+    assert_eq!(
+        governor
+            .get("min_spacing_ms")
+            .and_then(serde_json::Value::as_u64),
+        Some(0),
+        "the spacing env override reached the run: {governor}"
+    );
+    assert_eq!(
+        governor
+            .get("max_calls")
+            .and_then(serde_json::Value::as_u64),
+        Some(10),
+        "the budget env override reached the run"
+    );
+    assert_eq!(
+        governor
+            .get("max_retries")
+            .and_then(serde_json::Value::as_u64),
+        Some(3),
+        "the shell default retries"
+    );
+    assert_eq!(
+        governor.get("spent").and_then(serde_json::Value::as_u64),
+        Some(2),
+        "find + upsert = two forwarded attempts"
+    );
+    assert_eq!(
+        governor
+            .get("events")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "no waits: the upsert is the pass's first content call"
+    );
+    assert_eq!(
+        forge.received().len(),
+        3,
+        "the adapter ledger: machine find + upsert find + create"
+    );
+    Ok(())
+}
+
+/// The per-run budget blocks the live pass fail-closed *before* the
+/// refused call reaches the forge (`E-FORGE-BUDGET`): one find probe
+/// spends the budget of 1, the upsert is refused with zero further HTTP
+/// traffic, and the refusal is the adapter's own error shape.
+#[test]
+fn governor_budget_blocks_the_live_pr_fail_closed() -> Result<(), BoxError> {
+    let fx = build_released_workspace("governor-budget")?;
+    let (forge, api, server) = FakeForge::new(vec![(200, "[]".to_owned())])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--format", "json"],
+        &[
+            ("GITHUB_API_URL", &api),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("HALYARD_FORGE_MIN_CALL_SPACING_MS", "0"),
+            ("HALYARD_FORGE_MAX_CALLS", "1"),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 1, "the budget refusal exits 1: {out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let code_field = value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str);
+    assert_eq!(code_field, Some("E-FORGE-BUDGET"), "{out}");
+    let message = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        message.contains("upsert_pr"),
+        "the refusal names the op: {message}"
+    );
+    assert!(
+        message.contains("1/1"),
+        "the refusal carries the spent/budget ledger: {message}"
+    );
+    assert_eq!(
+        forge.received().len(),
+        1,
+        "the refused call never reached the forge (fail-closed)"
+    );
+    Ok(())
+}
+
+/// The `HALYARD_FORGE_*` env grammar fails closed on a present-but-
+/// invalid value, naming the variable and the accepted shape — the
+/// App-env convention (ADR-0014), `E-FORGE-REQUEST`. The parse runs
+/// after the credentials resolve and before any HTTP: `forge-smoke`
+/// with a token exercises exactly that gate.
+#[test]
+fn governor_env_invalid_value_fails_closed_naming_the_variable() -> Result<(), BoxError> {
+    let fx = build_workspace("governor-env")?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "forge-smoke",
+            "--repo",
+            "octo/halyard-demo",
+            "--format",
+            "json",
+        ],
+        &[
+            ("GITHUB_TOKEN", ""),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("HALYARD_FORGE_MIN_CALL_SPACING_MS", "soon"),
+        ],
+    )?;
+    assert_eq!(code, 1, "an invalid governor env fails closed: {out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let code_field = value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(serde_json::Value::as_str);
+    assert_eq!(code_field, Some("E-FORGE-REQUEST"), "{out}");
+    let message = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        message.contains("HALYARD_FORGE_MIN_CALL_SPACING_MS"),
+        "the error names the variable: {message}"
+    );
+    assert!(
+        message.contains("non-negative integer"),
+        "the error states the accepted shape: {message}"
+    );
+    Ok(())
+}
+
+/// `forge-smoke`'s JSON carries the governor row under the default
+/// policy (M5.5): pacing 1 000 ms, unbounded budget, three retries —
+/// and the probe itself is the run's one unit of spend.
+#[test]
+fn forge_smoke_carries_the_governor_row() -> Result<(), BoxError> {
+    let fx = build_workspace("smoke-governor")?;
+    let (forge, base, server) =
+        FakeForge::new(vec![(404, "{\"message\":\"Not Found\"}".to_owned())])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "forge-smoke",
+            "--repo",
+            "octo/halyard-demo",
+            "--format",
+            "json",
+        ],
+        &[
+            ("GITHUB_API_URL", &base),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+        ],
+    )?;
+    server.join().expect("the fake forge served the probe");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let governor = value
+        .get("governor")
+        .ok_or("the smoke JSON carries the governor row")?;
+    assert_eq!(
+        governor
+            .get("min_spacing_ms")
+            .and_then(serde_json::Value::as_u64),
+        Some(1_000),
+        "the shell default paces content calls"
+    );
+    assert!(
+        governor
+            .get("max_calls")
+            .and_then(serde_json::Value::as_u64)
+            .is_none(),
+        "the default budget is unbounded: {governor}"
+    );
+    assert_eq!(
+        governor.get("spent").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "the read-only probe is the run's one spend"
+    );
+    assert_eq!(forge.received().len(), 1, "one probe request");
+    Ok(())
+}
