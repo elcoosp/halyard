@@ -1371,6 +1371,7 @@ name = "halyard-cache"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "criterion",
  "halyard-core",
  "halyard-test-support",
  "libc",
@@ -1397,6 +1398,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "halyard-cache",
  "halyard-changelog",
  "halyard-config",
  "halyard-conventional",
@@ -1534,6 +1536,7 @@ dependencies = [
  "halyard-test-support",
  "insta",
  "semver",
+ "tempfile",
  "tracing",
 ]
 
