@@ -401,6 +401,8 @@ Goal: make CI checkout ≈ proportional to unreleased history.
 3. Fall back to `--deepen` loops, then to full fetch.
 4. Never use `--filter=tree:0` (planning needs trees).
 
+*(As-built note, 2026-11-14: the fetch subsystem ships as `halyard_git::fetch` — the pure planner (`latest_tags_for`, `deepen_boundaries_for`, `plan_fetch`, `fetch_attempts`, all resolving templates through the planner's own `effective_template` rule so fetch, plan and tag phase cannot disagree) and the live `TagFetcher`/`GixTagFetcher` effect (probe → select → classify → one fetch, full-fetch fallback, I1-idempotent). Three recipe points were settled empirically and pinned by tests (ADR-0016): the shallow machinery rides only on shallow repositories (on a complete clone `--shallow-exclude` fails the whole fetch with `no commits selected for shallow requests`); the exclude boundary is each package's **previous** release tag (excluding the fetched tag itself swallows the request — probed, exit 128); and the §17 M4.6 corpus checkout-time acceptance stays deferred to the corpus lane. There is no preview adapter by design — the remote listing is the one input an offline forecast cannot have; `fetch` therefore has no `--dry`. The `--deepen` loops of step 3 stay deferred; the terminal fallback is the documented full fetch of the same refs.)*
+
 ---
 
 ## 9. Mutation subsystem: edits, lockfiles, changelogs
@@ -569,6 +571,8 @@ Squash-merge repos get the bump from the **PR title**. `halyard check --pr-title
 7. **Failure model:** each package outcome ∈ `{Published, AlreadyPublished, Skipped, Failed{retryable}}`. Result persisted in `releases_json` + job summary. A rerun after failure of package *k* continues from *k* (Sampo-style).
 8. **Dry run:** `cargo publish --dry-run` / `pnpm publish --dry-run`, plus packaging checks (`cargo package --list` diff vs expectations, optional).
 
+*(As-built note, 2026-11: step 2's primitive ships as the `halyard-registry` crate (M5.1, ADR-0017) — the `Registry` seam over the forge's `HttpTransport` (the client owns no HTTP client; the runtime injects `UreqTransport`, tests `MemoryTransport`), the `CratesIo` sparse-index and `Npm` packument adapters with fail-closed status semantics (`404` ⇒ not published — verified live; anything uninterpretable ⇒ `E-REG-PROTOCOL`, never silently "not published"), the §13 step-3 `wait_until_visible` with deterministic doubling-capped backoff (ADR-0015's I3 reasoning) and the `doctor --registries` opt-in reachability probe. The publish steps themselves (topo layers, resume orchestration, OIDC) remain M5.2+ work and are absent rather than stubbed.)*
+
 ---
 
 ## 14. Performance engineering
@@ -690,7 +694,7 @@ jobs:
 
 Global flags: `--format human|json|gha`, `--color`, `-C <dir>`, `--config`, `--offline`, `--no-cache`, `--profile`.
 
-*(As-built note, 2026-11: the wired commands are `plan`, `apply [--dry]`, `pr [--dry | live]`, `release [--dry | live] [--no-push]`, `explain`, `check`, `status`, `graph`, `doctor`, `schema`, `completions`, `forge-smoke` — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; `publish`, `fetch`, `migrate`, `init`, `bench`, `man` and the `action` glue land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
+*(As-built note, 2026-11: the wired commands are `plan`, `apply [--dry]`, `pr [--dry | live]`, `release [--dry | live] [--no-push]`, `fetch` (§8.8), `explain`, `check`, `status`, `graph`, `doctor`, `schema`, `completions`, `forge-smoke` — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; `publish`, `migrate`, `init`, `bench`, `man` and the `action` glue land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
 
 ### 16.3 DX principles
 - Errors teach: every error includes *what we looked at*, *what we expected*, *the exact fix*.
