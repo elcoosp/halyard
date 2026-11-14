@@ -10,6 +10,7 @@ use halyard_core::HistoryProvider;
 use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
 use halyard_edit::{ApplyReport, DryPatch};
 use halyard_forge::{MachineEffect, MachineReport};
+use halyard_git::tag::{TagOutcome, TagPhaseReport, TagPhaseRow};
 
 use crate::Context;
 use crate::check;
@@ -713,4 +714,128 @@ pub fn pr_dry_gha(
 /// Truncated oid for display.
 fn short(oid: &str) -> String {
     oid.chars().take(8).collect()
+}
+
+/// The outcome text of one tag-phase row (shared by the renderers): the
+/// forecast reads "would create" (nothing was written), the no-op reads
+/// "already tagged" (I1), failures carry their `E-GIT-*` code.
+fn release_row_text(row: &TagPhaseRow) -> String {
+    match row {
+        TagPhaseRow::Applied { tag, outcome } => match outcome {
+            TagOutcome::Created { .. } => format!("{tag} — would create"),
+            TagOutcome::AlreadyTagged { .. } => format!("{tag} — already tagged"),
+        },
+        TagPhaseRow::Failed { tag, error } => format!("{tag} — failed [{}]: {error}", error.code()),
+    }
+}
+
+/// Renders the `release --dry` forecast (§11.1 step 2, git side): the
+/// directives the tag phase owes, classified against the real ref state,
+/// with the counters. Nothing was written.
+pub fn release_dry_human(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "dry run: tag-phase forecast over the preview writer (nothing written)"
+    );
+    let _ = writeln!(out, "head: {}", short(head));
+    let _ = writeln!(
+        out,
+        "tag directives (§11.1 step 2): {} owed, {} would create, {} already tagged, {} failed",
+        report.rows.len(),
+        report.created,
+        report.already_tagged,
+        report.failed
+    );
+    if report.rows.is_empty() {
+        let _ = writeln!(out, "  (nothing owed: every manifest version is tagged)");
+    }
+    for row in &report.rows {
+        let _ = writeln!(out, "  - {}", release_row_text(row));
+    }
+    let behind: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Behind)
+        .collect();
+    for state in &behind {
+        let _ = writeln!(
+            out,
+            "  behind, not tagged: {} carries {} but the manifest says {} (a reverted \
+             merge is never re-tagged downward)",
+            state.latest_tag.as_deref().unwrap_or_default(),
+            state
+                .latest_version
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
+            state.manifest_version
+        );
+    }
+    out
+}
+
+/// One `release --dry` directive as a stable JSON row.
+pub fn release_row_json(row: &TagPhaseRow) -> serde_json::Value {
+    match row {
+        TagPhaseRow::Applied { tag, outcome } => serde_json::json!({
+            "tag": tag,
+            "outcome": match outcome {
+                TagOutcome::Created { .. } => "would_create",
+                TagOutcome::AlreadyTagged { .. } => "already_tagged",
+            },
+        }),
+        TagPhaseRow::Failed { tag, error } => serde_json::json!({
+            "tag": tag,
+            "outcome": "failed",
+            "error_code": error.code(),
+        }),
+    }
+}
+
+/// Renders the `release --dry` forecast for GitHub Actions summaries.
+pub fn release_dry_gha(head: &str, states: &[PackageTagState], report: &TagPhaseReport) -> String {
+    let mut out = String::from("## halyard release (dry)\n\n");
+    let _ = writeln!(out, "- head: `{}`", short(head));
+    let _ = writeln!(
+        out,
+        "- tag directives (§11.1 step 2): {} owed ({} would create, {} already tagged, {} failed)",
+        report.rows.len(),
+        report.created,
+        report.already_tagged,
+        report.failed
+    );
+    if report.rows.is_empty() {
+        let _ = writeln!(out, "- nothing owed: every manifest version is tagged");
+    }
+    for row in &report.rows {
+        let _ = writeln!(out, "  - {}", release_row_text(row));
+    }
+    let behind: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Behind)
+        .collect();
+    for state in &behind {
+        let _ = writeln!(
+            out,
+            "  - behind, not tagged: `{}` (manifest {} < latest tag {})",
+            state.package,
+            state.manifest_version,
+            state
+                .latest_version
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string)
+        );
+    }
+    if report.failed > 0 {
+        let _ = writeln!(
+            out,
+            "\n::warning title=tag-phase conflicts::{} directive(s) failed; resolve the \
+             conflicts by hand and re-run",
+            report.failed
+        );
+    }
+    out
 }
