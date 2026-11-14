@@ -1,0 +1,27 @@
+[package]
+name = "halyard-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Registry existence probes (M5.1, §13): the `Registry` seam over the forge transport — crates.io sparse-index and npm packument `published()` checks with the deterministic visibility wait"
+
+[dependencies]
+# The transport vocabulary rides the forge seam (ADR-0013): the registry
+# client injects any `HttpTransport` — the scripted `MemoryTransport`
+# offline, the blocking `UreqTransport` at runtime — and owns no HTTP
+# client itself.
+halyard-forge = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "probe"
+harness = false
+
+[lints]
+workspace = true
