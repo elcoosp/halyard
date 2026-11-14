@@ -210,9 +210,13 @@ fn pr_dry_reports_a_behind_manifest_without_tagging_it() -> Result<(), BoxError>
 
 #[test]
 fn pr_dry_is_deterministic() -> Result<(), BoxError> {
+    // The pin rides `--no-cache` (the cli_stats convention): the warm
+    // §8.7 cache legitimately reports zero walk counters, so a cached
+    // second run is *not* byte-comparable to a cold first one — the
+    // forecast is, and this pin compares it without the cache variable.
     let fx = build_merged_workspace("determinism")?;
-    let (_, first) = halyard(fx.root(), &["pr", "--dry"])?;
-    let (_, second) = halyard(fx.root(), &["pr", "--dry"])?;
+    let (_, first) = halyard(fx.root(), &["--no-cache", "pr", "--dry"])?;
+    let (_, second) = halyard(fx.root(), &["--no-cache", "pr", "--dry"])?;
     assert_eq!(
         first, second,
         "same repo state ⇒ byte-identical forecast (I3)"
@@ -376,7 +380,10 @@ fn pr_dry_json_carries_release_notes() -> Result<(), BoxError> {
     // package changelog's own section. No GitHub remote is configured,
     // so no compare link is fabricated; the notes are deterministic (I3).
     let fx = build_workspace_with_changelog("notes")?;
-    let (code, out) = halyard(fx.root(), &["pr", "--dry", "--format", "json"])?;
+    let (code, out) = halyard(
+        fx.root(),
+        &["--no-cache", "pr", "--dry", "--format", "json"],
+    )?;
     assert_eq!(code, 0, "{out}");
     let value: serde_json::Value = serde_json::from_str(out.trim())?;
     let rows = value
@@ -414,8 +421,14 @@ fn pr_dry_json_carries_release_notes() -> Result<(), BoxError> {
         Some(""),
         "no section, no invented notes: {bare_out}"
     );
-    // Byte-stable across runs (I3).
-    let (_, again) = halyard(fx.root(), &["pr", "--dry", "--format", "json"])?;
+    // Byte-stable across runs (I3) — both runs ride `--no-cache`, same
+    // as the cross-run pin in `pr_dry_is_deterministic`: the warm §8.7
+    // cache's zero walk counters are by design, not part of the
+    // compared document.
+    let (_, again) = halyard(
+        fx.root(),
+        &["--no-cache", "pr", "--dry", "--format", "json"],
+    )?;
     let second: serde_json::Value = serde_json::from_str(again.trim())?;
     assert_eq!(value, second);
     Ok(())
