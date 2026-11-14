@@ -32,5 +32,11 @@ harness = false
 name = "pr_preview"
 harness = false
 
+# M5.5: the §11.5 call governor — decorator overhead on the update path,
+# the pacing decision, the budget ledger.
+[[bench]]
+name = "governor"
+harness = false
+
 [lints]
 workspace = true
