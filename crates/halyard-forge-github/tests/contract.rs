@@ -98,6 +98,44 @@ fn branch() -> BranchName {
     BranchName::new(BRANCH).unwrap_or_else(|error| unreachable!("static branch is valid: {error}"))
 }
 
+/// The Nth scripted item (the `indexing_slicing`-safe accessor the
+/// restriction lint leaves in place; tests allow `unreachable!`).
+fn at<T>(items: &[T], index: usize) -> &T {
+    items
+        .get(index)
+        .unwrap_or_else(|| unreachable!("item {index} was recorded; {} were", items.len()))
+}
+
+/// A JSON object field that must be present (the same discipline).
+fn field<'a>(value: &'a serde_json::Value, key: &str) -> &'a serde_json::Value {
+    value
+        .get(key)
+        .unwrap_or_else(|| unreachable!("field {key} is present"))
+}
+
+/// A JSON string field that must be present and textual.
+fn str_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+    field(value, key)
+        .as_str()
+        .unwrap_or_else(|| unreachable!("field {key} is a string"))
+}
+
+/// The Nth element of a JSON array field that must be present.
+fn array_item<'a>(value: &'a serde_json::Value, key: &str, index: usize) -> &'a serde_json::Value {
+    field(value, key)
+        .as_array()
+        .unwrap_or_else(|| unreachable!("field {key} is an array"))
+        .get(index)
+        .unwrap_or_else(|| unreachable!("item {index} of {key} is present"))
+}
+
+/// A string element of a JSON array field (the `parents: [sha]` shape).
+fn array_str<'a>(value: &'a serde_json::Value, key: &str, index: usize) -> &'a str {
+    array_item(value, key, index)
+        .as_str()
+        .unwrap_or_else(|| unreachable!("item {index} of {key} is a string"))
+}
+
 /// `find_release_pr` on an empty forge: `None` (a value, §11.4), one
 /// GET with the §11.4/§11.5 mandatory headers and the `head` filter.
 #[test]
@@ -111,19 +149,25 @@ fn find_release_pr_empty_is_none_with_one_conditional_capable_get() -> Result<()
     let expected = format!(
         "https://api.github.com/repos/{OWNER}/{REPO}/pulls?state=open&head={OWNER}:{BRANCH}"
     );
-    assert_eq!(sent[0].url, expected, "the list probe filters by head");
+    assert_eq!(at(&sent, 0).url, expected, "the list probe filters by head");
     assert_eq!(
-        sent[0].header("Accept"),
+        at(&sent, 0).header("Accept"),
         Some("application/vnd.github+json")
     );
-    assert_eq!(sent[0].header("X-GitHub-Api-Version"), Some("2022-11-28"));
+    assert_eq!(
+        at(&sent, 0).header("X-GitHub-Api-Version"),
+        Some("2022-11-28")
+    );
     assert!(
-        sent[0]
+        at(&sent, 0)
             .header("User-Agent")
             .is_some_and(|ua| ua.starts_with("halyard/")),
         "a valid User-Agent is mandatory (research §1)"
     );
-    assert_eq!(sent[0].header("Authorization"), Some("Bearer smoke-token"));
+    assert_eq!(
+        at(&sent, 0).header("Authorization"),
+        Some("Bearer smoke-token")
+    );
     Ok(())
 }
 
@@ -144,7 +188,7 @@ fn find_release_pr_maps_the_open_pr() -> Result<(), BoxError> {
     Ok(())
 }
 
-/// The re-find rides the cached ETag (`If-None-Match`); a `304`
+/// The re-find rides the cached `ETag` (`If-None-Match`); a `304`
 /// returns the cached PR without re-parsing — the conditional the
 /// research pins (304s do not count against the primary limit).
 #[test]
@@ -164,7 +208,7 @@ fn re_find_is_conditional_and_304_returns_the_cached_pr() -> Result<(), BoxError
     let sent = transport.sent();
     assert_eq!(sent.len(), 2);
     assert_eq!(
-        sent[1].header("If-None-Match"),
+        at(&sent, 1).header("If-None-Match"),
         Some("\"abc123\""),
         "the second probe is conditional"
     );
@@ -191,17 +235,21 @@ fn upsert_creates_with_derived_base() -> Result<(), BoxError> {
     assert_eq!(pr.number, 9);
     let sent = transport.sent();
     assert_eq!(sent.len(), 2, "find + create only");
-    assert_eq!(sent[1].method, "POST");
+    assert_eq!(at(&sent, 1).method, "POST");
     let payload: serde_json::Value = serde_json::from_str(
-        sent[1]
+        at(&sent, 1)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the create carries a JSON body")),
     )?;
-    assert_eq!(payload["head"], BRANCH);
-    assert_eq!(payload["base"], "main", "the §11.2 prefix inverse");
-    assert_eq!(payload["title"], "chore: release v0.5.0");
-    assert_eq!(payload["body"], "## 🚀 Release plan");
+    assert_eq!(str_field(&payload, "head"), BRANCH);
+    assert_eq!(
+        str_field(&payload, "base"),
+        "main",
+        "the §11.2 prefix inverse"
+    );
+    assert_eq!(str_field(&payload, "title"), "chore: release v0.5.0");
+    assert_eq!(str_field(&payload, "body"), "## 🚀 Release plan");
     Ok(())
 }
 
@@ -225,21 +273,21 @@ fn upsert_updates_in_place() -> Result<(), BoxError> {
     assert_eq!(pr.number, 7, "same number — rewritten, not duplicated");
     assert_eq!(pr.title, "new title");
     let sent = transport.sent();
-    assert_eq!(sent[1].method, "PATCH");
+    assert_eq!(at(&sent, 1).method, "PATCH");
     assert!(
-        sent[1]
+        at(&sent, 1)
             .url
             .ends_with(&format!("/repos/{OWNER}/{REPO}/pulls/7")),
         "the rewrite targets the found PR"
     );
     let payload: serde_json::Value = serde_json::from_str(
-        sent[1]
+        at(&sent, 1)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("PATCH carries a body")),
     )?;
-    assert_eq!(payload["title"], "new title");
-    assert_eq!(payload["body"], "new body");
+    assert_eq!(str_field(&payload, "title"), "new title");
+    assert_eq!(str_field(&payload, "body"), "new body");
     Ok(())
 }
 
@@ -279,17 +327,20 @@ fn create_release_is_get_by_tag_first_idempotent() -> Result<(), BoxError> {
         .count();
     assert_eq!(posts, 1, "exactly one create across both passes");
     let payload: serde_json::Value = serde_json::from_str(
-        transport.sent()[1]
+        at(&transport.sent(), 1)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the create carries a JSON body")),
     )?;
-    assert_eq!(payload["tag_name"], "core-v0.5.0");
-    assert_eq!(payload["body"], "## Features\n\n- the painter walk");
+    assert_eq!(str_field(&payload, "tag_name"), "core-v0.5.0");
+    assert_eq!(
+        str_field(&payload, "body"),
+        "## Features\n\n- the painter walk"
+    );
     Ok(())
 }
 
-/// `close_pr`: the found PR is PATCHed closed (`true`); the re-run
+/// `close_pr`: the found PR is `PATCHed` closed (`true`); the re-run
 /// finds nothing and reports `false` — a value, never an error (I1).
 #[test]
 fn close_pr_closes_once_then_reports_false() -> Result<(), BoxError> {
@@ -313,11 +364,11 @@ fn close_pr_closes_once_then_reports_false() -> Result<(), BoxError> {
 /// explicit (§11.2: never forced).
 #[test]
 fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
-    let (forge, transport) = forge();
     const BASE: &str = "1111111111111111111111111111111111111111";
     const BASE_TREE: &str = "2222222222222222222222222222222222222222";
     const NEW_TREE: &str = "3333333333333333333333333333333333333333";
     const NEW_COMMIT: &str = "4444444444444444444444444444444444444444";
+    let (forge, transport) = forge();
     transport.enqueue(response(200, &ref_body(BASE)));
     transport.enqueue(response(200, &commit_body(BASE, BASE_TREE)));
     transport.enqueue(response(201, &sha_response(NEW_TREE)));
@@ -339,35 +390,49 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
     let sent = transport.sent();
     assert_eq!(sent.len(), 5, "ref + commit + tree + commit + ref update");
     let tree_payload: serde_json::Value = serde_json::from_str(
-        sent[2]
+        at(&sent, 2)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the tree create carries a body")),
     )?;
-    assert_eq!(tree_payload["base_tree"], BASE_TREE);
-    assert_eq!(tree_payload["tree"][0]["path"], "crates/core/Cargo.toml");
-    assert_eq!(tree_payload["tree"][0]["mode"], "100644");
-    assert_eq!(tree_payload["tree"][0]["type"], "blob");
+    assert_eq!(str_field(&tree_payload, "base_tree"), BASE_TREE);
     assert_eq!(
-        tree_payload["tree"][0]["content"], "[package]\nversion = \"0.5.0\"\n",
+        str_field(array_item(&tree_payload, "tree", 0), "path"),
+        "crates/core/Cargo.toml"
+    );
+    assert_eq!(
+        str_field(array_item(&tree_payload, "tree", 0), "mode"),
+        "100644"
+    );
+    assert_eq!(
+        str_field(array_item(&tree_payload, "tree", 0), "type"),
+        "blob"
+    );
+    assert_eq!(
+        str_field(array_item(&tree_payload, "tree", 0), "content"),
+        "[package]\nversion = \"0.5.0\"\n",
         "UTF-8 content rides the tree entry (no blob round trip)"
     );
     let commit_payload: serde_json::Value = serde_json::from_str(
-        sent[3]
+        at(&sent, 3)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the commit create carries a body")),
     )?;
-    assert_eq!(commit_payload["tree"], NEW_TREE);
-    assert_eq!(commit_payload["parents"][0], BASE);
+    assert_eq!(str_field(&commit_payload, "tree"), NEW_TREE);
+    assert_eq!(array_str(&commit_payload, "parents", 0), BASE);
     let ref_payload: serde_json::Value = serde_json::from_str(
-        sent[4]
+        at(&sent, 4)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the ref update carries a body")),
     )?;
-    assert_eq!(ref_payload["sha"], NEW_COMMIT);
-    assert_eq!(ref_payload["force"], false, "never forced (§11.2)");
+    assert_eq!(str_field(&ref_payload, "sha"), NEW_COMMIT);
+    assert_eq!(
+        field(&ref_payload, "force"),
+        &serde_json::json!(false),
+        "never forced (§11.2)"
+    );
     Ok(())
 }
 
@@ -376,12 +441,12 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
 #[test]
 fn commit_via_api_uploads_binary_files_as_base64_blobs() -> Result<(), BoxError> {
     use base64::Engine as _;
-    let (forge, transport) = forge();
     const BASE: &str = "1111111111111111111111111111111111111111";
     const BASE_TREE: &str = "2222222222222222222222222222222222222222";
     const BLOB: &str = "5555555555555555555555555555555555555555";
     const NEW_TREE: &str = "3333333333333333333333333333333333333333";
     const NEW_COMMIT: &str = "4444444444444444444444444444444444444444";
+    let (forge, transport) = forge();
     transport.enqueue(response(200, &ref_body(BASE)));
     transport.enqueue(response(200, &commit_body(BASE, BASE_TREE)));
     transport.enqueue(response(201, &sha_response(BLOB)));
@@ -400,26 +465,29 @@ fn commit_via_api_uploads_binary_files_as_base64_blobs() -> Result<(), BoxError>
     let sent = transport.sent();
     assert_eq!(sent.len(), 6, "ref + commit + blob + tree + commit + ref");
     let blob_payload: serde_json::Value = serde_json::from_str(
-        sent[2]
+        at(&sent, 2)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the blob create carries a body")),
     )?;
     assert_eq!(
-        blob_payload["encoding"], "base64",
+        str_field(&blob_payload, "encoding"),
+        "base64",
         "binary payloads ride the documented encoding"
     );
     let expected = base64::engine::general_purpose::STANDARD.encode([0x89, 0x50, 0x4e, 0x47]);
-    assert_eq!(blob_payload["content"], expected);
+    assert_eq!(str_field(&blob_payload, "content"), expected);
     let tree_payload: serde_json::Value = serde_json::from_str(
-        sent[3]
+        at(&sent, 3)
             .body
             .as_deref()
             .unwrap_or_else(|| unreachable!("the tree create carries a body")),
     )?;
-    assert_eq!(tree_payload["tree"][0]["sha"], BLOB);
+    assert_eq!(str_field(array_item(&tree_payload, "tree", 0), "sha"), BLOB);
     assert!(
-        tree_payload["tree"][0].get("content").is_none(),
+        array_item(&tree_payload, "tree", 0)
+            .get("content")
+            .is_none(),
         "a sha entry never carries content (research §4)"
     );
     Ok(())
@@ -477,15 +545,15 @@ fn call_log_records_every_http_call() -> Result<(), BoxError> {
     let _ = forge.upsert_pr(&spec)?;
     let calls: Vec<CallRecord> = forge.calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].method, "GET");
+    assert_eq!(at(&calls, 0).method, "GET");
     assert!(
-        calls[0]
+        at(&calls, 0)
             .target
             .starts_with(&format!("/repos/{OWNER}/{REPO}/pulls")),
         "the target is the request path: {}",
-        calls[0].target
+        at(&calls, 0).target
     );
-    assert_eq!(calls[1].method, "POST");
+    assert_eq!(at(&calls, 1).method, "POST");
     assert_eq!(forge.call_count("GET"), 1);
     Ok(())
 }
@@ -493,7 +561,7 @@ fn call_log_records_every_http_call() -> Result<(), BoxError> {
 /// The machine over the REST adapter (§11.4 "≤ 2 REST calls on the
 /// update path"): the machine's find probe + the upsert's own
 /// branch-lookup + the rewrite = 3 HTTP calls, and the second lookup
-/// rides the cached ETag (a 304 under the primary limit). The budget
+/// rides the cached `ETag` (a 304 under the primary limit). The budget
 /// assertion pins the *shape* honestly instead of hiding the third call.
 #[test]
 fn machine_update_path_call_budget() -> Result<(), BoxError> {
@@ -523,7 +591,7 @@ fn machine_update_path_call_budget() -> Result<(), BoxError> {
         .map(|effect| format!("{effect:?}"))
         .collect();
     assert_eq!(effects.len(), 1);
-    assert!(effects[0].contains("PrUpdated"), "{:?}", effects);
+    assert!(at(&effects, 0).contains("PrUpdated"), "{effects:?}");
     Ok(())
 }
 
@@ -547,7 +615,7 @@ fn anonymous_forge_fails_closed_before_any_call() {
 /// A release branch outside the §11.2 shape is a caller bug — fail
 /// closed with `E-FORGE-REQUEST` before any call (ADR-0013 decision 6).
 #[test]
-fn non_release_branch_is_a_caller_bug() -> Result<(), BoxError> {
+fn non_release_branch_is_a_caller_bug() {
     let (forge, transport) = forge();
     let err = forge
         .upsert_pr(&PrSpec {
@@ -562,7 +630,6 @@ fn non_release_branch_is_a_caller_bug() -> Result<(), BoxError> {
         transport.sent().is_empty(),
         "the malformed spec never reaches the wire"
     );
-    Ok(())
 }
 
 /// The scripted request type is inspectable — the tests above ride
