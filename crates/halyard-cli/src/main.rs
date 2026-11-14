@@ -495,11 +495,27 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
         let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
         (forge, Some(slug))
     };
+    // The live run rides the §11.5 call governor (M5.5, ADR-0015):
+    // pacing, Retry-After, deterministic backoff and the per-run budget
+    // from the `HALYARD_FORGE_*` env over the shell default. The dry run
+    // stays ungoverned — a forecast spends no calls (I5).
+    let policy = if dry {
+        None
+    } else {
+        Some(governor_policy_from_env()?)
+    };
+    let governor = policy.map(|policy| {
+        let (clock, sleeper) = halyard_forge::governor::system_time();
+        halyard_forge::Governor::new(forge.as_ref(), policy, clock, sleeper)
+    });
     let mode_label = if dry { "pr-dry" } else { "pr-live" };
     let report = profiler
         .span(mode_label, || {
+            let forged: &dyn halyard_forge::Forge = governor
+                .as_ref()
+                .map_or_else(|| forge.as_ref(), |governor| governor);
             halyard_forge::run_release_machine(
-                forge.as_ref(),
+                forged,
                 &halyard_forge::MachineInput {
                     branch: branch.clone(),
                     pending_releases: pending_specs.clone(),
@@ -508,7 +524,49 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
             )
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let pending_rows: Vec<serde_json::Value> = pending
+    // The governor's run summary (§11.5 end-of-run usage summary): the
+    // live documents carry it, the dry run has no governor to report.
+    let governor_summary = governor.as_ref().map(render::GovernorSummary::of);
+    let pending_rows = pending_rows_json(&pending, &notes_by_tag);
+    let history_json = context.stats.json();
+    let mut extras = serde_json::json!({
+        "dry": dry,
+        "repo": slug,
+        "pending_plan": !plan.releases.is_empty(),
+        "pending_releases": pending_rows,
+        "history": history_json,
+        "walk_line": context.stats.human_line(),
+    });
+    // The §11.5 governor keys ride the live extras only — a dry run has
+    // no governor, and the dry JSON schema stays byte-stable.
+    if let Some(summary) = governor_summary.as_ref()
+        && let Some(map) = extras.as_object_mut()
+    {
+        map.insert(
+            "governor_line".to_owned(),
+            serde_json::Value::String(summary.line()),
+        );
+        map.insert("governor".to_owned(), summary.json());
+    }
+    render_pr_report(
+        cli,
+        &title,
+        &branch,
+        &states,
+        &report,
+        body.as_deref(),
+        &extras,
+    );
+    Ok(())
+}
+
+/// The pending-release JSON rows (the pr report's `pending_releases`):
+/// package, version, tag and the §9.4 notes keyed by tag.
+fn pending_rows_json(
+    pending: &[halyard_core::PendingRelease],
+    notes_by_tag: &std::collections::BTreeMap<String, String>,
+) -> Vec<serde_json::Value> {
+    pending
         .iter()
         .map(|release| {
             let notes = notes_by_tag
@@ -521,25 +579,7 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
                 "notes": notes,
             })
         })
-        .collect();
-    let history_json = context.stats.json();
-    render_pr_report(
-        cli,
-        &title,
-        &branch,
-        &states,
-        &report,
-        body.as_deref(),
-        &serde_json::json!({
-            "dry": dry,
-            "repo": slug,
-            "pending_plan": !plan.releases.is_empty(),
-            "pending_releases": pending_rows,
-            "history": history_json,
-            "walk_line": context.stats.human_line(),
-        }),
-    );
-    Ok(())
+        .collect()
 }
 
 /// The `pr` report rendering (all three formats) — the shell's output
@@ -564,6 +604,16 @@ fn walk_line(extras: &serde_json::Value) -> String {
         .to_owned()
 }
 
+/// The precomputed governor line the caller bakes into `extras` (the
+/// live reports' human/gha tail; absent on dry runs — no governor, no
+/// line, M5.5).
+fn governor_line(extras: &serde_json::Value) -> Option<String> {
+    extras
+        .get("governor_line")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
 fn render_pr_report(
     cli: &Cli,
     title: &str,
@@ -577,7 +627,7 @@ fn render_pr_report(
         Format::Json => {
             let effects: Vec<serde_json::Value> =
                 report.effects.iter().map(render::pr_effect_json).collect();
-            let document = serde_json::json!({
+            let mut document = serde_json::json!({
                 "mode": if view_dry(extras) { "dry" } else { "live" },
                 "title": title,
                 "branch": branch.as_str(),
@@ -590,6 +640,14 @@ fn render_pr_report(
                 "pending_releases": extras.get("pending_releases"),
                 "history": extras.get("history"),
             });
+            // The §11.5 governor summary rides the live document only —
+            // a dry run has no governor to report (the dry JSON schema
+            // stays byte-stable).
+            if let Some(governor) = extras.get("governor")
+                && let Some(map) = document.as_object_mut()
+            {
+                map.insert("governor".to_owned(), governor.clone());
+            }
             let _ = print_pretty_json(&document);
         }
         Format::Gha => {
@@ -600,6 +658,10 @@ fn render_pr_report(
             };
             rendered.push_str(&walk_line(extras));
             rendered.push('\n');
+            if let Some(line) = governor_line(extras) {
+                rendered.push_str(&line);
+                rendered.push('\n');
+            }
             print!("{rendered}");
         }
         Format::Human => {
@@ -610,6 +672,10 @@ fn render_pr_report(
             };
             rendered.push_str(&walk_line(extras));
             rendered.push('\n');
+            if let Some(line) = governor_line(extras) {
+                rendered.push_str(&line);
+                rendered.push('\n');
+            }
             print!("{rendered}");
         }
     }
@@ -752,6 +818,52 @@ fn live_forge(env: ForgeEnv) -> GitHubRestForge<UreqTransport> {
     GitHubRestForge::with_credentials(env.endpoint, env.credentials, UreqTransport::new())
 }
 
+/// The §11.5 call governor's shell policy (M5.5, ADR-0015): the
+/// production shape ([`halyard_forge::GovernorPolicy::shell_default`])
+/// with three `HALYARD_FORGE_*` overrides — the same env layer the App
+/// credentials ride (§16.4). Absent variables keep the shell default;
+/// a present-but-invalid value fails closed naming the variable and the
+/// accepted shape (`E-FORGE-REQUEST`), never a guessed fallback.
+pub(crate) fn governor_policy_from_env() -> Result<halyard_forge::GovernorPolicy, CliError> {
+    let mut policy = halyard_forge::GovernorPolicy::shell_default();
+    if let Some(raw) = env_nonempty("HALYARD_FORGE_MIN_CALL_SPACING_MS") {
+        policy.min_spacing_ms = parse_env_u64("HALYARD_FORGE_MIN_CALL_SPACING_MS", &raw)?;
+    }
+    if let Some(raw) = env_nonempty("HALYARD_FORGE_MAX_CALLS") {
+        policy.max_calls = Some(parse_env_u32("HALYARD_FORGE_MAX_CALLS", &raw)?);
+    }
+    if let Some(raw) = env_nonempty("HALYARD_FORGE_MAX_RETRIES") {
+        policy.max_retries = parse_env_u32("HALYARD_FORGE_MAX_RETRIES", &raw)?;
+    }
+    Ok(policy)
+}
+
+/// Reads an environment variable, treating empty exactly like unset
+/// (the App-env grammar's convention).
+fn env_nonempty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// Parses a millisecond/non-negative-integer env value fail-closed.
+fn parse_env_u64(name: &str, raw: &str) -> Result<u64, CliError> {
+    raw.parse::<u64>().map_err(|_| {
+        CliError::new(
+            "E-FORGE-REQUEST",
+            format!("{name} must be a non-negative integer (milliseconds), got {raw:?}"),
+        )
+    })
+}
+
+/// Parses a count env value fail-closed.
+fn parse_env_u32(name: &str, raw: &str) -> Result<u32, CliError> {
+    raw.parse::<u32>().map_err(|_| {
+        CliError::new(
+            "E-FORGE-REQUEST",
+            format!("{name} must be a non-negative integer, got {raw:?}"),
+        )
+    })
+}
+
 /// The smoke probe's target: an explicit `--repo OWNER/REPO`, else
 /// `GITHUB_REPOSITORY` (the Actions convention), else the configured
 /// origin's GitHub slug; the API base rides `--api-base` /
@@ -840,24 +952,13 @@ fn cmd_forge_smoke(
         halyard_forge_github::ForgeCredentials::App(_) => "app",
     };
     let forge = GitHubRestForge::with_credentials(endpoint, credentials, UreqTransport::new());
-    // The probe: existence of a synthetic tag — a GET, answered by the
-    // documented 404→`false` mapping; expected `false` on a healthy
-    // forge (the tag is never created).
-    let probe_tag = "halyard-forge-smoke-probe";
-    let release_exists = forge
-        .release_exists(probe_tag)
-        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let rate = forge.rate_limit();
-    let calls = forge.calls();
-    let call_rows: Vec<serde_json::Value> = calls
-        .iter()
-        .map(|record| {
-            serde_json::json!({
-                "method": record.method,
-                "target": record.target,
-            })
-        })
-        .collect();
+    // The probe rides the §11.5 call governor too (M5.5): the smoke's
+    // one GET is budgeted and retryable like any live call, and the
+    // report carries the resolved policy + spend (the nightly job's
+    // JSON keeps its `auth_mode` shape, with `governor` added).
+    let (release_exists, rate, calls, governor_summary) = governed_smoke_probe(&forge)?;
+    let probe_tag = SMOKE_PROBE_TAG;
+    let call_rows = call_log_rows(&calls);
     match cli.format {
         Format::Json => print_pretty_json(&serde_json::json!({
             "mode": "smoke",
@@ -868,6 +969,7 @@ fn cmd_forge_smoke(
             "release_exists": release_exists,
             "rate_limit": { "limit": rate.limit, "remaining": rate.remaining },
             "calls": call_rows,
+            "governor": governor_summary.json(),
         }))?,
         Format::Gha => {
             let mut out = String::new();
@@ -890,6 +992,7 @@ fn cmd_forge_smoke(
             for record in &calls {
                 let _ = writeln!(out, "- {:>5} {}", record.method, record.target);
             }
+            let _ = writeln!(out, "- {}", governor_summary.line());
             print!("{out}");
         }
         Format::Human => {
@@ -913,10 +1016,57 @@ fn cmd_forge_smoke(
             for record in &calls {
                 let _ = writeln!(out, "  {:>5} {}", record.method, record.target);
             }
+            let _ = writeln!(out, "{}", governor_summary.line());
             print!("{out}");
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The §11.5 call-log rows (the smoke JSON's `calls` array): method and
+/// target per recorded forge operation, oldest first.
+fn call_log_rows(calls: &[halyard_forge::CallRecord]) -> Vec<serde_json::Value> {
+    calls
+        .iter()
+        .map(|record| {
+            serde_json::json!({
+                "method": record.method,
+                "target": record.target,
+            })
+        })
+        .collect()
+}
+
+/// The synthetic tag the smoke probe tests existence for (never created —
+/// the documented 404→`false` shape).
+const SMOKE_PROBE_TAG: &str = "halyard-forge-smoke-probe";
+
+/// The smoke's governed probe (M5.5): the read-only existence GET on the
+/// synthetic tag — a GET, answered by the documented 404→`false`
+/// mapping; expected `false` on a healthy forge (the tag is never
+/// created) — over the §11.5 governor, with the rate snapshot, the
+/// adapter call ledger and the governor summary.
+fn governed_smoke_probe(
+    forge: &GitHubRestForge<UreqTransport>,
+) -> Result<
+    (
+        bool,
+        halyard_forge::RateInfo,
+        Vec<halyard_forge::CallRecord>,
+        render::GovernorSummary,
+    ),
+    CliError,
+> {
+    let policy = governor_policy_from_env()?;
+    let (clock, sleeper) = halyard_forge::governor::system_time();
+    let governor = halyard_forge::Governor::new(forge, policy, clock, sleeper);
+    let release_exists = governor
+        .release_exists(SMOKE_PROBE_TAG)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let rate = forge.rate_limit();
+    let calls = forge.calls();
+    let summary = render::GovernorSummary::of(&governor);
+    Ok((release_exists, rate, calls, summary))
 }
 
 /// The tag-phase queue with the §9.4 release notes: one `ReleaseSpec`
@@ -1103,14 +1253,16 @@ fn cmd_release(
     match cli.format {
         Format::Json => {
             let document = release_json_document(
-                &pending,
-                &report,
-                &provenance,
-                push.as_ref(),
+                &ReleaseDocInput {
+                    pending: &pending,
+                    report: &report,
+                    provenance: &provenance,
+                    push: push.as_ref(),
+                    forge_releases: &forge_releases,
+                    history: &context.stats.json(),
+                },
                 dry,
                 &head_hex,
-                &forge_releases,
-                &context.stats.json(),
             );
             print_pretty_json(&document)?;
         }
@@ -1218,10 +1370,17 @@ fn forge_release_phase(
     )?;
     let branch = halyard_forge::BranchName::new(&format!("halyard/release/{}", plan.base_branch))
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The forge half rides the §11.5 call governor too (M5.5): the tag
+    // phase's per-package `create_release` calls are content creation —
+    // paced, retryable, budgeted (§11.5: serialize content-creating
+    // calls).
+    let policy = governor_policy_from_env()?;
+    let (clock, sleeper) = halyard_forge::governor::system_time();
+    let governor = halyard_forge::Governor::new(&forge, policy, clock, sleeper);
     let report = profiler
         .span("release-forge-phase", || {
             halyard_forge::run_release_machine(
-                &forge,
+                &governor,
                 &halyard_forge::MachineInput {
                     branch,
                     pending_releases: specs,
@@ -1236,6 +1395,7 @@ fn forge_release_phase(
         repo: format!("{owner}/{repo}"),
         effects: report.effects,
         calls: report.calls,
+        governor: render::GovernorSummary::of(&governor),
     })
 }
 
@@ -1332,21 +1492,30 @@ fn release_push_phase(
     ))
 }
 
+/// The release document's inputs (§7.2 style: the renderers stay
+/// renderer-only, so the shell passes one bundle instead of a
+/// positional pile — `forge_releases` is the real outcome in both
+/// modes, the dry run's forecast skip included).
+struct ReleaseDocInput<'a> {
+    pending: &'a [halyard_core::PendingRelease],
+    report: &'a halyard_git::tag::TagPhaseReport,
+    provenance: &'a render::TargetProvenanceMap,
+    push: Option<&'a halyard_git::push::TagPushReport>,
+    forge_releases: &'a render::ForgeReleases,
+    history: &'a serde_json::Value,
+}
+
 /// The `release` JSON document (stable field order via `serde_json::json!`;
 /// built here so the renderers stay renderer-only, §7.2 style). The live
 /// document carries the forge half's real outcome — ran over the M4.1b
 /// adapter or an honest skip.
 fn release_json_document(
-    pending: &[halyard_core::PendingRelease],
-    report: &halyard_git::tag::TagPhaseReport,
-    provenance: &render::TargetProvenanceMap,
-    push: Option<&halyard_git::push::TagPushReport>,
+    input: &ReleaseDocInput<'_>,
     dry: bool,
     head_hex: &str,
-    forge_releases: &render::ForgeReleases,
-    history: &serde_json::Value,
 ) -> serde_json::Value {
-    let pending_rows: Vec<serde_json::Value> = pending
+    let pending_rows: Vec<serde_json::Value> = input
+        .pending
         .iter()
         .map(|release| {
             serde_json::json!({
@@ -1357,35 +1526,37 @@ fn release_json_document(
         })
         .collect();
     let created_key: &'static str = if dry { "would_create" } else { "created" };
-    let directive_rows: Vec<serde_json::Value> = report
+    let directive_rows: Vec<serde_json::Value> = input
+        .report
         .rows
         .iter()
-        .map(|row| render::release_row_json(row, provenance, created_key))
+        .map(|row| render::release_row_json(row, input.provenance, created_key))
         .collect();
     if dry {
         serde_json::json!({
             "mode": "dry",
             "head": head_hex,
-            "history": history,
+            "history": input.history,
             "pending_releases": pending_rows,
             "directives": directive_rows,
-            "created": report.created,
-            "already_tagged": report.already_tagged,
-            "failed": report.failed,
-            "push": render::release_push_json(push, dry),
+            "created": input.report.created,
+            "already_tagged": input.report.already_tagged,
+            "failed": input.report.failed,
+            "push": render::release_push_json(input.push, dry),
+            "forge_releases": render::forge_releases_json(input.forge_releases),
         })
     } else {
         serde_json::json!({
             "mode": "live",
             "head": head_hex,
-            "history": history,
+            "history": input.history,
             "pending_releases": pending_rows,
             "directives": directive_rows,
-            "created": report.created,
-            "already_tagged": report.already_tagged,
-            "failed": report.failed,
-            "push": render::release_push_json(push, dry),
-            "forge_releases": render::forge_releases_json(forge_releases),
+            "created": input.report.created,
+            "already_tagged": input.report.already_tagged,
+            "failed": input.report.failed,
+            "push": render::release_push_json(input.push, dry),
+            "forge_releases": render::forge_releases_json(input.forge_releases),
         })
     }
 }
