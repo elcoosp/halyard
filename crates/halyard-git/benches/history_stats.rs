@@ -50,7 +50,7 @@ fn build_fixture(label: &str) -> std::path::PathBuf {
 }
 
 fn workspace(root: &std::path::Path) -> Workspace {
-    halyard_discover::discover(root)
+    halyard_discover::discover_repo(root, &halyard_discover::DiscoverInput::default())
         .unwrap_or_else(|e| unreachable!("the fixture workspace discovers: {e}"))
         .workspace
 }
@@ -64,10 +64,10 @@ fn bench_walk_with_stats(c: &mut Criterion) {
             || (),
             |()| {
                 GitHistory::build_with_options(&root, &ws, GitHistoryOptions::default())
-                    .unwrap_or_else(|e| unreachable!("the fixture walk succeeds: {e}"))
+                    .unwrap_or_else(|e| unreachable!("the fixture walk succeeds: {e}"));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 }
 
@@ -81,7 +81,7 @@ fn bench_stats_read(c: &mut Criterion) {
     c.bench_function("history_stats/stats_read", |b| {
         b.iter(|| {
             let diff = &history.tree_diff_stats;
-            (
+            std::hint::black_box((
                 diff.trees_read,
                 diff.entries_read,
                 diff.memo_hits,
@@ -91,7 +91,7 @@ fn bench_stats_read(c: &mut Criterion) {
                 history.merge_stats.merges_kept,
                 history.degraded,
                 history.truncated,
-            )
+            ))
         })
     });
 }
