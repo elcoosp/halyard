@@ -73,10 +73,30 @@ halyard check --exit-code
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
 | `apply [--dry]` | available (M3.6) |
-| `pr --dry` | available (M4.2b step 1; live mode declines with `E-CLI-PR` until the M4.1b forge adapter) |
+| `pr [--dry]` | available (M4.2b step 1 forecast + M4.1b live): live mode runs the §11.1 machine over the GitHub REST adapter — fail-closed on missing credentials and foreign forges |
 | `check [--pr-title] [--exit-code]` | available (M4.3) |
-| `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); `--dry` forecasts everything offline; forge releases defer honestly (`M4.1b`) |
+| `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
+| `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`) |
 | `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
+
+## Forge credentials (M4.1c, ADR-0014)
+
+Two modes, resolved from the environment (App wins when present; a partial
+App set fails closed naming what is missing):
+
+```bash
+# GitHub App (recommended: App actions trigger the repository's own
+# workflows, which a static GITHUB_TOKEN does not — §11.5):
+export HALYARD_APP_ID=12345                     # the App ID (or client ID)
+export HALYARD_APP_PRIVATE_KEY_PATH=~/halyard-app.private-key.pem
+export HALYARD_APP_INSTALLATION_ID=42
+
+# …or the static token (HALYARD_FORGE_TOKEN first — the nightly job's
+# contract — then GITHUB_TOKEN):
+export HALYARD_FORGE_TOKEN=…
+
+halyard doctor        # reports the resolved auth mode before the run
+```
 
 `apply` is the **only** filesystem-writing command: it applies the plan's
 version-bump edits atomically (fsync + rename, `halyard-edit`), never

@@ -26,7 +26,41 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | Live release shell (§11.1/§11.2 git side) + release-notes pipeline (§9.4) | done | feat/live-release-tag-phase (dirty; no commits) | M1: `halyard-git::push` — the §11.2 tag-push effect seam (`TagPusher` trait `&dyn`, `GixTagPusher`: one `git ls-remote --tags` probe → per-tag classification (already-on-remote I1 / divergent remote tag fail-closed `E-GIT-TAG-CONFLICT` / missing-local `E-GIT-PUSH`) → one `git push --porcelain` with per-ref outcome attribution; argv arrays, `GIT_TERMINAL_PROMPT=0`, no `--force`/`--delete`, subprocess rooted at the opened repo path; `PreviewTagPusher` forecasts `WouldPush` offline (I5); wire-format parsers pinned against probed empirical output) + `GitError::TagPush` (`E-GIT-PUSH` page + index) + CLI `release` live mode (annotated tags via the real writer, shell-owned tagger identity = gix config + wall clock, incomplete identity fails closed per directive; push phase over the seam, `--no-push` skips, missing remote is an honest skip; forge releases reported as deferred (M4.1b); failures exit 1, resumable I2) + `tag_push` bench (refspec/parse) + `tag_push` example + ADR-0012 + crate-doc as-built amendment (the planning read path stays subprocess-free; the §11.1 effect steps are the sanctioned exceptions); `release --dry` extended with the push forecast (still offline); M2: the release-notes pipeline (`halyard-changelog::release_notes`: `Style::GithubReleaseNotes` registered, `compare_url` normalizing the four GitHub remote shapes (foreign forges → no link), `render_release_notes` over the plan entry preview, `extract_version_section` + `render_release_notes_for_version` extracting the package changelog's own version section — the §11.1 tag phase's `create_release` payload; `pr --dry` fills `ReleaseSpec.notes` from the changelog section (plan-tag fallback, else honest empty) and the JSON carries per-release `notes`) + `release_notes` bench + `render_release_notes` example + 2 inline web_base tests | M4.1b GitHub REST adapter (forge releases live), the live `pr` mode, publish (M5), the minijinja user-template path, the M2.6 dhat re-audit, the corpus-wide pnpm differential | 2026-11-14; see the session log below |
 
-## Session log
+| M4.1c App-JWT auth + walk-provenance reporting slice | partial | feat/github-app-jwt-auth (dirty; no commits) | M1 (M4.1c): `halyard-forge-github/src/app_auth.rs` — `AppCredentials` (PKCS#1/PKCS#8 PEM → `ring` RsaKeyPair, nine-INTEGER validation, fail-closed), `mint_jwt` (RS256, `iat`=now−60, `exp`=iat+600, injected clock), `ForgeCredentials::{Token,App}` + `kind()`, `EpochClock`/`system_epoch`, `INSTALLATION_TOKEN_TTL_SECS`=2700 (45-min conservative TTL, `expires_at` deliberately not parsed); the adapter's `bearer()` resolution + mint exchange (`POST /app/installations/{id}/access_tokens`, recorded §11.5); `wire::parse_installation_token`; 14 contract tests (JWT claims + RS256 round-trip verification, mint/probe/cache/re-mint, fail-closed matrix) + bench `app_auth` (mint ≈535 µs) + example `app_exchange`; CLI wire-up `HALYARD_APP_*` (partial set fails closed naming the gap), smoke/release/pr live paths, `doctor` auth-mode line, smoke JSON `auth_mode`; 2 loopback e2e tests; ADR-0014 + research §7 + E-FORGE-AUTH page/index + arch §11.4/§11.5 as-built + READMEs; layers.rs `ring` edge. M2: `render::HistoryStats` seam (tree-diff/merge counters + degraded/truncated) surfaced through plan human/GHA and pr/release JSON+human/GHA; 4 `cli_stats` tests; bench `history_stats` in halyard-git. Pre-existing reds repaired at base: 11 broken `Option::unwrap_or_else(|error|…)` closures in contract.rs (did not compile), 2 impossible human-render code assertions (forge-smoke/cli_pr), the hanging `pr_live` loopback fixture (pre-PROPAGATE expectations, `server.join()` blocked forever) | The CLI test/clippy tail (2 `cli_stats` human-line pins vs the precomputed-line refactor + 2 bin-test compile errors) unfinished — step budget cut mid-restructure; the engine + forge-github suites are fully green | 2026-11-14; session log below |
+
+### 2026-11-14 — M4.1c App-JWT auth (ADR-0014) + walk-provenance reporting (branch `feat/github-app-jwt-auth`, tree left dirty, no commits)
+
+- **Inventory at session start.** The base commit `3122994` was NOT green on
+  a fresh toolchain (stable 1.100.0): `halyard-forge-github/tests/contract.rs`
+  carried 11 `Option::unwrap_or_else(|error| unreachable!(…, {error}))`
+  sites (E0593 — Option closures take 0 args), and the CLI loopback suite
+  had two more latent reds (see the repairs below). All repaired first.
+- **M1 (M4.1c) implemented, one red→green cycle** (14 contract tests written
+  first, red on the unresolved API, then implemented). Design per ADR-0014:
+  `ring` RS256 (no new lockfile package), in-crate PEM/DER grammar with a
+  ~60-line mini DER reader (the 0x81/0x82 long form initially skipped the
+  tag byte — found by the fixture round-trip), conservative 45-min TTL, the
+  injected `EpochClock`, and the fail-closed env grammar
+  (`HALYARD_APP_ID` + key path/inline + installation id; any App var present
+  commits the run to App mode). The CLI loopback e2e proves mint → probe
+  over the real transport; the smoke JSON carries `auth_mode`.
+- **M2 (the declared "cache stats wiring") implemented, red→green** (4
+  `cli_stats` tests first): `render::HistoryStats` reads the engine's public
+  counters (no second walk) and surfaces them in the plan human/GHA renders
+  and the pr/release JSON documents + human tails. `plan --json` stays the
+  frozen schema (pinned). Warm-cache zero counters are by design (§8.7) —
+  the determinism pin rides `--no-cache`.
+- **Honest state at cut-off.** The CLI test/clippy tail is unfinished (2
+  failing `cli_stats`/`cli_pr` pins + 2 bin-test compile errors left by the
+  final restructure iteration); the engine, forge-github, forge and all
+  other suites are green; fmt/lint-hygiene/check-layers/benches green.
+  Publish (M5), the pacing governor (M5.5), the corpus pnpm differential
+  and the dhat re-audit stay open.
+- **Next session start point.** (1) Finish the CLI tail (the precomputed
+  `walk_line` refactor needs its two test pins updated), (2) re-run the full
+  clippy battery, (3) then the corpus pnpm differential or publish (M5).
+
+
 
 ### 2026-11-14 — Tag-target pinpoint slice (§11.1 precision rule, branch `main`, tree left dirty, no commits)
 
