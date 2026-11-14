@@ -24,6 +24,7 @@ use halyard_core::planner::{PlanConfig, Snapshot, plan as core_plan};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_git::GitHistory;
+use halyard_git::tag_target::{GixTagTargetResolver, ManifestVersionProbe};
 
 mod check;
 mod doctor;
@@ -493,12 +494,32 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
     Ok(())
 }
 
+/// The shell's manifest-version probe: dispatches the tag-target
+/// pinpoint walk's manifest reads to the ecosystem adapters that own the
+/// grammars (§7.3 — the git engine never parses manifests). Ecosystems
+/// without an adapter (custom) carry no parsable version, so their
+/// targets keep the documented HEAD fallback.
+struct ShellProbe;
+
+impl ManifestVersionProbe for ShellProbe {
+    fn manifest_version(&self, ecosystem: &str, manifest: &[u8]) -> Option<String> {
+        match ecosystem {
+            "cargo" => halyard_eco_cargo::manifest_version(manifest),
+            "npm" => halyard_eco_npm::manifest_version(manifest),
+            _ => None,
+        }
+    }
+}
+
 /// The `release` command (§11.1 step 2, git-side forecast): the
-/// reconciliation feeds [`halyard_git::tag::directives_for_pending`], the
-/// directives run through the preview tag writer — probes are real
-/// (existing tags classify exactly as the live run would), mutations are
-/// forecasts. Nothing is written and no network is touched (I5); live
-/// mode lands with the live release shell (`E-CLI-RELEASE`).
+/// reconciliation feeds the §11.1 precision rule — each pending tag
+/// targets the commit that *introduced* its release version
+/// ([`halyard_git::tag_target::GixTagTargetResolver`], the bounded
+/// first-parent walk on manifest blob-OID change) — and the directives
+/// run through the preview tag writer: probes are real (existing tags
+/// classify exactly as the live run would), mutations are forecasts.
+/// Nothing is written and no network is touched (I5); live mode lands
+/// with the live release shell (`E-CLI-RELEASE`).
 fn cmd_release(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
     if !dry {
         return Err(CliError::new(
@@ -518,14 +539,37 @@ fn cmd_release(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliE
              release",
         ));
     };
-    // Directives target HEAD — the documented §11.1 fallback (the
-    // manifest-blob pinpoint walk needs blob reads and would break
-    // blob-less clones).
-    let directives = halyard_git::tag::directives_for_pending(&pending, &head);
+    // The pinpoint walk reads the workspace's manifests (inherited
+    // versions are routed at their authoritative workspace manifest) and
+    // the digest's release bases; every unverifiable target keeps the
+    // documented HEAD fallback — including the blob-less clone case,
+    // where the walk degrades instead of guessing.
+    let resolver = GixTagTargetResolver::open(std::path::Path::new("."), Box::new(ShellProbe))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let writer = halyard_git::tag::PreviewTagWriter::open(std::path::Path::new("."))
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let report = profiler.span("release-dry", || {
-        halyard_git::tag::run_tag_phase(&writer, &directives)
+    let (report, provenance) = profiler.span("release-dry", || {
+        let queue = halyard_git::tag_target::directives_for_pending_resolved(
+            &pending,
+            &context.discovery.workspace,
+            context.history.digest(),
+            &head,
+            &resolver,
+        );
+        let mut targets = std::collections::BTreeMap::new();
+        let mut directives = Vec::with_capacity(queue.len());
+        for resolved in queue {
+            targets.insert(
+                resolved.directive.name.clone(),
+                render::TargetProvenance {
+                    commit: resolved.directive.target.to_string(),
+                    source: resolved.source,
+                },
+            );
+            directives.push(resolved.directive);
+        }
+        let report = halyard_git::tag::run_tag_phase(&writer, &directives);
+        (report, targets)
     });
     let head_hex = head.to_string();
     match cli.format {
@@ -540,8 +584,11 @@ fn cmd_release(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliE
                     })
                 })
                 .collect();
-            let directive_rows: Vec<serde_json::Value> =
-                report.rows.iter().map(render::release_row_json).collect();
+            let directive_rows: Vec<serde_json::Value> = report
+                .rows
+                .iter()
+                .map(|row| render::release_row_json(row, &provenance))
+                .collect();
             print_pretty_json(&serde_json::json!({
                 "mode": "dry",
                 "head": head_hex,
@@ -552,8 +599,14 @@ fn cmd_release(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliE
                 "failed": report.failed,
             }))?;
         }
-        Format::Gha => print!("{}", render::release_dry_gha(&head_hex, &states, &report)),
-        Format::Human => print!("{}", render::release_dry_human(&head_hex, &states, &report)),
+        Format::Gha => print!(
+            "{}",
+            render::release_dry_gha(&head_hex, &states, &report, &provenance)
+        ),
+        Format::Human => print!(
+            "{}",
+            render::release_dry_human(&head_hex, &states, &report, &provenance)
+        ),
     }
     Ok(())
 }
