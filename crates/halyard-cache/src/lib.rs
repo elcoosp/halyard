@@ -670,7 +670,10 @@ impl Cache {
                 .unwrap_or(u32::MAX)
                 .to_le_bytes(),
         );
-        record.extend_from_slice(&[0u8; 4]); // crc placeholder
+        // The crc slot is zero-filled here and patched in place below
+        // (the checksum covers key + payload, so it can only be computed
+        // after both are appended).
+        record.extend_from_slice(&[0u8; 4]);
         record.extend_from_slice(&key.0);
         record.extend_from_slice(&payload);
         let crc = crc32(record.get(8..).unwrap_or(&[]));
