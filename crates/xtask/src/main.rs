@@ -1,16 +1,23 @@
 //! Workspace automation for HALYARD (`xtask`, §7.1).
 //!
-//! Subcommands (run via `cargo run -p xtask -- <subcommand>`):
+//! Subcommands (run via `cargo run -p xtask -- <subcommand>`; the full
+//! argv reference is `cargo run -p xtask` with no arguments):
 //!
 //! | Subcommand | Purpose |
 //! |---|---|
 //! | `check-layers` | Enforce the §7.2 crate dependency rules |
-//! | `schema-check` | Regenerate/verify the frozen JSON schemas (M0.7) |
+//! | `schema-check` | Regenerate/verify the frozen config JSON schema (M0.7) |
+//! | `schema-check-plan` | Regenerate/verify the frozen plan schema (M0.7) |
 //! | `perf-gate` | Compare measured budgets against §14.1 limits (M2.6+) |
 //! | `size-gate` | Check the release binary size budget (§14.1) |
 //! | `corpus` | List/fetch the pinned corpus repositories (M0.2) |
 //! | `gen-repo` | Deterministic synthetic repo generator (M0.4) |
 //! | `bench-competitors` | Competitor benchmark harness (M0.3) |
+//! | `discover-diff` | Discovery differential vs `cargo metadata`/`pnpm m ls` (M1.5/M1.6) |
+//! | `git-diff` | Walk/tree-diff differential vs `git` plumbing (M2.2/M2.3) |
+//! | `replay` | History-replay ("time machine") over the corpus (M2.7) |
+//! | `bench-public` | Reproducible public benchmark runner (§14, M6.5) |
+//! | `pgo` | PGO prototype steps for the release pipeline (§14.2) |
 
 mod bench;
 mod competitors;
