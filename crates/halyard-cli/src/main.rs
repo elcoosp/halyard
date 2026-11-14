@@ -369,11 +369,14 @@ fn cmd_plan(
     let plan = plan_from_context(&context, profiler)?;
     let plan = filtered(plan, package, &context.discovery.workspace);
     if json || cli.format == Format::Json {
+        // The plan JSON is the frozen halyard-plan/v1 schema (§5.8) — the
+        // walk provenance surfaces ride the report documents and the
+        // human/gha renders, never the plan schema.
         print_pretty_json(&json_value(&plan)?)?;
     } else if cli.format == Format::Gha {
-        print!("{}", render::plan_gha(&plan));
+        print!("{}", render::plan_gha(&plan, &context.stats));
     } else {
-        print!("{}", render::plan_human(&plan));
+        print!("{}", render::plan_human(&plan, &context.stats));
     }
     Ok(())
 }
@@ -487,13 +490,9 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
     let (forge, slug): (Box<dyn halyard_forge::Forge>, Option<String>) = if dry {
         (Box::new(halyard_forge::PreviewForge::new()), None)
     } else {
-        let credentials = forge_credentials()?;
-        let slug = credentials.endpoint.slug();
-        let forge = Box::new(GitHubRestForge::with_transport(
-            credentials.endpoint,
-            &credentials.token,
-            UreqTransport::new(),
-        )) as Box<dyn halyard_forge::Forge>;
+        let env = forge_credentials()?;
+        let slug = env.endpoint.slug();
+        let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
         (forge, Some(slug))
     };
     let mode_label = if dry { "pr-dry" } else { "pr-live" };
@@ -523,6 +522,7 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
             })
         })
         .collect();
+    let history_json = context.stats.json();
     render_pr_report(
         cli,
         &title,
@@ -535,6 +535,8 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
             "repo": slug,
             "pending_plan": !plan.releases.is_empty(),
             "pending_releases": pending_rows,
+            "history": history_json,
+            "walk_line": context.stats.human_line(),
         }),
     );
     Ok(())
@@ -550,6 +552,16 @@ fn view_dry(extras: &serde_json::Value) -> bool {
         .get("dry")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or_default()
+}
+
+/// The precomputed walk-provenance line the caller bakes into
+/// `extras` (the human/gha tail every report carries).
+fn walk_line(extras: &serde_json::Value) -> String {
+    extras
+        .get("walk_line")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn render_pr_report(
@@ -576,56 +588,140 @@ fn render_pr_report(
                 "repo": extras.get("repo"),
                 "pending_plan": extras.get("pending_plan"),
                 "pending_releases": extras.get("pending_releases"),
+                "history": extras.get("history"),
             });
             let _ = print_pretty_json(&document);
         }
         Format::Gha => {
-            let rendered = if view_dry(extras) {
+            let mut rendered = if view_dry(extras) {
                 render::pr_dry_gha(title, branch.as_str(), states, report, body)
             } else {
                 render::pr_live_gha(title, branch.as_str(), states, report, body)
             };
+            rendered.push_str(&walk_line(extras));
+            rendered.push('\n');
             print!("{rendered}");
         }
         Format::Human => {
-            let rendered = if view_dry(extras) {
+            let mut rendered = if view_dry(extras) {
                 render::pr_dry_human(title, branch.as_str(), states, report, body)
             } else {
                 render::pr_live_human(title, branch.as_str(), states, report, body)
             };
+            rendered.push_str(&walk_line(extras));
+            rendered.push('\n');
             print!("{rendered}");
         }
     }
 }
 
-/// The live forge wire-up's environment-derived credentials (ADR-0013):
-/// the token (`HALYARD_FORGE_TOKEN` first — the nightly smoke job's
-/// contract — then `GITHUB_TOKEN`), the `owner/repo` coordinates from
-/// the configured `origin` (the changelog crate's remote-shape grammar,
-/// the same parser the compare link rides) and the API base
+/// The live forge wire-up's environment-derived credentials (ADR-0013,
+/// ADR-0014): the GitHub App env (`HALYARD_APP_ID` +
+/// `HALYARD_APP_PRIVATE_KEY`/`HALYARD_APP_PRIVATE_KEY_PATH` +
+/// `HALYARD_APP_INSTALLATION_ID`) wins when present — forge actions
+/// taken with an installation token trigger the repository's own
+/// workflows, which a static `GITHUB_TOKEN` does not (§11.5) — else the
+/// token (`HALYARD_FORGE_TOKEN` first — the nightly smoke job's
+/// contract — then `GITHUB_TOKEN`). The `owner/repo` coordinates come
+/// from the configured `origin` (the changelog crate's remote-shape
+/// grammar, the same parser the compare link rides) and the API base
 /// (`GITHUB_API_URL` override, else github.com — GitHub Enterprise and
 /// the loopback mock lane both ride this).
-struct ForgeCredentials {
+struct ForgeEnv {
     endpoint: ForgeEndpoint,
-    token: String,
+    credentials: halyard_forge_github::ForgeCredentials,
 }
 
-fn forge_credentials() -> Result<ForgeCredentials, CliError> {
-    let token = std::env::var("HALYARD_FORGE_TOKEN")
+/// The GitHub App env, validated as a complete set: any `HALYARD_APP_*`
+/// variable present commits the run to App mode — a partial set fails
+/// closed naming what is missing (never a guessed fallback to the
+/// static token). The private key rides `HALYARD_APP_PRIVATE_KEY_PATH`
+/// (a PEM file — the shape GitHub's App settings download) or inline in
+/// `HALYARD_APP_PRIVATE_KEY`.
+fn app_credentials_from_env() -> Result<Option<halyard_forge_github::AppCredentials>, CliError> {
+    let app_id = std::env::var("HALYARD_APP_ID")
         .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("GITHUB_TOKEN")
-                .ok()
-                .filter(|value| !value.is_empty())
-        })
-        .ok_or_else(|| {
+        .filter(|value| !value.is_empty());
+    let key_inline = std::env::var("HALYARD_APP_PRIVATE_KEY")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let key_path = std::env::var("HALYARD_APP_PRIVATE_KEY_PATH")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let installation = std::env::var("HALYARD_APP_INSTALLATION_ID")
+        .ok()
+        .filter(|value| !value.is_empty());
+    if app_id.is_none() && key_inline.is_none() && key_path.is_none() && installation.is_none() {
+        return Ok(None);
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if app_id.is_none() {
+        missing.push("HALYARD_APP_ID");
+    }
+    if key_inline.is_none() && key_path.is_none() {
+        missing.push("HALYARD_APP_PRIVATE_KEY (or HALYARD_APP_PRIVATE_KEY_PATH)");
+    }
+    if installation.is_none() {
+        missing.push("HALYARD_APP_INSTALLATION_ID");
+    }
+    if !missing.is_empty() {
+        return Err(CliError::new(
+            "E-FORGE-AUTH",
+            format!(
+                "the GitHub App env is incomplete (App auth is committed once any \
+                 HALYARD_APP_* variable is set): missing {}",
+                missing.join(", ")
+            ),
+        ));
+    }
+    let app_id = app_id.unwrap_or_default();
+    let installation_id: u64 = installation.unwrap_or_default().parse().map_err(|_| {
+        CliError::new(
+            "E-FORGE-AUTH",
+            "HALYARD_APP_INSTALLATION_ID must be the numeric installation id \
+                 (the URL of the App's installation page under the organization)",
+        )
+    })?;
+    let pem = if let Some(inline) = key_inline {
+        inline
+    } else {
+        std::fs::read_to_string(key_path.unwrap_or_default()).map_err(|error| {
             CliError::new(
                 "E-FORGE-AUTH",
-                "live forge mode needs a token: export GITHUB_TOKEN (or HALYARD_FORGE_TOKEN) \
-                 with repo access and re-run `halyard doctor` to verify",
+                format!("the App private key PEM could not be read: {error}"),
             )
-        })?;
+        })?
+    };
+    let credentials =
+        halyard_forge_github::AppCredentials::from_pem(&app_id, &pem, installation_id)
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok(Some(credentials))
+}
+
+fn forge_credentials() -> Result<ForgeEnv, CliError> {
+    let credentials = if let Some(app) = app_credentials_from_env()? {
+        halyard_forge_github::ForgeCredentials::App(Box::new(app))
+    } else {
+        let token = std::env::var("HALYARD_FORGE_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::env::var("GITHUB_TOKEN")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+            })
+            .ok_or_else(|| {
+                CliError::new(
+                    "E-FORGE-AUTH",
+                    "live forge mode needs credentials: configure the GitHub App env \
+                         (HALYARD_APP_ID + HALYARD_APP_PRIVATE_KEY_PATH + \
+                         HALYARD_APP_INSTALLATION_ID) or export GITHUB_TOKEN (or \
+                         HALYARD_FORGE_TOKEN) with repo access, and re-run `halyard doctor` \
+                         to verify",
+                )
+            })?;
+        halyard_forge_github::ForgeCredentials::from_token(&token)
+    };
     let remote_url = remote_origin_url()?;
     let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
     let (owner, repo) = slug.ok_or_else(|| {
@@ -642,28 +738,18 @@ fn forge_credentials() -> Result<ForgeCredentials, CliError> {
         .unwrap_or_else(|| "https://api.github.com".to_owned());
     let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    Ok(ForgeCredentials { endpoint, token })
+    Ok(ForgeEnv {
+        endpoint,
+        credentials,
+    })
 }
 
-/// The smoke probe's read-only credentials (ADR-0013): the token
-/// (`HALYARD_FORGE_TOKEN` first — the nightly job's contract — then
-/// `GITHUB_TOKEN`).
-fn forge_token() -> Result<String, CliError> {
-    std::env::var("HALYARD_FORGE_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("GITHUB_TOKEN")
-                .ok()
-                .filter(|value| !value.is_empty())
-        })
-        .ok_or_else(|| {
-            CliError::new(
-                "E-FORGE-AUTH",
-                "forge-smoke needs a read-capable token: set HALYARD_FORGE_TOKEN (the \
-                 nightly job's secret) or GITHUB_TOKEN",
-            )
-        })
+/// The live mode's adapter construction: the REST adapter over the
+/// resolved credentials — token credentials keep the M4.1b behavior,
+/// App credentials mint their installation token through the same
+/// transport (ADR-0014).
+fn live_forge(env: ForgeEnv) -> GitHubRestForge<UreqTransport> {
+    GitHubRestForge::with_credentials(env.endpoint, env.credentials, UreqTransport::new())
 }
 
 /// The smoke probe's target: an explicit `--repo OWNER/REPO`, else
@@ -727,8 +813,33 @@ fn cmd_forge_smoke(
     api_base: Option<&str>,
 ) -> Result<ExitCode, CliError> {
     let (endpoint, slug, base) = resolve_smoke_endpoint(repo, api_base)?;
-    let token = forge_token()?;
-    let forge = GitHubRestForge::with_transport(endpoint, &token, UreqTransport::new());
+    let credentials = if let Some(app) = app_credentials_from_env()? {
+        halyard_forge_github::ForgeCredentials::App(Box::new(app))
+    } else {
+        let token = std::env::var("HALYARD_FORGE_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::env::var("GITHUB_TOKEN")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+            })
+            .ok_or_else(|| {
+                CliError::new(
+                    "E-FORGE-AUTH",
+                    "forge-smoke needs read-capable credentials: configure the GitHub App \
+                     env (HALYARD_APP_ID + HALYARD_APP_PRIVATE_KEY_PATH + \
+                     HALYARD_APP_INSTALLATION_ID) or set HALYARD_FORGE_TOKEN (the nightly \
+                     job's secret) or GITHUB_TOKEN",
+                )
+            })?;
+        halyard_forge_github::ForgeCredentials::from_token(&token)
+    };
+    let auth_mode = match &credentials {
+        halyard_forge_github::ForgeCredentials::Token(_) => "token",
+        halyard_forge_github::ForgeCredentials::App(_) => "app",
+    };
+    let forge = GitHubRestForge::with_credentials(endpoint, credentials, UreqTransport::new());
     // The probe: existence of a synthetic tag — a GET, answered by the
     // documented 404→`false` mapping; expected `false` on a healthy
     // forge (the tag is never created).
@@ -752,6 +863,7 @@ fn cmd_forge_smoke(
             "mode": "smoke",
             "repo": slug,
             "api_base": base,
+            "auth_mode": auth_mode,
             "probe_tag": probe_tag,
             "release_exists": release_exists,
             "rate_limit": { "limit": rate.limit, "remaining": rate.remaining },
@@ -998,11 +1110,12 @@ fn cmd_release(
                 dry,
                 &head_hex,
                 &forge_releases,
+                &context.stats.json(),
             );
             print_pretty_json(&document)?;
         }
         Format::Gha => {
-            let rendered = if dry {
+            let mut rendered = if dry {
                 render::release_dry_gha(&head_hex, &states, &report, &provenance, push.as_ref())
             } else {
                 render::release_live_gha(
@@ -1014,10 +1127,12 @@ fn cmd_release(
                     &forge_releases,
                 )
             };
+            rendered.push_str(&context.stats.human_line());
+            rendered.push('\n');
             print!("{rendered}");
         }
         Format::Human => {
-            let rendered = if dry {
+            let mut rendered = if dry {
                 render::release_dry_human(&head_hex, &states, &report, &provenance, push.as_ref())
             } else {
                 render::release_live_human(
@@ -1029,6 +1144,8 @@ fn cmd_release(
                     &forge_releases,
                 )
             };
+            rendered.push_str(&context.stats.human_line());
+            rendered.push('\n');
             print!("{rendered}");
         }
     }
@@ -1051,19 +1168,25 @@ fn forge_release_phase(
     profiler: &mut Profiler,
     pending: &[halyard_core::PendingRelease],
 ) -> Result<render::ForgeReleases, CliError> {
-    let token = std::env::var("HALYARD_FORGE_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("GITHUB_TOKEN")
-                .ok()
-                .filter(|value| !value.is_empty())
-        });
-    let Some(token) = token else {
-        return Ok(render::ForgeReleases::Skipped {
-            reason: "no forge credentials (export GITHUB_TOKEN to create forge releases)"
-                .to_owned(),
-        });
+    let credentials = if let Some(app) = app_credentials_from_env()? {
+        halyard_forge_github::ForgeCredentials::App(Box::new(app))
+    } else {
+        let token = std::env::var("HALYARD_FORGE_TOKEN")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                std::env::var("GITHUB_TOKEN")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+            });
+        let Some(token) = token else {
+            return Ok(render::ForgeReleases::Skipped {
+                reason: "no forge credentials (configure the GitHub App env or export \
+                         GITHUB_TOKEN to create forge releases)"
+                    .to_owned(),
+            });
+        };
+        halyard_forge_github::ForgeCredentials::from_token(&token)
     };
     let remote_url = remote_origin_url()?;
     let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
@@ -1079,7 +1202,7 @@ fn forge_release_phase(
         .unwrap_or_else(|| "https://api.github.com".to_owned());
     let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let forge = GitHubRestForge::with_transport(endpoint, &token, UreqTransport::new());
+    let forge = GitHubRestForge::with_credentials(endpoint, credentials, UreqTransport::new());
     // The notes payloads ride the same notes pipeline `pr --dry` uses;
     // the plan feeds the entry-preview fallback (no fabrication).
     let plan_config: PlanConfig = context.config.plan_config();
@@ -1221,6 +1344,7 @@ fn release_json_document(
     dry: bool,
     head_hex: &str,
     forge_releases: &render::ForgeReleases,
+    history: &serde_json::Value,
 ) -> serde_json::Value {
     let pending_rows: Vec<serde_json::Value> = pending
         .iter()
@@ -1242,6 +1366,7 @@ fn release_json_document(
         serde_json::json!({
             "mode": "dry",
             "head": head_hex,
+            "history": history,
             "pending_releases": pending_rows,
             "directives": directive_rows,
             "created": report.created,
@@ -1253,6 +1378,7 @@ fn release_json_document(
         serde_json::json!({
             "mode": "live",
             "head": head_hex,
+            "history": history,
             "pending_releases": pending_rows,
             "directives": directive_rows,
             "created": report.created,
@@ -1517,6 +1643,9 @@ struct Context {
     config: ResolvedConfig,
     discovery: halyard_discover::Discovery,
     history: GitHistory,
+    /// The walk provenance the engine measured (the M2.6 stats wiring):
+    /// rendered into every report, never re-measured.
+    stats: render::HistoryStats,
 }
 
 /// Discovers the workspace, resolves configuration and paints history.
@@ -1575,6 +1704,7 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
     Ok(Context {
         config,
         discovery,
+        stats: render::HistoryStats::of(&history),
         history,
     })
 }
