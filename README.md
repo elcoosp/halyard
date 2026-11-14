@@ -92,6 +92,15 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   rule and `release = false` skip set — the tag phase and the plan can
   never disagree about a tag's name or a skipped package; `pr --dry`
   forecasts the tag phase it decides.
+- **Tag-phase write path + forecast (§11.1 step 2, git side)** —
+  `halyard_git::tag`: the git engine's first write surface — the
+  `TagWriter` seam, the real `GixTagWriter` (annotated tag objects +
+  create-only ref updates, idempotent `AlreadyTagged`, fail-closed
+  `E-GIT-TAG-CONFLICT`, `E-GIT-TAG` with docs pages) and the
+  `PreviewTagWriter` (probes real, mutations forecast, zero writes) +
+  `halyard release --dry`: reconcile → pending → directives →
+  forecast, with live mode declining (`E-CLI-RELEASE`) until the live
+  release shell (push/forge effects) lands.
 - **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
   (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
   `halyard check --pr-title` (planner-exact prediction with the §10.2
@@ -118,14 +127,15 @@ crates/
   halyard-discover       topology + manifests → Workspace (§6)
   halyard-eco-cargo      Cargo adapter: discovery, manifest + lockfile patchers
   halyard-eco-npm        npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher
-  halyard-git            gix engine: refs, painter walk, trie tree-diff (§8)
+  halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase (§8)
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
   halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, perf-gate, size-gate,
-                         corpus, gen-repo, bench-competitors, discover-diff
-  halyard-cli            the user shell (plan/apply/check/pr/explain/status/graph/doctor)
+                         corpus, gen-repo, bench-competitors, discover-diff,
+                         git-diff, replay, bench-public, pgo
+  halyard-cli            the user shell (plan/apply/check/pr/release/explain/status/graph/doctor)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
