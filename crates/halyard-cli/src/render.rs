@@ -11,6 +11,7 @@ use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
 use halyard_edit::{ApplyReport, DryPatch};
 use halyard_forge::{MachineEffect, MachineReport};
 use halyard_git::tag::{TagOutcome, TagPhaseReport, TagPhaseRow};
+use halyard_git::tag_target::TagTargetSource;
 
 use crate::Context;
 use crate::check;
@@ -716,26 +717,79 @@ fn short(oid: &str) -> String {
     oid.chars().take(8).collect()
 }
 
+/// The provenance of one directive's resolved target (§11.1 precision
+/// rule): the commit the tag would land on and how the walk arrived at
+/// it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetProvenance {
+    /// The target commit (full hex; renderers truncate).
+    pub commit: String,
+    /// Whether the walk pinpointed the introducing commit or fell back.
+    pub source: TagTargetSource,
+}
+
+/// The provenance of every directive, keyed by tag name (the executor
+/// re-sorts rows by tag, so the renderers look provenance up by name).
+pub type TargetProvenanceMap = BTreeMap<String, TargetProvenance>;
+
+/// The row's tag name — the renderers key the target provenance by it.
+fn row_tag(row: &TagPhaseRow) -> &str {
+    match row {
+        TagPhaseRow::Applied { tag, .. } | TagPhaseRow::Failed { tag, .. } => tag,
+    }
+}
+
+/// The human label of a target source (the forecast reads "manifest
+/// pinpoint" — the commit that introduced the version — and "HEAD
+/// fallback" — the documented degradation, e.g. a blob-less clone).
+fn source_text(source: TagTargetSource) -> &'static str {
+    match source {
+        TagTargetSource::ManifestPinpoint => "manifest pinpoint",
+        TagTargetSource::HeadFallback => "HEAD fallback",
+    }
+}
+
+/// The stable JSON key of a target source.
+fn source_key(source: TagTargetSource) -> &'static str {
+    match source {
+        TagTargetSource::ManifestPinpoint => "manifest_pinpoint",
+        TagTargetSource::HeadFallback => "head_fallback",
+    }
+}
+
 /// The outcome text of one tag-phase row (shared by the renderers): the
 /// forecast reads "would create" (nothing was written), the no-op reads
-/// "already tagged" (I1), failures carry their `E-GIT-*` code.
-fn release_row_text(row: &TagPhaseRow) -> String {
+/// "already tagged" (I1), failures carry their `E-GIT-*` code. Resolved
+/// rows carry their target provenance (the §11.1 precision rule's answer
+/// and its degradation status).
+fn release_row_text(row: &TagPhaseRow, provenance: Option<&TargetProvenance>) -> String {
+    let target =
+        provenance.map(|p| format!(" — target {} ({})", short(&p.commit), source_text(p.source)));
     match row {
-        TagPhaseRow::Applied { tag, outcome } => match outcome {
-            TagOutcome::Created { .. } => format!("{tag} — would create"),
-            TagOutcome::AlreadyTagged { .. } => format!("{tag} — already tagged"),
-        },
-        TagPhaseRow::Failed { tag, error } => format!("{tag} — failed [{}]: {error}", error.code()),
+        TagPhaseRow::Applied { tag, outcome } => {
+            let outcome = match outcome {
+                TagOutcome::Created { .. } => "would create",
+                TagOutcome::AlreadyTagged { .. } => "already tagged",
+            };
+            format!("{tag} — {outcome}{}", target.as_deref().unwrap_or_default())
+        }
+        TagPhaseRow::Failed { tag, error } => format!(
+            "{tag} — failed [{}]: {error}{}",
+            error.code(),
+            target.as_deref().unwrap_or_default()
+        ),
     }
 }
 
 /// Renders the `release --dry` forecast (§11.1 step 2, git side): the
 /// directives the tag phase owes, classified against the real ref state,
-/// with the counters. Nothing was written.
+/// with the counters and each directive's resolved target provenance.
+/// Nothing was written.
 pub fn release_dry_human(
     head: &str,
     states: &[PackageTagState],
     report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(
@@ -755,7 +809,11 @@ pub fn release_dry_human(
         let _ = writeln!(out, "  (nothing owed: every manifest version is tagged)");
     }
     for row in &report.rows {
-        let _ = writeln!(out, "  - {}", release_row_text(row));
+        let _ = writeln!(
+            out,
+            "  - {}",
+            release_row_text(row, provenance.get(row_tag(row)))
+        );
     }
     let behind: Vec<&PackageTagState> = states
         .iter()
@@ -777,9 +835,11 @@ pub fn release_dry_human(
     out
 }
 
-/// One `release --dry` directive as a stable JSON row.
-pub fn release_row_json(row: &TagPhaseRow) -> serde_json::Value {
-    match row {
+/// One `release --dry` directive as a stable JSON row, carrying its
+/// resolved target provenance (commit + source).
+pub fn release_row_json(row: &TagPhaseRow, provenance: &TargetProvenanceMap) -> serde_json::Value {
+    let target = provenance.get(row_tag(row));
+    let mut value = match row {
         TagPhaseRow::Applied { tag, outcome } => serde_json::json!({
             "tag": tag,
             "outcome": match outcome {
@@ -792,11 +852,29 @@ pub fn release_row_json(row: &TagPhaseRow) -> serde_json::Value {
             "outcome": "failed",
             "error_code": error.code(),
         }),
+    };
+    if let Some(provenance) = target
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "target".to_owned(),
+            serde_json::json!({
+                "commit": provenance.commit,
+                "source": source_key(provenance.source),
+            }),
+        );
     }
+    value
 }
 
-/// Renders the `release --dry` forecast for GitHub Actions summaries.
-pub fn release_dry_gha(head: &str, states: &[PackageTagState], report: &TagPhaseReport) -> String {
+/// Renders the `release --dry` forecast for GitHub Actions summaries
+/// (each directive carries its resolved target provenance).
+pub fn release_dry_gha(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
+) -> String {
     let mut out = String::from("## halyard release (dry)\n\n");
     let _ = writeln!(out, "- head: `{}`", short(head));
     let _ = writeln!(
@@ -811,7 +889,11 @@ pub fn release_dry_gha(head: &str, states: &[PackageTagState], report: &TagPhase
         let _ = writeln!(out, "- nothing owed: every manifest version is tagged");
     }
     for row in &report.rows {
-        let _ = writeln!(out, "  - {}", release_row_text(row));
+        let _ = writeln!(
+            out,
+            "  - {}",
+            release_row_text(row, provenance.get(row_tag(row)))
+        );
     }
     let behind: Vec<&PackageTagState> = states
         .iter()
