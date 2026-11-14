@@ -1,37 +1,40 @@
 # E-CLI-RELEASE
 
-**Code:** `E-CLI-RELEASE` · **Area:** CLI (tag-phase slice, §11.1) ·
-**Raised by:** `halyard release` (without `--dry`)
+**Code:** `E-CLI-RELEASE` · **Area:** CLI (release command, §11.1) ·
+**Raised by:** `halyard release`
 
 ## What it means
 
-Live release mode was requested, but the live release shell does not
-exist yet: the git-side effects after the local tag creation (annotated
-tag writes over the real writer, the single `git push` of the tags,
-forge releases, §11.1 step 2) are not wired, and the shell declines
-rather than half-executing a release.
+The release run failed: a tag-phase directive or a §11.2 push row
+errored, so the run exits 1 with the failed rows in the report. The
+phase is resumable (I2) — fix the rows the report names and re-run; the
+re-run reconciles to exactly the missing remainder with zero duplicates.
+
+The command's forge half (forge releases over a forge adapter, §11.4)
+is **deferred (M4.1b)** and is reported as such — it is never faked and
+never half-executed.
 
 ## Cause
 
-- `halyard release` was run without `--dry` — the only implemented mode
-  is the offline tag-phase forecast over the preview writer
-  (`halyard-git::tag::PreviewTagWriter`);
-- the §11.1 step-2 reconciliation is live (it decides exactly what is
-  owed), its git-side effects are not.
+- a tag directive failed (`E-GIT-TAG` rows: invalid tag name, unknown
+  target, incomplete `user.name`/`user.email` tagger identity);
+- a tag exists at a *different* target than the pinpointed release
+  commit (`E-GIT-TAG-CONFLICT`: a moved release tag is never re-tagged —
+  resolve by hand and re-run);
+- the §11.2 push failed (`E-GIT-PUSH` rows: unreachable remote, auth
+  refused — the run never prompts; or `E-GIT-TAG-CONFLICT`: the remote
+  already carries the tag elsewhere).
 
 ## Fix
 
-Use the offline forecast while the live shell is pending:
+Fix what the rows name, then re-run:
 
 ```bash
-halyard release --dry
-halyard --format json release --dry | jq '.created, .directives'
+halyard release                    # git side: annotated tags + §11.2 push
+halyard release --dry              # the offline forecast (no writes, no network)
+halyard release --no-push          # create the tags, skip the push phase
+halyard --format json release | jq '.directives, .push'
 ```
 
-The forecast renders the directives the tag phase owes (annotated tags
-at the snapshot HEAD, the §11.1 fallback target), classified against the
-real ref state: `would_create` / `already_tagged` / `failed` rows with
-their `E-GIT-*` codes. Nothing is written (no object, no ref) and no
-network is touched (I5). For the local write itself — without push or
-forge calls — the `halyard-git` seam is available to integrators today:
-`GixTagWriter` + `run_tag_phase` (see `examples/tag_phase.rs`).
+A local-only repository (no `remote.origin.url`) releases its tags and
+renders the push phase as an honest skip — that state is not an error.
