@@ -828,3 +828,52 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   research + ADR per §0.3), (2) the corpus-wide pnpm differential as
   an xtask subcommand, (3) the M2.6 dhat re-audit with the cache warm,
   (4) the minijinja user-template path.
+
+
+### 2026-11-14 — GitHub REST adapter (M4.1b) + user-template path (branch `feat/github-rest-forge-adapter`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main green at `5ff350b` (the
+  live-release-shell tree): 564 tests, fmt/clippy/`--all-features` all
+  green on stable 1.100.0. The declared start points were (1) M4.1b
+  (VERIFY research + ADR per §0.3), (2) the corpus-wide pnpm
+  differential, (3) the M2.6 dhat re-audit, (4) the minijinja
+  user-template path. Picked (1) as M1 and (4) as M2 — (2)/(3) need
+  external binaries/hardware the session environment does not have
+  (pnpm, a warm dhat profile) and stay open.
+- **M1 (M4.1b) implemented, one red→green cycle** (tests written first,
+  red on the unresolved adapter API): the transport seam in
+  `halyard-forge/src/transport.rs` (plain-data `HttpRequest`/`HttpResponse`,
+  the `HttpTransport` effect seam, the scripted `MemoryTransport` — the
+  transport analogue of `MemoryForge`), `ForgeError::Transport`
+  (`E-FORGE-TRANSPORT`, page + index), and the new
+  `crates/halyard-forge-github` crate: `GitHubRestForge` — a full `Forge`
+  impl over REST v3 (research-verified shapes, `docs/research/github-rest-forge.md`)
+  with ETag conditionals on the find probe, GET-by-tag-first release
+  creation, the §11.2 base derivation for `upsert_pr`, the Git-Data
+  chain for `commit_via_api` (UTF-8 content entries, base64 blobs for
+  binary), rate headers snapshotted into `rate_limit()`, and the §11.5
+  call log — plus `UreqTransport` (blocking ureq + rustls-ring, the §19
+  default decision). Layer rule widened consciously
+  (`xtask/src/layers.rs`, ADR-0013). Wire-up: live `pr` over the real
+  adapter, the live `release` report's forge half (ran over the adapter
+  or an honest skip), and `halyard forge-smoke` — the nightly job's
+  subcommand, read-only. 45 adapter/seam tests + 3 loopback tests + CLI
+  e2e over a loopback mock forge (`tests/cli_forge.rs`); bench
+  `forge_calls`; example `forge_exchange`.
+- **M2 (user-template path) implemented, red→green**: `StyleSource`
+  (the §9.4 name-or-template-path classifier, `E-CHLOG-STYLE` for
+  unknown names), `render_releases_into`/`render_releases_into_template`
+  (the grouped insertion entry points), the planner's zero-config
+  changelog default (`<root>/CHANGELOG.md`, §6.1 — every release now
+  carries its §5.8 changelog contract), and the `apply` command's
+  changelog stage (per-file §9.4 insertion, atomic writes, byte-identical
+  re-render reported `unchanged`). 5 seam tests + 5 CLI tests; bench
+  `stage_insert`; example `render_user_template`.
+- **Micro-debt/docs.** The unwired fuzz target `json_span` registered
+  in `fuzz/Cargo.toml`; the dead `releases_by_version` removed;
+  E-CLI-PR rewritten to the live semantics; E-FORGE-TRANSPORT page +
+  index row; E-CHLOG-STYLE classifier note; ADR-0013.
+- **Honest state at cut-off.** App-JWT auth (M4.1c), the pacing
+  governor (M5.5), publish (M5), the corpus pnpm differential, the M2.6
+  dhat re-audit and the cache stats wiring stay open. The two p50
+  perf-budget misses remain as recorded.
