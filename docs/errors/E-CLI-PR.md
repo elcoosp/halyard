@@ -1,31 +1,29 @@
 # E-CLI-PR
 
-**Code:** `E-CLI-PR` · **Area:** CLI (M4.2b, §11.1) · **Raised by:**
-`halyard pr` (without `--dry`)
+**Code:** `E-CLI-PR` · **Area:** CLI (M4.2b + M4.1b, §11.1) · **Raised by:**
+`halyard pr` (live) when the wire-up cannot build a forge adapter
 
 ## What it means
 
-The live Release-PR mode was requested, but no forge adapter exists yet:
-the M4.1b GitHub REST adapter (ETag conditionals, backoff, App-JWT auth)
-has not landed, and the shell declines rather than pretending to write to
-a forge.
+Live Release-PR mode was requested, but the shell cannot construct the
+M4.1b GitHub REST adapter's coordinates: no `remote.origin.url` is
+configured, or the configured origin is not a GitHub remote (the
+adapter is the GitHub REST one; foreign forges are Year-2 milestones,
+M7). Without credentials the failure surfaces as `E-FORGE-AUTH`
+instead — an auth problem, not a missing adapter.
 
 ## Cause
 
-- `halyard pr` was run without `--dry` — the only implemented mode is the
-  offline prepare-phase forecast over the dry-run adapter
-  (`halyard-forge::PreviewForge`);
-- the §11.1 machine is live, its forge side is not.
+- `remote.origin.url` is unset (a purely local repository);
+- the origin points at a GitLab/Gitea/other remote the v1 line does
+  not serve.
 
 ## Fix
 
-Use the offline forecast while M4.1b is pending:
+Configure a GitHub-shaped origin, or stay offline:
 
 ```bash
-halyard pr --dry
-halyard --format json pr --dry | jq '.calls, .effects'
+git remote add origin https://github.com/OWNER/REPO.git
+halyard pr            # live: opens/rewrites the Release PR (needs GITHUB_TOKEN)
+halyard pr --dry      # the offline forecast, no network (I5)
 ```
-
-The forecast renders the §11.3 body, the branch
-(`halyard/release/<base>`, §11.2) and the §11.5 call budget the live run
-would spend. No file is written and no network is touched (I5).
