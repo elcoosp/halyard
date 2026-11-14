@@ -487,6 +487,8 @@ On every push to the base branch the **same command** (`halyard release --auto`)
 ```
 A `Release-Commit: true` trailer is *emitted* for human readability but **never required**: squash merges can discard it.
 
+*(As-built note, 2026-11: the git-side half of step 2 is shipped — `halyard-git::tag` (the `TagWriter` write seam) and `halyard-git::tag_target` (the precision rule: a bounded first-parent walk on manifest blob-OID change, verified by a caller-supplied version probe; unreadable objects — the `--filter=blob:none` case — degrade to the documented HEAD fallback instead of guessing). The `release --dry` forecast runs the same executor over the preview writer. Tag push, forge releases and publish remain the live shell's work.)*
+
 ### 11.2 Branches & labels
 - Release branch: `halyard/release/<base>` (e.g. `halyard/release/main`). Multiple release trains (maintenance branches `1.x`) get independent branches.
 - Labels `halyard: pending` → `halyard: tagged` mark PR lifecycle (cosmetic; logic is stateless).
@@ -522,7 +524,7 @@ pub trait Forge {
     fn rate_limit(&self) -> RateInfo;
 }
 ```
-Adapters: `github` (REST; GraphQL only where it reduces calls), later `gitlab`, `gitea/forgejo`, `bitbucket`.
+Adapters: `github` (REST; GraphQL only where it reduces calls), later `gitlab`, `gitea/forgejo`, `bitbucket`. *(As-built note, 2026-11: the shipped trait carries two further methods — `close_pr` and `calls()` (the §11.5 call log), the latter two with honest `E-FORGE-UNSUPPORTED` defaults — and two adapters: `MemoryForge` (deterministic reference + failpoint harness) and `PreviewForge` (the dry-run forecast, real probes / forecasted mutations); the REST adapter is M4.1b.)*
 
 ### 11.5 GitHub specifics
 - **Token:** default `GITHUB_TOKEN`; known limitation: PRs/pushes made with it don't trigger other workflows ⇒ support GitHub App auth natively (JWT → installation token minted by the binary; no extra Action step) and PAT.
@@ -634,8 +636,8 @@ For each effect sequence (`write files → commit → push → create PR`; `tag 
 Threat model in `docs/security.md`: malicious PR title/body, malicious manifests in forks (never execute, only parse), token exfiltration via subprocess env, tag/branch spoofing, dependency-confusion on publish, cache poisoning (cache keyed by content hash + checksummed; never trusted across forks). `Release-As` accepted only from commits reachable from the protected base. No `eval`/shell string building; subprocess via argv arrays. Supply chain for halyard itself: reproducible builds, SLSA L3 provenance, signed releases (cosign), SBOM (CycloneDX), `cargo-vet`.
 
 ### 15.6 CI for halyard itself
-- PR: fmt, clippy, nextest (3 OS), deny, doc, schema-drift, **perf gate (iai-callgrind instruction counts ±2 %)**, size gate.
-- Nightly: fuzz (time-boxed), replay corpus, differential suite, real-forge smoke, competitor benchmarks, Miri, mutation (rotating crate).
+- PR: fmt, clippy, nextest (3 OS), deny, doc, schema-drift, **perf gate (iai-callgrind instruction counts ±2 %)**, size gate. *(As-built note, 2026-11: the perf gate is wall-clock p50/p99 budgets — `bench/budgets.toml` checked by `xtask perf-gate` — because iai-callgrind is unavailable in this environment, ADR-0010; nextest runs ubuntu-only; the doc job builds with `-D warnings`.)*
+- Nightly: fuzz (time-boxed), replay corpus, differential suite, real-forge smoke, competitor benchmarks, Miri, mutation (rotating crate). *(As-built note, 2026-11: the wired jobs are fuzz, Miri (`halyard-cache`), a corpus fetch smoke (`--only fd`), the differential cargo-test suites (eco-cargo, eco-npm, discover; ground truth skipped honestly when the binary is absent), opt-in forge-smoke (armed with the M4.1b adapter) and mutation — no competitor-benchmarks job yet; full corpus replay lands with M2.7.)*
 - Release: dogfood (halyard releases halyard), cross-build matrix, PGO, attest, publish.
 
 ---
@@ -685,6 +687,8 @@ jobs:
 | `completions`, `man` | shell integration |
 
 Global flags: `--format human|json|gha`, `--color`, `-C <dir>`, `--config`, `--offline`, `--no-cache`, `--profile`.
+
+*(As-built note, 2026-11: the wired commands are `plan`, `apply [--dry]`, `pr --dry`, `release --dry`, `explain`, `check`, `status`, `graph`, `doctor`, `schema`, `completions`; `publish`, `fetch`, `migrate`, `init`, `bench`, `man` and the live `pr`/`release` modes land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
 
 ### 16.3 DX principles
 - Errors teach: every error includes *what we looked at*, *what we expected*, *the exact fix*.
