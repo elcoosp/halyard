@@ -826,7 +826,7 @@ fn minimal_bump(from: &Version, to: &Version) -> Bump {
 /// discovery-resolved template. Shared with the §11.1 step-2
 /// reconciliation ([`crate::release_state`]) so the planner and the tag
 /// phase can never disagree about a tag's name.
-pub(crate) fn effective_template(ws: &Workspace, pkg: &Package, cfg: &PlanConfig) -> TagTemplate {
+pub fn effective_template(ws: &Workspace, pkg: &Package, cfg: &PlanConfig) -> TagTemplate {
     if let Some(template) = &cfg.tag_template {
         return template.clone();
     }
