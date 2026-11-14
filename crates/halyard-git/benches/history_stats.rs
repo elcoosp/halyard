@@ -92,7 +92,7 @@ fn bench_stats_read(c: &mut Criterion) {
                 history.degraded,
                 history.truncated,
             ))
-        })
+        });
     });
 }
 
