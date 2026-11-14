@@ -50,6 +50,30 @@ fn build_released_workspace(label: &str) -> Result<GitFixture, BoxError> {
     Ok(fx)
 }
 
+/// The post-merge state with a changelog section (the §9.4 notes
+/// pipeline's source): v0.1.0 tagged, manifest bumped to 0.1.1, and the
+/// merged release PR's `## [0.1.1]` changelog section on disk — exactly
+/// what `halyard apply` + the release PR flow leave behind. The tag
+/// phase owes v0.1.1 and its forge release renders the section's notes.
+fn build_workspace_with_changelog(label: &str) -> Result<GitFixture, BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "Cargo.toml".to_owned(),
+                "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+            ),
+            (
+                "CHANGELOG.md".to_owned(),
+                "# Changelog\n\n## [0.1.1]\n\n### Features\n\n- scaffold the crate\n".to_owned(),
+            ),
+        ],
+        "chore(main): release v0.1.1",
+    ))?;
+    Ok(fx)
+}
+
 /// The post-merge Release-PR state (§11.1 step 2): the manifest says
 /// 0.1.1 while only v0.1.0 is tagged — the tag phase owes v0.1.1 and the
 /// PROPAGATE rule defers the prepare phase.
@@ -334,5 +358,57 @@ fn live_mode_declines_with_e_cli_pr() -> Result<(), BoxError> {
         .and_then(|error| error.get("code"))
         .and_then(serde_json::Value::as_str);
     assert_eq!(code, Some("E-CLI-PR"));
+    Ok(())
+}
+
+#[test]
+fn pr_dry_json_carries_release_notes() -> Result<(), BoxError> {
+    // The notes pipeline (§9.4 `github-release-notes`): the pending
+    // release that is already built renders its forge notes from the
+    // package changelog's own section. No GitHub remote is configured,
+    // so no compare link is fabricated; the notes are deterministic (I3).
+    let fx = build_workspace_with_changelog("notes")?;
+    let (code, out) = halyard(fx.root(), &["pr", "--dry", "--format", "json"])?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let rows = value
+        .get("pending_releases")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("pending_releases rows missing: {out}"));
+    let row = rows.first().ok_or("one pending release")?;
+    assert_eq!(
+        row.get("tag").and_then(serde_json::Value::as_str),
+        Some("v0.1.1")
+    );
+    let notes = row
+        .get("notes")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("the notes field exists")?;
+    assert!(
+        notes.contains("### Features") && notes.contains("- scaffold the crate"),
+        "the changelog section renders as the notes body: {notes:?}"
+    );
+    assert!(
+        !notes.contains("Full Changelog"),
+        "no compare link without a GitHub remote: {notes:?}"
+    );
+    // A repo without the section renders no notes (no fabrication).
+    let bare = build_merged_workspace("notes-bare")?;
+    let (_, bare_out) = halyard(bare.root(), &["pr", "--dry", "--format", "json"])?;
+    let bare_value: serde_json::Value = serde_json::from_str(bare_out.trim())?;
+    let bare_row = bare_value
+        .get("pending_releases")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .ok_or("one pending release")?;
+    assert_eq!(
+        bare_row.get("notes").and_then(serde_json::Value::as_str),
+        Some(""),
+        "no section, no invented notes: {bare_out}"
+    );
+    // Byte-stable across runs (I3).
+    let (_, again) = halyard(fx.root(), &["pr", "--dry", "--format", "json"])?;
+    let second: serde_json::Value = serde_json::from_str(again.trim())?;
+    assert_eq!(value, second);
     Ok(())
 }
