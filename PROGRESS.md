@@ -24,6 +24,8 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | Tag-phase write path + forecast slice (§11.1 git-side effects) | done | main (landed as `0d0a9da..57d3864`) | M1: `halyard-git::tag` — the git engine's first write path (the `TagWriter` seam, `GixTagWriter`: annotated tag objects + create-only ref updates via `gix`, validation fail-closed `E-GIT-TAG`, idempotence `AlreadyTagged` incl. lightweight tags, `E-GIT-TAG-CONFLICT` never moves a release tag, race reclassify on the create, `run_tag_phase` executor (sorted+dedup, continue-on-error, deterministic report, I2 resume shape), `directives_for_pending` (HEAD fallback target, documented)), 11 integration tests vs `git` ground truth + deterministic tag-object pin, `tag_write` bench (create ≈124 µs; already-64 re-run; forecast-64), `tag_phase` example, `E-GIT-TAG`/`E-GIT-TAG-CONFLICT` pages; M2: `PreviewTagWriter` (probes real — validation/target/existing-tag classification identical to the live run — mutations forecast with the documented neutral-identity shape oid, zero writes) + CLI `release --dry` (reconcile → directives → forecast, human/json/gha, `E-CLI-RELEASE` honest decline, byte-stable JSON), 4 preview tests + 5 CLI tests, `tag_forecast` example. Docs drift fixed: `E-CHLOG-TEMPLATE` page missing (code shipped without its page — added + indexed), xtask module doc table missing 5 shipped subcommands, arch doc §8.1 `max-performance-safe` gix feature drift noted as-built, CLI README + root README command/status rows, stale "dirty; no commits" branch claim in the previous row corrected; the rustdoc gate itself was red at HEAD (`reconcile_tags`' doc linked the private `effective_template` — the §15.6 doc job had never been run green) — de-linked, full `-D warnings` doc sweep green after the fix | M4.1b GitHub REST adapter, the live release shell (tag push + forge releases + publish), the §11.1 manifest-blob pinpoint walk for tag targets, `github-release-notes` style, M2.6 dhat re-audit, the corpus-wide pnpm differential | 2026-11-14; see the session log below |
 | Tag-target pinpoint slice (§11.1 precision rule) + release-dry provenance | done | main (dirty; no commits) | M1: `halyard-git::tag_target` — the §11.1 precision rule as a seam (`TagTargetResolver` trait, `GixTagTargetResolver`: bounded first-parent walk on manifest blob-OID change from the tip to the package's release base, content-verified by a caller-supplied `ManifestVersionProbe` — the newest change event whose manifest carries V while its parent does not; identical-OID runs skip blob reads; unreadable objects (the `--filter=blob:none` case the pinpoint was deferred for, shallow cuts, exhausted bounds, never-committed versions) degrade to the documented HEAD fallback instead of guessing, only an unreadable request tip is `E-GIT-OBJECT`) + `directives_for_pending_resolved` glue (per-release manifest/ecosystem/base from the workspace + digest, stale names keep the fallback directive) + 11 integration tests vs `git` ground truth (pinpoint, later-manifest-edits guard, never-committed fallback, initial release to the root, real blob-less clone degradation, walk bound, no-ff merge landing, two packages independently, glue + stale names, probe ecosystem contract, determinism) + `tag_target` bench (pinpoint-500 ≈ 18.7 ms, fallback-500 ≈ 18.7 ms) + `tag_target` example; M2: CLI `release --dry` targets resolve through the seam (shell probe dispatches `halyard_eco_cargo::manifest_version` / `halyard_eco_npm::manifest_version`, inherited versions routed at their authoritative workspace manifest) with per-row provenance in json/human/gha (`manifest pinpoint` vs `HEAD fallback`), 3 new CLI tests (red→green cycle demonstrated against the pre-provenance renderer), `release_pipeline` example (the missing end-to-end consumer demo: discover → reconcile → pinpoint → forecast → machine). Micro-debt/docs drift fixed: the misleading `// crc placeholder` comment in `halyard-cache` (the CRC is patched in place three lines below), stale "dirty; no commits" branch claim on the previous row, arch doc as-built notes for §11.1 (pinpoint shipped), §11.4 (`close_pr`/`calls()` + the two adapters), §15.6 (wall-clock perf gate per ADR-0010, actual nightly lanes), §16.2 (wired commands vs the table), root README layout rows (schema/completions, schema-check-plan), CLI README `release --dry` row, nightly.yml `differential` job ran a nonexistent xtask subcommand — now runs the real differential test suites | M4.1b GitHub REST adapter, the live release shell (tag push CAS + forge releases + publish), `github-release-notes` style, M2.6 dhat re-audit, the corpus-wide pnpm differential | 2026-11-14; see the session log below |
 
+| Live release shell (§11.1/§11.2 git side) + release-notes pipeline (§9.4) | done | feat/live-release-tag-phase (dirty; no commits) | M1: `halyard-git::push` — the §11.2 tag-push effect seam (`TagPusher` trait `&dyn`, `GixTagPusher`: one `git ls-remote --tags` probe → per-tag classification (already-on-remote I1 / divergent remote tag fail-closed `E-GIT-TAG-CONFLICT` / missing-local `E-GIT-PUSH`) → one `git push --porcelain` with per-ref outcome attribution; argv arrays, `GIT_TERMINAL_PROMPT=0`, no `--force`/`--delete`, subprocess rooted at the opened repo path; `PreviewTagPusher` forecasts `WouldPush` offline (I5); wire-format parsers pinned against probed empirical output) + `GitError::TagPush` (`E-GIT-PUSH` page + index) + CLI `release` live mode (annotated tags via the real writer, shell-owned tagger identity = gix config + wall clock, incomplete identity fails closed per directive; push phase over the seam, `--no-push` skips, missing remote is an honest skip; forge releases reported as deferred (M4.1b); failures exit 1, resumable I2) + `tag_push` bench (refspec/parse) + `tag_push` example + ADR-0012 + crate-doc as-built amendment (the planning read path stays subprocess-free; the §11.1 effect steps are the sanctioned exceptions); `release --dry` extended with the push forecast (still offline); M2: the release-notes pipeline (`halyard-changelog::release_notes`: `Style::GithubReleaseNotes` registered, `compare_url` normalizing the four GitHub remote shapes (foreign forges → no link), `render_release_notes` over the plan entry preview, `extract_version_section` + `render_release_notes_for_version` extracting the package changelog's own version section — the §11.1 tag phase's `create_release` payload; `pr --dry` fills `ReleaseSpec.notes` from the changelog section (plan-tag fallback, else honest empty) and the JSON carries per-release `notes`) + `release_notes` bench + `render_release_notes` example + 2 inline web_base tests | M4.1b GitHub REST adapter (forge releases live), the live `pr` mode, publish (M5), the minijinja user-template path, the M2.6 dhat re-audit, the corpus-wide pnpm differential | 2026-11-14; see the session log below |
+
 ## Session log
 
 ### 2026-11-14 — Tag-target pinpoint slice (§11.1 precision rule, branch `main`, tree left dirty, no commits)
@@ -738,3 +740,91 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   npm/yarn/bun native fallback, (2) the 200-fixture lockfile
   differential as an xtask subcommand, (3) M3.5 changelog styles if
   required, (4) then M4.1 forge adapter.
+
+### 2026-11-14 — Live release shell (git side) + release-notes pipeline (branch `feat/live-release-tag-phase`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `7cab7c9`
+  (the tag-target pinpoint slice tree). Baseline gates re-run green on
+  a fresh toolchain (stable 1.100.0): `test --workspace --all-features`
+  (535 tests), fmt, clippy `-D warnings`. The declared start points were
+  (1) the live release shell (`release` execution mode over
+  `GixTagWriter` + the §11.2 tag push), (2) M4.1b, (3) the corpus pnpm
+  differential, (4) the M2.6 dhat re-audit. Picked (1) as M1 — the
+  whole §11.1 chain has pointed at it for three sessions — and the
+  release-notes pipeline (twice deferred as "needs forge context") as
+  M2: it completes the release-content chain the shell consumes.
+- **M1 implemented (no stubs), one full red→green cycle** (the 11
+  integration tests written first, red on the unresolved
+  `halyard_git::push` import, then implemented):
+  - `halyard-git/src/push.rs` — the `TagPusher` seam (`&dyn`): the
+    probe-first classification (`git ls-remote --tags`, one round trip)
+    splits each tag into already-on-remote (I1 no-op), divergent remote
+    tag (`E-GIT-TAG-CONFLICT`, never forced) and to-push; the batch
+    pushes once (`git push --porcelain <refspecs…>`) and attributes
+    per-ref outcomes from the porcelain rows (`=` up-to-date,
+    `!` rejected, `*` new). Subprocess discipline (I6/I7): argv arrays
+    only, `GIT_TERMINAL_PROMPT=0` (fail closed, never prompt), no
+    `--force`/`--delete`, cwd rooted at the opened repository (the
+    ambient process cwd is not inherited — found by the first red run,
+    where the subprocess resolved the *halyard* repo's own `origin`).
+    `PreviewTagPusher` forecasts `WouldPush` with zero subprocesses (I5).
+    The empirical wire formats are pinned by tests and benches (ADR-0012).
+  - CLI `release` live mode: reconcile → pinpoint → real annotated tags
+    (`GixTagWriter`; the shell owns the tagger identity — `user.name`/
+    `user.email` via in-process gix config + the wall clock; incomplete
+    identity fails closed per directive) → §11.2 push over the seam
+    (`--no-push` skips; a missing `remote.origin.url` is an honest
+    skip); forge releases reported as deferred (M4.1b), never faked;
+    failures render as rows and exit 1 (I2-resumable). `--dry` gains
+    the push forecast and stays fully offline. 6 new CLI tests + the
+    decline test replaced (live mode no longer declines).
+  - `E-GIT-PUSH` page + errors index row; `E-CLI-RELEASE` page rewritten
+    to the live semantics; ADR-0012 (the effect-step seam decision);
+    crate doc amended as-built (the planning read path keeps its
+    no-subprocess/no-network property; the §11.1 effect steps are the
+    sanctioned exceptions); CLI README + root README rows.
+  - Bench `crates/halyard-git/benches/tag_push.rs` (refspecs-64,
+    remote-targets-64, porcelain-64); example `examples/tag_push.rs`
+    (fixture bare remote → tag → push → I1 re-run, verified).
+- **M2 implemented (M1 green end-to-end first), red→green** (the 7
+  changelog tests written first, red on the missing API):
+  - `halyard-changelog/src/release_notes.rs` — `Style::GithubReleaseNotes`
+    registered (the registry render is context-free; the two inline
+    unknown-style tests re-pinned to a genuinely unknown name),
+    `compare_url` (the four GitHub remote shapes → compare URL; foreign
+    forges/initial releases render none — no guessed shapes),
+    `render_release_notes` (plan entry preview → forge body, breaking
+    first, no heading), `extract_version_section` (the bracketed/dated/
+    v-prefixed heading shapes the renderer itself writes) +
+    `render_release_notes_for_version` (the tag phase's `create_release`
+    payload: the package changelog's own section for the released
+    version; a missing section renders empty — no fabrication).
+  - CLI `pr --dry`: `ReleaseSpec.notes` filled from the changelog
+    section (plan-tag fallback, else empty); the JSON carries
+    per-release `notes`. The reachable-state semantics were verified
+    against the binary before pinning (the pending tag phase and the
+    plan releases describe *different* versions by design — the
+    first naive package-name matching produced the empty-notes
+    finding that drove the changelog-section design).
+  - Bench `crates/halyard-changelog/benches/release_notes.rs`
+    (extraction over 32 sections + entry-preview render); example
+    `examples/render_release_notes.rs` (both entry points + the honest
+    empty case). `E-CHLOG-STYLE` page updated to the shipped set; arch
+    doc §9.4 as-built note.
+- **Micro-debt/docs drift fixed.** The crate-doc "no subprocess" claim
+  scoped precisely (M1); the CLI README "apply is the only filesystem-
+  writing command" claim corrected (`release` writes git refs); the
+  stale `release --dry` rows in both READMEs; the E-CHLOG-STYLE
+  unshipped-style claim.
+- **Honest state at cut-off.** M4.1b (GitHub REST adapter) is the next
+  milestone — the live shell's forge half stays deferred (reported in
+  every live release report), the nightly `forge-smoke` job stays
+  latent. Publish (M5), the minijinja user-template path, the M2.6
+  dhat re-audit and the corpus-wide pnpm differential are unchanged.
+  The two p50 perf-budget misses remain as recorded (sandbox CPU
+  ceiling, `bench/measurements.toml`) — the CI perf-gate job is
+  expected red until the M2.6 close-out.
+- **Next session start point.** (1) M4.1b REST adapter (VERIFY
+  research + ADR per §0.3), (2) the corpus-wide pnpm differential as
+  an xtask subcommand, (3) the M2.6 dhat re-audit with the cache warm,
+  (4) the minijinja user-template path.
