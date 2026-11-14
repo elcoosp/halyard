@@ -54,11 +54,9 @@ fn bench_jwt_mint(c: &mut Criterion) {
     let app = app_credentials();
     c.bench_function("app_auth/mint_jwt/2048-bit", |b| {
         b.iter(|| {
-            let jwt = app
-                .mint_jwt(1_700_000_000)
+            app.mint_jwt(1_700_000_000)
                 .unwrap_or_else(|e| unreachable!("signing succeeds on the fixture key: {e}"));
-            jwt
-        })
+        });
     });
 }
 
@@ -83,10 +81,10 @@ fn bench_app_probe_pass(c: &mut Criterion) {
             |(forge, _transport)| {
                 forge
                     .find_release_pr(&branch())
-                    .unwrap_or_else(|e| unreachable!("scripted pass succeeds: {e}"))
+                    .unwrap_or_else(|e| unreachable!("scripted pass succeeds: {e}"));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
 }
 
@@ -115,10 +113,10 @@ fn bench_app_cached_probe(c: &mut Criterion) {
             |(forge, _transport)| {
                 forge
                     .find_release_pr(&branch())
-                    .unwrap_or_else(|e| unreachable!("scripted pass succeeds: {e}"))
+                    .unwrap_or_else(|e| unreachable!("scripted pass succeeds: {e}"));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
 }
 
