@@ -34,6 +34,10 @@ halyard-cache = { workspace = true }
 # dry-run adapter (halyard-forge) and renders the §11.3 body through the
 # changelog renderer.
 halyard-forge = { workspace = true }
+# M4.1b (ADR-0013): the live forge effects — `pr` (live), the release
+# report's forge half and `forge-smoke` run over the GitHub REST adapter
+# (the seam stays adapter-free; the shell owns the wire-up).
+halyard-forge-github = { workspace = true }
 halyard-changelog = { workspace = true }
 # M4.3 `check` (§11.6): the title-lint seam — the engine lives in the
 # parser leaf (policy injected via `TitleBumpRule`), the CLI binds the
