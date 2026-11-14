@@ -34,9 +34,8 @@ pub mod release_notes;
 pub use pr_body::{extract_embedded_plan, render_release_body};
 pub use release_notes::{
     NotesContext, compare_url, extract_version_section, render_release_notes,
-    render_release_notes_for_version,
+    render_release_notes_for_version, repo_slug,
 };
-
 /// The stable `<!-- halyard:insert -->` marker (§9.4) and the Unreleased
 /// heading the renderer replaces.
 pub const INSERT_MARKER: &str = "<!-- halyard:insert -->";
@@ -88,6 +87,60 @@ impl Style {
             Self::Conventional => "conventional",
             Self::Compact => "compact",
             Self::GithubReleaseNotes => "github-release-notes",
+        }
+    }
+}
+
+/// The resolved `changelog.style` value (§9.4, §16.4: a style name *or*
+/// a user minijinja template path) — the seam between the config string
+/// and the render entry points. The classification is shape-based and
+/// deterministic (I3): a separator (`/` or `\`) makes it a template
+/// path (style names never carry one); everything else must be a
+/// shipped style name. The renderer stays pure — a [`StyleSource::Template`]
+/// path is *read by the shell* and its source text handed over (§4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StyleSource {
+    /// A shipped built-in style.
+    BuiltIn(Style),
+    /// A user template path — the shell reads the file, the renderer
+    /// consumes the source text.
+    Template(String),
+}
+
+impl StyleSource {
+    /// Classifies a resolved `changelog.style` value.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangelogError::Style`] for a non-path value that is not a
+    /// shipped style name (the caller bug surfaces with the requested
+    /// string, did-you-mean rendering rides the error page).
+    pub fn from_config(setting: &str) -> Result<Self, ChangelogError> {
+        if setting.contains('/') || setting.contains('\\') {
+            return Ok(Self::Template(setting.to_owned()));
+        }
+        Style::parse(setting)
+            .map(Self::BuiltIn)
+            .ok_or_else(|| ChangelogError::Style {
+                requested: setting.to_owned(),
+            })
+    }
+
+    /// The built-in style, when this is one.
+    #[must_use]
+    pub fn builtin(&self) -> Option<Style> {
+        match self {
+            Self::BuiltIn(style) => Some(*style),
+            Self::Template(_) => None,
+        }
+    }
+
+    /// The template path, when this is one.
+    #[must_use]
+    pub fn template_path(&self) -> Option<&str> {
+        match self {
+            Self::BuiltIn(_) => None,
+            Self::Template(path) => Some(path),
         }
     }
 }
@@ -284,6 +337,62 @@ fn render_template_source(
         .map_err(|e| format!("render: {e}"))
 }
 
+/// Renders the changelog document for a **group of releases sharing one
+/// changelog file** through a built-in style name — the per-file entry
+/// point the shell's changelog stage consumes (a fixed group writes its
+/// shared `CHANGELOG.md`; a plan with one release passes a one-element
+/// slice). Same insertion machinery and idempotence as [`render_plan`].
+///
+/// # Errors
+///
+/// [`ChangelogError::Style`] / [`ChangelogError::File`].
+pub fn render_releases_into(
+    existing: Option<&str>,
+    releases: &[&PlanRelease],
+    style: &str,
+) -> Result<String, ChangelogError> {
+    let style = Style::parse(style).ok_or_else(|| ChangelogError::Style {
+        requested: style.to_owned(),
+    })?;
+    insert_grouped(existing, releases, &|release| {
+        render_release_styled(release, style)
+    })
+}
+
+/// Renders the changelog document for a group of releases through a
+/// **user-supplied** minijinja template source (the §9.4 template path;
+/// the shell reads the file and hands over the source text, §4).
+///
+/// # Errors
+///
+/// [`ChangelogError::Template`] / [`ChangelogError::File`].
+pub fn render_releases_into_template(
+    existing: Option<&str>,
+    releases: &[&PlanRelease],
+    template_source: &str,
+) -> Result<String, ChangelogError> {
+    insert_grouped(existing, releases, &|release| {
+        render_release_template(release, template_source)
+    })
+}
+
+/// The shared grouped pipeline: render each release, join the sections,
+/// run the insertion machinery (fresh header, marker/Unreleased anchor,
+/// in-place replacement — I1).
+fn insert_grouped(
+    existing: Option<&str>,
+    releases: &[&PlanRelease],
+    render: &dyn Fn(&PlanRelease) -> Result<String, ChangelogError>,
+) -> Result<String, ChangelogError> {
+    let mut sections: Vec<String> = Vec::with_capacity(releases.len());
+    for release in releases {
+        sections.push(render(release)?);
+    }
+    let body = sections.join("\n");
+    let versions: Vec<&str> = releases.iter().map(|release| release.to.as_str()).collect();
+    insert_body(existing, &body, &versions)
+}
+
 /// Renders the full changelog document from a **user-supplied** minijinja
 /// template (`§9.4`, `§16.4` template-path style): same insertion
 /// machinery and idempotence as [`render_plan`], body sections rendered
@@ -298,13 +407,8 @@ pub fn render_plan_template(
     template_source: &str,
     existing: Option<&str>,
 ) -> Result<String, ChangelogError> {
-    let mut sections: Vec<String> = Vec::new();
-    for release in &plan.releases {
-        sections.push(render_release_template(release, template_source)?);
-    }
-    let body = sections.join("\n");
-    let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
-    insert_body(existing, &body, &versions)
+    let releases: Vec<&PlanRelease> = plan.releases.iter().collect();
+    render_releases_into_template(existing, &releases, template_source)
 }
 
 /// Renders the full changelog document: every release in the plan, newest
@@ -320,16 +424,8 @@ pub fn render_plan(
     style: &str,
     existing: Option<&str>,
 ) -> Result<String, ChangelogError> {
-    let style = Style::parse(style).ok_or_else(|| ChangelogError::Style {
-        requested: style.to_owned(),
-    })?;
-    let mut sections: Vec<String> = Vec::new();
-    for release in &plan.releases {
-        sections.push(render_release_styled(release, style)?);
-    }
-    let body = sections.join("\n");
-    let versions: Vec<&str> = plan.releases.iter().map(|r| r.to.as_str()).collect();
-    insert_body(existing, &body, &versions)
+    let releases: Vec<&PlanRelease> = plan.releases.iter().collect();
+    render_releases_into(existing, &releases, style)
 }
 
 /// The shared insertion machinery of [`render_plan`] and
