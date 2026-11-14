@@ -176,13 +176,44 @@ fn config_check(cli: &Cli) -> Check {
     }
 }
 
-/// The forge-token presence check (skipped under `--offline`).
+/// The forge-credentials presence check (skipped under `--offline`):
+/// the GitHub App env (ADR-0014) or a token — either authenticates the
+/// `pr`/`release` forge halves.
 fn token_check(offline: bool) -> Check {
     if offline {
         return Check {
             name: "token".to_owned(),
             ok: true,
-            detail: "--offline: forge token check skipped".to_owned(),
+            detail: "--offline: forge credentials check skipped".to_owned(),
+        };
+    }
+    let app_set = [
+        "HALYARD_APP_ID",
+        "HALYARD_APP_INSTALLATION_ID",
+        "HALYARD_APP_PRIVATE_KEY",
+        "HALYARD_APP_PRIVATE_KEY_PATH",
+    ]
+    .iter()
+    .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()));
+    if app_set {
+        let key_source = std::env::var("HALYARD_APP_PRIVATE_KEY")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(|_| "HALYARD_APP_PRIVATE_KEY".to_owned())
+            .or_else(|| {
+                std::env::var("HALYARD_APP_PRIVATE_KEY_PATH")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(|path| format!("key at {path}"))
+            })
+            .unwrap_or_else(|| "no private key set".to_owned());
+        return Check {
+            name: "token".to_owned(),
+            ok: true,
+            detail: format!(
+                "GitHub App env present (App-JWT → installation-token auth, ADR-0014; \
+                 {key_source} — forge actions trigger the repository's workflows)"
+            ),
         };
     }
     let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
@@ -190,9 +221,14 @@ fn token_check(offline: bool) -> Check {
         name: "token".to_owned(),
         ok: token.is_some(),
         detail: match token {
-            Some(_) => "GITHUB_TOKEN present (release/publish steps can authenticate)".to_owned(),
-            None => "GITHUB_TOKEN not set: planning works offline, but `pr`/`release`/\
-                     `publish` need a token (or run with --offline to silence this check)"
+            Some(_) => "GITHUB_TOKEN present (release/publish steps can authenticate; \
+                        note: forge actions taken with it do not trigger the \
+                        repository's workflows — the GitHub App env does)"
+                .to_owned(),
+            None => "no forge credentials: planning works offline, but `pr`/`release`/\
+                     `publish` need the GitHub App env (HALYARD_APP_ID + \
+                     HALYARD_APP_PRIVATE_KEY_PATH + HALYARD_APP_INSTALLATION_ID) or \
+                     GITHUB_TOKEN (or run with --offline to silence this check)"
                 .to_owned(),
         },
     }
