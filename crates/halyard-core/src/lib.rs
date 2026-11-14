@@ -25,6 +25,8 @@
 //! * [`bump`] — bump application + commit mapping, canonical (ADR-0008).
 //! * [`rewrite`] — the appendix-A.2 requirement rewriter (ADR-0008).
 //! * [`planner`] — the pure `plan()` (M1.9, §4, A.1; ADR-0007).
+//! * [`release_state`] — the §11.1 step-2 stateless manifest-vs-tags
+//!   reconciliation behind the forge machine's tag phase.
 //! * [`glob`] — member-pattern matcher shared by the adapters (§6.2).
 //! * [`discover`] — the `EcosystemAdapter` seam, `DiscoverCtx`,
 //!   `RawPackage` and `E-DISC-*` errors (§6, §7.3).
@@ -52,6 +54,7 @@ pub mod package;
 pub mod plan;
 pub mod planner;
 pub mod reason;
+pub mod release_state;
 pub mod rewrite;
 pub mod trie;
 
@@ -82,6 +85,9 @@ pub use plan::{
 };
 pub use planner::{CascadeMode, GroupMode, PlanConfig, PlanError, Snapshot, plan};
 pub use reason::{CascadeWhy, Oid, Reason, ReasonChain, VersionResolution};
+pub use release_state::{
+    PackageTagState, PendingRelease, TagState, pending_releases, reconcile_tags,
+};
 pub use rewrite::{
     RewriteOutcome, UnchangedReason, UnrewritableReason, UpperBoundPolicy, VersionError,
     rewrite_requirement,
