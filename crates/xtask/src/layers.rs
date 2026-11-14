@@ -85,11 +85,13 @@ const RULES: &[LayerRule] = &[
     // graph. `ureq` is the §19 default decision 4 (blocking, rustls, no
     // async runtime); `serde`/`serde_json` parse the REST bodies;
     // `base64` encodes the git-data blob payloads (mirroring
-    // halyard-changelog's embedded-plan encoding).
+    // halyard-changelog's embedded-plan encoding). M4.1c (ADR-0014)
+    // adds `ring` — the RS256 signer for the App-JWT mint, already in
+    // the runtime graph as rustls' provider.
     LayerRule {
         name: "halyard-forge-github",
         workspace: &["halyard-core", "halyard-forge"],
-        external: Some(&["serde", "serde_json", "ureq", "base64"]),
+        external: Some(&["serde", "serde_json", "ureq", "base64", "ring"]),
     },
     LayerRule {
         name: "halyard-test-support",
