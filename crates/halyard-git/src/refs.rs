@@ -113,7 +113,12 @@ pub fn resolve_bases(
         // One pass over the tags for this package's template (§8.2 step 2).
         let mut candidates: Vec<(semver::Version, &TagCandidate)> = Vec::new();
         for tag in &tags {
-            let tag_name = std::str::from_utf8(&tag.name).unwrap_or_default();
+            // A non-UTF-8 tag name cannot match a UTF-8 template
+            // (appendix A.3): skipped explicitly, never silently turned
+            // into an empty candidate.
+            let Ok(tag_name) = std::str::from_utf8(&tag.name) else {
+                continue;
+            };
             if let Some(version) = pkg.tag_template.extract_version(tag_name, &name, eco) {
                 candidates.push((version, tag));
             }
