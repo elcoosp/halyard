@@ -26,7 +26,9 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | Live release shell (§11.1/§11.2 git side) + release-notes pipeline (§9.4) | done | feat/live-release-tag-phase (dirty; no commits) | M1: `halyard-git::push` — the §11.2 tag-push effect seam (`TagPusher` trait `&dyn`, `GixTagPusher`: one `git ls-remote --tags` probe → per-tag classification (already-on-remote I1 / divergent remote tag fail-closed `E-GIT-TAG-CONFLICT` / missing-local `E-GIT-PUSH`) → one `git push --porcelain` with per-ref outcome attribution; argv arrays, `GIT_TERMINAL_PROMPT=0`, no `--force`/`--delete`, subprocess rooted at the opened repo path; `PreviewTagPusher` forecasts `WouldPush` offline (I5); wire-format parsers pinned against probed empirical output) + `GitError::TagPush` (`E-GIT-PUSH` page + index) + CLI `release` live mode (annotated tags via the real writer, shell-owned tagger identity = gix config + wall clock, incomplete identity fails closed per directive; push phase over the seam, `--no-push` skips, missing remote is an honest skip; forge releases reported as deferred (M4.1b); failures exit 1, resumable I2) + `tag_push` bench (refspec/parse) + `tag_push` example + ADR-0012 + crate-doc as-built amendment (the planning read path stays subprocess-free; the §11.1 effect steps are the sanctioned exceptions); `release --dry` extended with the push forecast (still offline); M2: the release-notes pipeline (`halyard-changelog::release_notes`: `Style::GithubReleaseNotes` registered, `compare_url` normalizing the four GitHub remote shapes (foreign forges → no link), `render_release_notes` over the plan entry preview, `extract_version_section` + `render_release_notes_for_version` extracting the package changelog's own version section — the §11.1 tag phase's `create_release` payload; `pr --dry` fills `ReleaseSpec.notes` from the changelog section (plan-tag fallback, else honest empty) and the JSON carries per-release `notes`) + `release_notes` bench + `render_release_notes` example + 2 inline web_base tests | M4.1b GitHub REST adapter (forge releases live), the live `pr` mode, publish (M5), the minijinja user-template path, the M2.6 dhat re-audit, the corpus-wide pnpm differential | 2026-11-14; see the session log below |
 
-| M4.1c App-JWT auth + walk-provenance reporting slice | partial | feat/github-app-jwt-auth (dirty; no commits) | M1 (M4.1c): `halyard-forge-github/src/app_auth.rs` — `AppCredentials` (PKCS#1/PKCS#8 PEM → `ring` RsaKeyPair, nine-INTEGER validation, fail-closed), `mint_jwt` (RS256, `iat`=now−60, `exp`=iat+600, injected clock), `ForgeCredentials::{Token,App}` + `kind()`, `EpochClock`/`system_epoch`, `INSTALLATION_TOKEN_TTL_SECS`=2700 (45-min conservative TTL, `expires_at` deliberately not parsed); the adapter's `bearer()` resolution + mint exchange (`POST /app/installations/{id}/access_tokens`, recorded §11.5); `wire::parse_installation_token`; 14 contract tests (JWT claims + RS256 round-trip verification, mint/probe/cache/re-mint, fail-closed matrix) + bench `app_auth` (mint ≈535 µs) + example `app_exchange`; CLI wire-up `HALYARD_APP_*` (partial set fails closed naming the gap), smoke/release/pr live paths, `doctor` auth-mode line, smoke JSON `auth_mode`; 2 loopback e2e tests; ADR-0014 + research §7 + E-FORGE-AUTH page/index + arch §11.4/§11.5 as-built + READMEs; layers.rs `ring` edge. M2: `render::HistoryStats` seam (tree-diff/merge counters + degraded/truncated) surfaced through plan human/GHA and pr/release JSON+human/GHA; 4 `cli_stats` tests; bench `history_stats` in halyard-git. Pre-existing reds repaired at base: 11 broken `Option::unwrap_or_else(|error|…)` closures in contract.rs (did not compile), 2 impossible human-render code assertions (forge-smoke/cli_pr), the hanging `pr_live` loopback fixture (pre-PROPAGATE expectations, `server.join()` blocked forever) | The CLI test/clippy tail (2 `cli_stats` human-line pins vs the precomputed-line refactor + 2 bin-test compile errors) unfinished — step budget cut mid-restructure; the engine + forge-github suites are fully green | 2026-11-14; session log below |
+| M4.1c App-JWT auth + walk-provenance reporting slice | partial | feat/github-app-jwt-auth (dirty; no commits) | M1 (M4.1c): `halyard-forge-github/src/app_auth.rs` — `AppCredentials` (PKCS#1/PKCS#8 PEM → `ring` RsaKeyPair, nine-INTEGER validation, fail-closed), `mint_jwt` (RS256, `iat`=now−60, `exp`=iat+600, injected clock), `ForgeCredentials::{Token,App}` + `kind()`, `EpochClock`/`system_epoch`, `INSTALLATION_TOKEN_TTL_SECS`=2700 (45-min conservative TTL, `expires_at` deliberately not parsed); the adapter's `bearer()` resolution + mint exchange (`POST /app/installations/{id}/access_tokens`, recorded §11.5); `wire::parse_installation_token`; 14 contract tests (JWT claims + RS256 round-trip verification, mint/probe/cache/re-mint, fail-closed matrix) + bench `app_auth` (mint ≈535 µs) + example `app_exchange`; CLI wire-up `HALYARD_APP_*` (partial set fails closed naming the gap), smoke/release/pr live paths, `doctor` auth-mode line, smoke JSON `auth_mode`; 2 loopback e2e tests; ADR-0014 + research §7 + E-FORGE-AUTH page/index + arch §11.4/§11.5 as-built + READMEs; layers.rs `ring` edge. M2: `render::HistoryStats` seam (tree-diff/merge counters + degraded/truncated) surfaced through plan human/GHA and pr/release JSON+human/GHA; 4 `cli_stats` tests; bench `history_stats` in halyard-git. Pre-existing reds repaired at base: 11 broken `Option::unwrap_or_else(|error|…)` closures in contract.rs (did not compile), 2 impossible human-render code assertions (forge-smoke/cli_pr), the hanging `pr_live` loopback fixture (pre-PROPAGATE expectations, `server.join()` blocked forever) | The CLI test/clippy tail (2 `cli_stats` human-line pins vs the precomputed-line refactor + 2 bin-test compile errors) unfinished — step budget cut mid-restructure; the engine + forge-github suites are fully green (the cli_pr half of that tail was repaired and committed post-session: `cb1a19e`, `ebda22b`; two warm-cache determinism pins in cli_pr remained red at HEAD — repaired this session, see below) | 2026-11-14; session log below |
+
+| M5.5 call-governor slice (§11.5 pacing/retry/budget) | done | feat/forge-call-governor (dirty; no commits) | M1: `halyard_forge::governor` (ADR-0015) — the `Governor` `Forge` decorator (wraps any `&dyn Forge`, `Forge::calls` keeps delegating so the machine's §11.5 accounting is untouched): `GovernorPolicy` (spacing/budget/retries/backoff base+cap; `default()` passive, `shell_default()` the §11.5 production shape), content-call pacing start-to-start (probes + `rate_limit()` unpaced), `Retry-After` honored exactly, transport backoff deterministic `base × 2^attempt` capped (no jitter — the I3 deviation ADR-0015 documents), per-run budget as a forwarded-attempts ledger (failures + retries count) refusing fail-closed *before* the call with the new `ForgeError::Budget` (`E-FORGE-BUDGET` page + index row; non-retryable errors never wait; exhausted retries return the last error verbatim), injected `GovernorClock`/`GovernorSleeper` + `system_time()` production pair, deterministic `events()` log; 12 contract tests (`tests/governor.rs`, red→green on record) + bench `governor` (passthrough ≈894 ns, pacing decision ×16 ≈4.6 µs, budget block ≈598 ns) + example `governed_release` + E-FORGE-RATE-LIMIT as-built + arch §11.5 as-built. M2 (M1 green first): `governor_policy_from_env` (`HALYARD_FORGE_MIN_CALL_SPACING_MS`/`_MAX_CALLS`/`_MAX_RETRIES` over `shell_default()`, invalid → fail-closed `E-FORGE-REQUEST` naming the variable), the three live forge sites wrapped (`pr` live, the release forge half, `forge-smoke`), `render::GovernorSummary` (`line()`/`json()`) riding the live pr JSON document + human/gha tails (dry JSON schema byte-stable), `ForgeReleases::Ran` gains the governor summary, `doctor` gains the `forge-governor` check (resolved policy; invalid env fails the check); 4 loopback e2e tests in `cli_forge.rs` (summary row + budget block fail-closed with zero refused HTTP + env grammar naming the variable + smoke governor row; red→green on record) | Publish (M5), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the `github-release-notes` PR-comment mode — all unchanged. Pre-existing reds repaired at base first: the two `cli_pr` warm-cache determinism pins now ride `--no-cache` (the cli_stats convention the M4.1c session left unfinished at HEAD) | 2026-11-14; session log below |
 
 ### 2026-11-14 — M4.1c App-JWT auth (ADR-0014) + walk-provenance reporting (branch `feat/github-app-jwt-auth`, tree left dirty, no commits)
 
@@ -911,3 +913,117 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   governor (M5.5), publish (M5), the corpus pnpm differential, the M2.6
   dhat re-audit and the cache stats wiring stay open. The two p50
   perf-budget misses remain as recorded.
+
+### 2026-11-14 — M5.5 call governor (ADR-0015) + live forge wire-up (branch `feat/forge-call-governor`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `7564b8` per the
+  handoff, but the baseline re-run on a fresh toolchain (stable
+  1.100.0, rustfmt/clippy components installed on demand) found two
+  pre-existing reds in `halyard-cli --test cli_pr`:
+  `pr_dry_is_deterministic` and `pr_dry_json_carries_release_notes` —
+  both compare run 1 vs run 2 over the same fixture, and the warm §8.7
+  cache's zero walk counters break byte-equality. The M4.1c session
+  log had declared the fix ("the determinism pin rides `--no-cache`")
+  and the repair commits (`cb1a19e`/`ebda22b`) had landed the
+  cli_stats/cli_forge halves, but these two cli_pr pins never got it.
+  Repaired first (both runs ride `--no-cache`, the cli_stats
+  convention), cli_pr green 11/11.
+- **M1 (M5.5 core) implemented, no stubs, one full red→green cycle**
+  (the 12 contract tests in `crates/halyard-forge/tests/governor.rs`
+  written first; the red run is on record: E0432 unresolved
+  `halyard_forge::governor` + E0599 no `ForgeError::Budget`, then
+  green):
+  - `halyard_forge/src/governor.rs` — the `Governor` `Forge`
+    decorator (ADR-0015): `GovernorPolicy` (passive `default()`, the
+    §11.5 production `shell_default()`), content-call pacing
+    start-to-start at `min_spacing_ms` (probes and `rate_limit()`
+    unpaced), `Retry-After` honored exactly per retry, transport
+    backoff a pure function of the attempt (`backoff_base_ms ×
+    2^attempt`, capped — **no jitter**, the documented I3 deviation:
+    halyard's minimal-call design is the thundering-herd mitigation),
+    the per-run budget as a forwarded-attempts ledger (injected
+    failures and retries count — §11.5 "a dropped call is an
+    observable one") refusing fail-closed *before* the call and
+    re-checked per attempt, non-retryable errors pass through without
+    a wait, exhausted retries return the last error verbatim. Time is
+    injected (`GovernorClock`/`GovernorSleeper`, the ADR-0014
+    convention; `system_time()` is the sanctioned production pair) and
+    the event log (`Governor::events`) is deterministic data — the
+    §11.5 end-of-run usage summary rides it.
+  - `ForgeError::Budget` (`E-FORGE-BUDGET`) joined the taxonomy (code
+    const, ctor, Display arm, inline codes-and-display pin) with its
+    docs page and the errors-README index row; the E-FORGE-RATE-LIMIT
+    page gained the governor as-built note; the forge crate doc's
+    status paragraph amended as-built (the seam *types* stay
+    clock-free; the production pair is the sanctioned effect).
+  - The machine composes unchanged: `Forge::calls` keeps delegating to
+    the inner adapter, so `MachineReport.calls` and the ≤2-calls
+    budget assertion never notice the wrapper (pinned by the
+    transparency test).
+  - Bench `crates/halyard-forge/benches/governor.rs`
+    (passthrough_update_path ≈894 ns, pacing_decision_16 ≈4.6 µs,
+    budget_block ≈598 ns — the decorator must be free, the refusal
+    must not be slow) and example `examples/governed_release.rs`
+    (throttled pass → Retry-After honored ×2 → fail-closed abort →
+    I2 re-run creates the release → paced prepare upsert; scripted
+    time, instant and deterministic).
+- **M2 (shell wire-up) implemented after M1 was green end-to-end,
+  red→green** (the 4 loopback tests appended to `cli_forge.rs` first,
+  red against the stashed wire-up, then green):
+  - `governor_policy_from_env` — `HALYARD_FORGE_MIN_CALL_SPACING_MS` /
+    `HALYARD_FORGE_MAX_CALLS` / `HALYARD_FORGE_MAX_RETRIES` over
+    `shell_default()` (the App-env env layer, §16.4); empty = unset;
+    a present-but-invalid value fails closed with `E-FORGE-REQUEST`
+    naming the variable and the accepted shape.
+  - The three live forge sites wrapped: `pr` live (the machine runs
+    over the governor; the dry run stays ungoverned — a forecast
+    spends no calls), the release forge half (per-package
+    `create_release` calls are content creation — paced, retryable,
+    budgeted) and `forge-smoke` (the probe is budgeted like any live
+    call).
+  - Observability: `render::GovernorSummary` (`line()`/`json()`)
+    rides the live `pr` JSON document (`governor` field — the dry
+    schema stays byte-stable, the key is absent), the human/gha tails
+    (`governor_line`, the `walk_line` pattern) and the smoke JSON;
+    `ForgeReleases::Ran` carries the summary into the release
+    report's json/human/gha. `doctor` gains the `forge-governor`
+    check (the resolved policy; an invalid env fails the check
+    naming the variable).
+  - Tests: `governor_summary_rides_the_live_pr_report` (policy
+    overrides visible, op-level spend = 2 vs the adapter's 3 HTTP
+    calls — the two ledgers reconcile), `governor_budget_blocks_...`
+    (E-FORGE-BUDGET, the refused call never reaches the forge, spent/
+    budget in the message), `governor_env_invalid_value_...`
+    (fail-closed naming the variable, E-FORGE-REQUEST),
+    `forge_smoke_carries_the_governor_row` (defaults + the probe as
+    the run's one spend).
+- **Micro-debt/docs drift fixed (additive, not milestone
+  substitutes).** The CLI README's "apply ... (the only
+  filesystem-writing command)" comment now names both writing
+  commands (it contradicted the corrected paragraph below it); the
+  root README status header no longer lags its own body (M4.1b/M4.1c,
+  the live release shell and the release-notes pipeline were absent
+  from it); arch doc §16.2's as-built note claimed the live
+  `pr`/`release` modes "are absent rather than stubbed" (stale since
+  M4.1b/live-shell — rewritten to the wired reality incl.
+  `forge-smoke`, with `explain` kept in the list) and §11.1's note
+  claimed forge releases "remain the M4.1b work" (the forge half now
+  runs live over the adapter when credentials allow — publish alone
+  remains M5); the previous session row's "CLI tail unfinished" note
+  corrected (the cli_pr half was repaired and committed post-session;
+  the two warm-cache pins this session finished); CLI README rows for
+  `pr`/`release`/`forge-smoke` + the new governor section; the
+  ADR-0015 record.
+- **Honest state at cut-off.** Publish (M5), the registry clients,
+  the corpus-wide pnpm differential (no pnpm in the sandbox), the
+  M2.6 dhat re-audit and the two p50 perf-budget misses are unchanged.
+  The governor paces only content-creating calls on the live paths;
+  the pacing default (1 000 ms) costs a single live `pr` nothing (the
+  upsert is the pass's first content call) and multi-package release
+  forge halves ~1 s per additional package — the env knob exists for
+  CI lanes that need it off. Tree left dirty (no commits made).
+- **Next session start point.** (1) Publish (M5): the registry
+  clients + the topological publisher consuming the governor's
+  budget, (2) the corpus-wide pnpm differential as an xtask
+  subcommand, (3) the M2.6 dhat re-audit with the cache warm, (4)
+  `forge-smoke`'s pacing governor report in the nightly job summary.
