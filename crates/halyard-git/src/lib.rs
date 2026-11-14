@@ -24,6 +24,7 @@ pub mod bloom;
 pub mod merge;
 pub mod refs;
 pub mod tag;
+pub mod tag_target;
 pub mod tree_diff;
 pub mod walk;
 
