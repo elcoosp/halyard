@@ -433,6 +433,8 @@ Direct patch rules (must match what `cargo` would write; **differentially tested
 - Insert position: after a stable marker (`<!-- halyard:insert -->`) or after the title block; idempotent (re-run replaces the unreleased section only).
 - Optional **change files** `.halyard/changes/*.md` (front-matter: `packages: {core: minor}`), merged into notes, consumed on release.
 
+*(As-built note, 2026-11: the shipped styles are `keep-a-changelog`, `conventional`, `compact` and `github-release-notes` — the last through the notes pipeline (`release_notes.rs`): `compare_url` normalizes the four GitHub remote shapes into a compare link (foreign forges render none — no guessed shapes), `render_release_notes` renders the plan's entry preview and `render_release_notes_for_version` extracts the package changelog's own version section (the tag phase's `create_release` payload, §11.1 — the merged release PR wrote the section). The §9.4 user-template path (`minijinja`) and the change-files merge remain open.)*
+
 ---
 
 ## 10. Versioning & cascade engine (`halyard-version`, planner)
@@ -487,7 +489,7 @@ On every push to the base branch the **same command** (`halyard release --auto`)
 ```
 A `Release-Commit: true` trailer is *emitted* for human readability but **never required**: squash merges can discard it.
 
-*(As-built note, 2026-11: the git-side half of step 2 is shipped — `halyard-git::tag` (the `TagWriter` write seam) and `halyard-git::tag_target` (the precision rule: a bounded first-parent walk on manifest blob-OID change, verified by a caller-supplied version probe; unreadable objects — the `--filter=blob:none` case — degrade to the documented HEAD fallback instead of guessing). The `release --dry` forecast runs the same executor over the preview writer. Tag push, forge releases and publish remain the live shell's work.)*
+*(As-built note, 2026-11: the git-side half of step 2 is shipped — `halyard-git::tag` (the `TagWriter` write seam) and `halyard-git::tag_target` (the precision rule: a bounded first-parent walk on manifest blob-OID change, verified by a caller-supplied version probe; unreadable objects — the `--filter=blob:none` case — degrade to the documented HEAD fallback instead of guessing). The `release --dry` forecast runs the same executor over the preview writer; the live `release` command runs the same executor over the real writer and pushes the created tags through `halyard-git::push` (the §11.2 effect: one `git push --porcelain`, argv arrays, no force, no prompt — ADR-0012), with the shell owning the tagger identity (git config + clock). Forge releases and publish remain the M4.1b/M5 work and are reported as deferred, never faked.)*
 
 ### 11.2 Branches & labels
 - Release branch: `halyard/release/<base>` (e.g. `halyard/release/main`). Multiple release trains (maintenance branches `1.x`) get independent branches.
