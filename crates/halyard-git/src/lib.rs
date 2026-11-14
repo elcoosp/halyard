@@ -151,6 +151,11 @@ pub struct GitHistoryOptions {
 pub struct GitHistory {
     head: Option<Oid>,
     digest: HistoryDigest,
+    /// The enumerated tag candidates (§8.2 step 1, name-sorted) — the
+    /// shell's input for the §11.1 step-2 manifest-vs-tags reconciliation
+    /// ([`halyard_core::release_state`]), so the reconciliation never
+    /// re-scans refs behind the history's back.
+    tags: Vec<refs::TagCandidate>,
     /// True when the walk ran without a commit-graph (§8.3 degraded
     /// marker; correctness unaffected).
     pub degraded: bool,
@@ -172,6 +177,14 @@ impl GitHistory {
     /// The resolved release bases (aligned with the workspace packages).
     pub fn bases(&self) -> &[Option<BaseRef>] {
         &self.digest.bases
+    }
+
+    /// The enumerated tag candidates (§8.2 step 1), name-sorted — the
+    /// raw input of the §11.1 step-2 manifest-vs-tags reconciliation
+    /// ([`halyard_core::release_state::reconcile_tags`]). Names are the
+    /// short `refs/tags/`-stripped forms.
+    pub fn tags(&self) -> &[refs::TagCandidate] {
+        &self.tags
     }
 
     /// Opens `path`, resolves bases for every package in `ws` (§8.2) and
@@ -223,7 +236,7 @@ impl GitHistory {
             return Err(GitError::Head { path: repo_path });
         };
         let mut generations = refs::Generations::new(&repo);
-        let (base_refs, _tags) = refs::resolve_bases(&repo, head, ws, &mut generations)?;
+        let (base_refs, tags) = refs::resolve_bases(&repo, head, ws, &mut generations)?;
         let base_oids: Vec<Option<ObjectId>> = base_refs
             .iter()
             .map(|base| {
@@ -281,6 +294,7 @@ impl GitHistory {
         Ok(Self {
             head: Some(core_oid_of(head)),
             digest,
+            tags,
             degraded: painted.degraded,
             truncated: painted.truncated,
             tree_diff_stats,
