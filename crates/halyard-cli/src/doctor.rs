@@ -13,7 +13,7 @@ use crate::CliError;
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Check {
     /// Stable check name (`shallow`, `commit-graph`, `tags`, `config`,
-    /// `token`).
+    /// `token`, `forge-governor`).
     pub name: String,
     /// True when the environment is fine.
     pub ok: bool,
@@ -104,6 +104,12 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
     // contacts the network).
     checks.push(token_check(cli.offline));
 
+    // The §11.5 call governor's resolved policy (M5.5): the knobs the
+    // live forge paths (`pr`, `release`, `forge-smoke`) will run under —
+    // visible before the run, not after the first throttle. An invalid
+    // `HALYARD_FORGE_*` value fails the check naming the variable.
+    checks.push(governor_check());
+
     // History engine smoke check: the walk must succeed on this repo
     // (this is the doctor's cheapest "will plan() work" signal).
     let history = profiler.span("doctor-history", || {
@@ -172,6 +178,36 @@ fn config_check(cli: &Cli) -> Check {
             name: "config".to_owned(),
             ok: true,
             detail: "no halyard.toml; built-in defaults apply".to_owned(),
+        },
+    }
+}
+
+/// The §11.5 call governor's resolved-policy check (M5.5): reports the
+/// policy the live forge paths will run under (shell default with the
+/// `HALYARD_FORGE_*` overrides applied). An invalid value fails the
+/// check naming the variable and the accepted shape — a diagnosis, the
+/// same failure the live paths themselves raise (`E-FORGE-REQUEST`).
+fn governor_check() -> Check {
+    match crate::governor_policy_from_env() {
+        Ok(policy) => {
+            let budget = policy
+                .max_calls
+                .map_or_else(|| "unbounded".to_owned(), |budget| budget.to_string());
+            Check {
+                name: "forge-governor".to_owned(),
+                ok: true,
+                detail: format!(
+                    "§11.5 call governor: pacing {} ms · budget {budget} · retries {} \
+                     (override with HALYARD_FORGE_MIN_CALL_SPACING_MS / \
+                     HALYARD_FORGE_MAX_CALLS / HALYARD_FORGE_MAX_RETRIES)",
+                    policy.min_spacing_ms, policy.max_retries,
+                ),
+            }
+        }
+        Err(error) => Check {
+            name: "forge-governor".to_owned(),
+            ok: false,
+            detail: error.to_string(),
         },
     }
 }
