@@ -84,8 +84,10 @@ pub struct TagDirective {
     /// written (invalid names are `E-GIT-TAG`, nothing lands).
     pub name: String,
     /// The commit to tag. The §11.1 precision rule ("the commit that
-    /// introduced V") needs blob reads and is not implemented — the
-    /// documented §11.1 fallback applies: the snapshot HEAD.
+    /// introduced V") resolves through the [`crate::tag_target`] seam
+    /// ([`crate::tag_target::directives_for_pending_resolved`]); when a
+    /// target cannot be pinpointed, the documented §11.1 fallback
+    /// applies: the snapshot HEAD.
     pub target: ObjectId,
     /// The annotation message. The release-notes pipeline (§9.4) renders
     /// real notes once it lands; until then the directive carries the
@@ -482,10 +484,13 @@ pub fn run_tag_phase(writer: &dyn TagWriter, directives: &[TagDirective]) -> Tag
 
 /// Turns the reconciliation queue into tag-phase directives: one annotated
 /// tag per pending release, targeting `head` (the documented §11.1
-/// fallback — the manifest-blob pinpoint walk needs blob reads and would
-/// break `--filter=blob:none` clones). The message is the deterministic
-/// minimal annotation (`"{package} {version}"`); the §9.4 notes pipeline
-/// replaces it when it lands.
+/// fallback). The §11.1 precision rule — the commit that introduced the
+/// release version — resolves through
+/// [`crate::tag_target::directives_for_pending_resolved`], which falls
+/// back to this shape whenever a target cannot be verified (e.g. a
+/// `--filter=blob:none` clone). The message is the deterministic minimal
+/// annotation (`"{package} {version}"`); the §9.4 notes pipeline replaces
+/// it when it lands.
 #[must_use]
 pub fn directives_for_pending(pending: &[PendingRelease], head: &Oid) -> Vec<TagDirective> {
     pending
