@@ -115,3 +115,47 @@ git trees <https://docs.github.com/en/rest/git/trees?apiVersion=2022-11-28>.
    `MemoryTransport`, the transport analogue of `MemoryForge`) for
    contract tests, plus a loopback `std::net` HTTP server test for the
    real `UreqTransport` — no wiremock/tokio dependency.
+
+## 7. GitHub App authentication — JWT → installation token (M4.1c)
+
+> **Status:** verified 2026-11-14 against the live docs.github.com App
+> authentication reference. This section is the `VERIFY` artifact for
+> the M4.1c slice; ADR-0014 records the resulting decisions.
+
+- JWT signing: **RS256** ("Your JWT must be signed using the `RS256`
+  algorithm"). Source: <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app>
+- Header: `alg: RS256` (required) and `typ: JWT` (the doc's own Bash /
+  PowerShell examples carry it). Sent as `Authorization: Bearer` —
+  "if you are passing a JSON web token (JWT), you must use
+  `Authorization: Bearer`" (the §1 note; `Authorization: token` is not
+  valid for JWTs).
+- Claims: `iss` = "The client ID or application ID of your GitHub App"
+  ("Use of the client ID is recommended" — both are accepted, so the
+  adapter rides the configured value verbatim); `iat` = the creation
+  time ("we recommend that you set this 60 seconds in the past" — the
+  clock-drift guard); `exp` = "The time must be no more than 10 minutes
+  into the future". The adapter pins `iat = now - 60`,
+  `exp = iat + 600` (the documented maximum window).
+- The JWT authenticates exactly the App-level exchanges; the repo work
+  rides an **installation token**: `POST
+  /app/installations/{installation_id}/access_tokens` (no repo prefix;
+  body may be empty), response `201` with `token` and `expires_at`.
+  Source: <https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-an-installation-access-token-for-an-app>
+- Installation-token lifetime: **one hour** ("installation access
+  tokens … expire after 1 hour", App authentication doc). The adapter
+  deliberately does **not** parse the ISO-8601 `expires_at` (no date
+  dependency, no failure mode): it re-mints on its own conservative
+  **45-minute** TTL (`INSTALLATION_TOKEN_TTL_SECS = 2700`, a 15-minute
+  margin), so a token can never ride past its real expiry.
+- PEM key shapes: GitHub's App settings download a PKCS#1 PEM
+  (`-----BEGIN RSA PRIVATE KEY-----`); PKCS#8 (`-----BEGIN PRIVATE
+  KEY-----`) is the general PEM convention and is accepted
+  equivalently — the adapter normalizes both to the PKCS#8
+  `PrivateKeyInfo` shape the `ring` signer consumes (the wrapper is
+  byte-identical to `openssl pkcs8 -topk8 -nocrypt` output).
+- Signing surface: `ring::signature::RsaKeyPair` (RSASSA-PKCS1-v1_5
+  with SHA-256, `RSA_PKCS1_SHA256`), already in the runtime graph via
+  rustls' ring provider — no new third-party package, only a direct
+  dependency edge (ADR-0014). Verification of a minted JWT uses
+  `RsaPublicKeyComponents` + `RSA_PKCS1_2048_8192_SHA256` (the
+  conformance-test round trip).
