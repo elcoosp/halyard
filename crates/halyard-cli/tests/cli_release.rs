@@ -463,9 +463,18 @@ fn release_dry_forecasts_pending_tags_without_writing() -> Result<(), BoxError> 
 
 #[test]
 fn release_dry_is_byte_identical_across_runs() -> Result<(), BoxError> {
+    // The pin rides `--no-cache` (the cli_stats/cli_pr convention): the
+    // warm §8.7 cache legitimately reports zero walk counters, so a
+    // cached second run is not byte-comparable to a cold first one.
     let fx = build_merged_workspace("determinism")?;
-    let (first_code, first) = halyard(fx.root(), &["release", "--dry", "--format", "json"])?;
-    let (second_code, second) = halyard(fx.root(), &["release", "--dry", "--format", "json"])?;
+    let (first_code, first) = halyard(
+        fx.root(),
+        &["--no-cache", "release", "--dry", "--format", "json"],
+    )?;
+    let (second_code, second) = halyard(
+        fx.root(),
+        &["--no-cache", "release", "--dry", "--format", "json"],
+    )?;
     assert_eq!(first_code, 0);
     assert_eq!(second_code, 0);
     assert_eq!(first, second, "I3: the forecast is byte-stable");
