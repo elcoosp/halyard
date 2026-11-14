@@ -34,6 +34,53 @@ fn build_workspace(label: &str) -> Result<GitFixture, BoxError> {
     Ok(fx)
 }
 
+/// A workspace where v0.1.0 is already tagged and one feat commit is
+/// unreleased: manifest == latest tag (Tagged), so the machine reaches
+/// the prepare phase — the §11.3 open/update/close forecast.
+fn build_released_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: widen the constant",
+    ))?;
+    Ok(fx)
+}
+
+/// The post-merge Release-PR state (§11.1 step 2): the manifest says
+/// 0.1.1 while only v0.1.0 is tagged — the tag phase owes v0.1.1 and the
+/// PROPAGATE rule defers the prepare phase.
+fn build_merged_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "Cargo.toml".to_owned(),
+            "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+        )],
+        "chore(main): release v0.1.1",
+    ))?;
+    Ok(fx)
+}
+
+/// The reverted-merge anomaly (§11.1 step 2): the manifest went back
+/// below the released tag — reported as Behind, never auto-tagged.
+fn build_behind_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.2.0", "solo v0.2.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 3;\n".to_owned(),
+        )],
+        "feat: tweak the constant",
+    ))?;
+    Ok(fx)
+}
+
 /// Runs the binary; returns (exit code, combined output).
 fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(u8, String), BoxError> {
     let out = Command::new(env!("CARGO_BIN_EXE_halyard"))
@@ -55,7 +102,7 @@ fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(u8, String), BoxErr
 
 #[test]
 fn pr_dry_forecasts_the_open_path_with_the_call_budget() -> Result<(), BoxError> {
-    let fx = build_workspace("open")?;
+    let fx = build_released_workspace("open")?;
     let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("dry run"), "{out}");
@@ -70,7 +117,7 @@ fn pr_dry_forecasts_the_open_path_with_the_call_budget() -> Result<(), BoxError>
 
 #[test]
 fn pr_dry_title_is_conventional_and_tag_named() -> Result<(), BoxError> {
-    let fx = build_workspace("title")?;
+    let fx = build_released_workspace("title")?;
     let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
     assert_eq!(code, 0, "{out}");
     // Single-package repos use the `v{version}` tag template (appendix
@@ -80,8 +127,66 @@ fn pr_dry_title_is_conventional_and_tag_named() -> Result<(), BoxError> {
 }
 
 #[test]
+fn pr_dry_forecasts_the_initial_tag_phase_on_an_untagged_repo() -> Result<(), BoxError> {
+    // §11.1 step 2 on a fresh repo: no tag ever matched, so the manifest
+    // version is owed — the initial release tags what exists.
+    let fx = build_workspace("initial-tag")?;
+    let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("would create release `v0.1.0` (preview"),
+        "{out}"
+    );
+    assert!(out.contains("prepare phase: deferred (PROPAGATE"), "{out}");
+    assert!(out.contains("forge calls forecast: 1"), "{out}");
+    Ok(())
+}
+
+#[test]
+fn pr_dry_forecasts_the_tag_phase_after_a_release_pr_merge() -> Result<(), BoxError> {
+    // The post-merge state: the manifest says 0.1.1, only v0.1.0 is
+    // tagged — the reconciliation queues v0.1.1 and PROPAGATE defers the
+    // Release PR (§11.1 step 2).
+    let fx = build_merged_workspace("merged")?;
+    let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("pending tags (manifest-vs-tags, §11.1 step 2): 1"),
+        "{out}"
+    );
+    assert!(out.contains("- v0.1.1 (solo 0.1.1)"), "{out}");
+    assert!(
+        out.contains("would create release `v0.1.1` (preview"),
+        "{out}"
+    );
+    assert!(out.contains("prepare phase: deferred (PROPAGATE"), "{out}");
+    // §11.5 budget: one create call, no find probe (the prepare phase is
+    // gated).
+    assert!(out.contains("forge calls forecast: 1"), "{out}");
+    Ok(())
+}
+
+#[test]
+fn pr_dry_reports_a_behind_manifest_without_tagging_it() -> Result<(), BoxError> {
+    // The reverted-merge anomaly: the manifest is below the released
+    // tag — visible in the report, never queued (no downward tags).
+    let fx = build_behind_workspace("behind")?;
+    let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("pending tags (manifest-vs-tags, §11.1 step 2): 0"),
+        "{out}"
+    );
+    assert!(out.contains("behind, not tagged: v0.2.0"), "{out}");
+    assert!(!out.contains("would create release"), "{out}");
+    // Nothing pending ⇒ the prepare phase runs (no PROPAGATE).
+    assert!(!out.contains("prepare phase: deferred"), "{out}");
+    Ok(())
+}
+
+#[test]
 fn pr_dry_is_deterministic() -> Result<(), BoxError> {
-    let fx = build_workspace("determinism")?;
+    let fx = build_merged_workspace("determinism")?;
     let (_, first) = halyard(fx.root(), &["pr", "--dry"])?;
     let (_, second) = halyard(fx.root(), &["pr", "--dry"])?;
     assert_eq!(
@@ -93,7 +198,7 @@ fn pr_dry_is_deterministic() -> Result<(), BoxError> {
 
 #[test]
 fn pr_dry_json_is_a_stable_document() -> Result<(), BoxError> {
-    let fx = build_workspace("json")?;
+    let fx = build_released_workspace("json")?;
     let (code, out) = halyard(fx.root(), &["--format", "json", "pr", "--dry"])?;
     assert_eq!(code, 0, "{out}");
     let value: serde_json::Value = serde_json::from_str(out.trim())?;
@@ -110,6 +215,19 @@ fn pr_dry_json_is_a_stable_document() -> Result<(), BoxError> {
     assert_eq!(
         value.get("calls").and_then(serde_json::Value::as_u64),
         Some(2)
+    );
+    // The §11.1 step-2 reconciliation rides in the document: nothing
+    // pending (the manifest version is tagged), no PROPAGATE.
+    assert_eq!(
+        value
+            .get("pending_releases")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(
+        value.get("propagated").and_then(serde_json::Value::as_bool),
+        Some(false)
     );
     let effects = value
         .get("effects")
@@ -137,9 +255,48 @@ fn pr_dry_json_is_a_stable_document() -> Result<(), BoxError> {
 }
 
 #[test]
+fn pr_dry_json_carries_the_tag_phase_forecast() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("json-tag-phase")?;
+    let (code, out) = halyard(fx.root(), &["--format", "json", "pr", "--dry"])?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let pending = value
+        .get("pending_releases")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("pending_releases rows missing: {out}"));
+    assert_eq!(pending.len(), 1, "{out}");
+    let release = pending
+        .first()
+        .unwrap_or_else(|| unreachable!("one pending release"));
+    assert_eq!(
+        release.get("tag").and_then(serde_json::Value::as_str),
+        Some("v0.1.1")
+    );
+    assert_eq!(
+        release.get("package").and_then(serde_json::Value::as_str),
+        Some("solo")
+    );
+    assert_eq!(
+        release.get("version").and_then(serde_json::Value::as_str),
+        Some("0.1.1")
+    );
+    assert_eq!(
+        value.get("propagated").and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        value.get("calls").and_then(serde_json::Value::as_u64),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
 fn pr_dry_empty_plan_reports_the_close_probe() -> Result<(), BoxError> {
-    // A repo whose only commit is non-conventional: the plan is empty,
-    // so the machine spends the one find probe and forecasts nothing.
+    // A repo whose only commit is non-conventional and whose manifest
+    // version is already tagged: the plan is empty and nothing is
+    // pending, so the machine spends the one find probe and forecasts
+    // nothing.
     let dir = fixture_dir("close-probe")?;
     let mut fx = GitFixture::init_in(&dir)?;
     fx.commit_with(&CommitSpec::files(
@@ -155,6 +312,7 @@ fn pr_dry_empty_plan_reports_the_close_probe() -> Result<(), BoxError> {
         ],
         "update stuff without the conventional grammar",
     ))?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
     let (code, out) = halyard(fx.root(), &["pr", "--dry"])?;
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("nothing to do"), "{out}");
