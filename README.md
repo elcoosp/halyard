@@ -10,7 +10,8 @@ lockfile patchers and the M3.5b style registry); M4 forge slice underway —
 M4.1a Forge seam + `MemoryForge`, M4.2a §11.1 Release-PR state machine,
 M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr --dry` forecast
 over the dry-run `PreviewForge`), M4.3 `check` command (§11.6 PR-title
-lint).** The architecture and multi-year master plan lives in
+lint) — plus the §11.1 tag-phase reconciliation (manifest-vs-tags) and
+the M2.6 close-out CLI persistent-cache wiring.** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -80,15 +81,30 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   `halyard_forge::PreviewForge` (the dry-run adapter: every probe sees an
   empty forge, every mutation is a `preview://`-marked forecast, the §11.5
   call log stays observable) + `halyard pr --dry`: plan → §11.3 body →
-  §11.1 prepare-phase pass, reporting the effects, the call-budget
-  forecast and the body; live mode declines with `E-CLI-PR` until the
-  M4.1b adapter lands.
+  the full §11.1 machine pass — the tag phase (fed by the manifest-vs-tags
+  reconciliation) first, the prepare phase under the PROPAGATE gate —
+  reporting the effects, the call-budget forecast and the body; live mode
+  declines with `E-CLI-PR` until the M4.1b adapter lands.
+- **Tag-phase reconciliation (§11.1 step 2)** —
+  `halyard_core::release_state`: the stateless manifest-vs-tags decision
+  (Tagged / Pending / Behind) as a pure function over the workspace, the
+  enumerated tags (`GitHistory::tags()`) and the planner's own template
+  rule and `release = false` skip set — the tag phase and the plan can
+  never disagree about a tag's name or a skipped package; `pr --dry`
+  forecasts the tag phase it decides.
 - **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
   (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
   `halyard check --pr-title` (planner-exact prediction with the §10.2
   pre-major remap per package, did-you-mean on typo'd types, `E-CLI-TITLE`
   diagnosis) and `halyard check --exit-code` (§15.4 exit code 3 when a
   release is pending).
+- **CLI persistent-cache wiring (M2.6 close-out, §8.7)** — the planning
+  pipeline opens `$GIT_DIR/halyard/cache/v1/` and feeds it to
+  `GitHistory::build_with_options` with the trie `layout_hash` and the
+  resolved `config_hash` (a layout or policy change invalidates the
+  cached attributions cleanly); `--no-cache` really skips it and a cache
+  that cannot open degrades to an uncached run with a warning (the cache
+  is an optimization, never a correctness surface).
 
 ## Layout
 
@@ -133,6 +149,7 @@ cargo run -p xtask -- size-gate        # §14.1 binary size (armed from M1.10)
 cargo run -p xtask -- git-diff         # tree-diff attribution vs git ground truth
 cargo run -p halyard-test-support --example fixture_tour
 cargo run -p halyard-core --example workspace_demo
+cargo run -p halyard-core --example pending_releases
 cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
@@ -143,6 +160,7 @@ cargo run -p halyard-eco-cargo --example patch_lockfile
 cargo run -p halyard-eco-npm --example scan_package_json
 cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
 cargo run -p halyard-git --example walk_history
+cargo run -p halyard-git --example cached_walk
 cargo run -p halyard-cache --example dump
 cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
