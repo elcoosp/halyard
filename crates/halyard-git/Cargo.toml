@@ -67,3 +67,9 @@ workspace = true
 [[bench]]
 name = "history_stats"
 harness = false
+
+# The §8.8 fetch planner: the per-package selection over the probed
+# listing and the argv composition — the CPU cost `halyard fetch` adds.
+[[bench]]
+name = "fetch_plan"
+harness = false
