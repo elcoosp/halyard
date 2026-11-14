@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use halyard_core::HistoryProvider;
 use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
 use halyard_edit::{ApplyReport, DryPatch};
-use halyard_forge::{MachineEffect, MachineReport};
+use halyard_forge::{GovernorEvent, MachineEffect, MachineReport};
 use halyard_git::push::{TagPushReport, TagPushRow};
 use halyard_git::tag::{TagOutcome, TagPhaseReport, TagPhaseRow};
 use halyard_git::tag_target::TagTargetSource;
@@ -54,8 +54,8 @@ pub struct HistoryStats {
 }
 
 impl HistoryStats {
-    /// Reads the counters off a built [`GitHistory`] (the engine's own
-    /// public fields — no re-measurement, no second walk).
+    /// Reads the counters off a built [`halyard_git::GitHistory`] (the
+    /// engine's own public fields — no re-measurement, no second walk).
     #[must_use]
     pub fn of(history: &halyard_git::GitHistory) -> Self {
         let diff = &history.tree_diff_stats;
@@ -1326,13 +1326,126 @@ pub fn release_dry_gha(
     out
 }
 
+/// The §11.5 call governor's run summary (M5.5, ADR-0015): the policy
+/// the shell resolved, the forwarded-attempt ledger and the event log —
+/// the ingredients of the end-of-run API usage summary (§11.5). Plain
+/// deterministic data (I3), rendered identically in every live report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GovernorSummary {
+    /// Minimum start-to-start spacing between content-creating calls,
+    /// in milliseconds (`0` = pacing off).
+    pub min_spacing_ms: u64,
+    /// The armed per-run call budget (`None` = unbounded).
+    pub max_calls: Option<u32>,
+    /// Retry attempts per operation after the initial one.
+    pub max_retries: u32,
+    /// Forwarded attempts this run — injected failures and retries
+    /// included (§11.5: a dropped call is an observable one).
+    pub spent: u32,
+    /// The governor's events, oldest first (paces, honored retries,
+    /// budget refusals).
+    pub events: Vec<GovernorEvent>,
+}
+
+impl GovernorSummary {
+    /// Reads the summary off a run governor: the resolved policy, the
+    /// forwarded-attempt ledger and the event log — the §11.5 end-of-run
+    /// usage summary's ingredients, read once per live pass.
+    #[must_use]
+    pub fn of(governor: &halyard_forge::Governor<'_>) -> Self {
+        let policy = governor.policy();
+        Self {
+            min_spacing_ms: policy.min_spacing_ms,
+            max_calls: policy.max_calls,
+            max_retries: policy.max_retries,
+            spent: governor.spent(),
+            events: governor.events(),
+        }
+    }
+
+    /// The one-line human/gha tail: policy, spend and the event tally.
+    /// Deterministic (I3).
+    #[must_use]
+    pub fn line(&self) -> String {
+        let budget = self
+            .max_calls
+            .map_or_else(|| "unbounded".to_owned(), |budget| budget.to_string());
+        let mut paced = 0_usize;
+        let mut retried = 0_usize;
+        let mut blocked = 0_usize;
+        for event in &self.events {
+            match event {
+                GovernorEvent::Paced { .. } => paced += 1,
+                GovernorEvent::RateLimitRetry { .. } | GovernorEvent::TransportRetry { .. } => {
+                    retried += 1;
+                }
+                GovernorEvent::BudgetBlocked { .. } => blocked += 1,
+            }
+        }
+        format!(
+            "governor (§11.5): pacing {} ms · budget {budget} · retries {}; spent {} \
+             call(s), {paced} paced, {retried} retried, {blocked} blocked",
+            self.min_spacing_ms, self.max_retries, self.spent,
+        )
+    }
+
+    /// The stable JSON row (the live documents' `governor` field).
+    #[must_use]
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "min_spacing_ms": self.min_spacing_ms,
+            "max_calls": self.max_calls,
+            "max_retries": self.max_retries,
+            "spent": self.spent,
+            "events": self.events.iter().map(governor_event_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// One governor event as a JSON row (`type` first, the row's identity).
+fn governor_event_json(event: &GovernorEvent) -> serde_json::Value {
+    match event {
+        GovernorEvent::Paced { op, waited_ms } => serde_json::json!({
+            "type": "paced",
+            "op": op,
+            "waited_ms": waited_ms,
+        }),
+        GovernorEvent::RateLimitRetry {
+            op,
+            attempt,
+            waited_ms,
+        } => serde_json::json!({
+            "type": "rate_limit_retry",
+            "op": op,
+            "attempt": attempt,
+            "waited_ms": waited_ms,
+        }),
+        GovernorEvent::TransportRetry {
+            op,
+            attempt,
+            waited_ms,
+        } => serde_json::json!({
+            "type": "transport_retry",
+            "op": op,
+            "attempt": attempt,
+            "waited_ms": waited_ms,
+        }),
+        GovernorEvent::BudgetBlocked { op, spent } => serde_json::json!({
+            "type": "budget_blocked",
+            "op": op,
+            "spent": spent,
+        }),
+    }
+}
+
 /// The live release's forge half (M4.1b, §11.1 step 2): what the §11.1
 /// machine's tag phase did over the GitHub REST adapter — or the honest
 /// skip (no credentials, foreign origin, dry forecast).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ForgeReleases {
-    /// The pass ran: the effects, the repo they ran against and the §11.5
-    /// call count (from the adapter's own log).
+    /// The pass ran: the effects, the repo they ran against, the §11.5
+    /// call count (from the adapter's own log) and the governor's
+    /// summary (M5.5).
     Ran {
         /// The `owner/repo` the effects ran against.
         repo: String,
@@ -1341,6 +1454,9 @@ pub enum ForgeReleases {
         effects: Vec<MachineEffect>,
         /// Forge calls this pass consumed (the adapter's call log).
         calls: usize,
+        /// The §11.5 call governor's run summary (policy + spend +
+        /// events).
+        governor: GovernorSummary,
     },
     /// The half did not run, and why — reported, never faked.
     Skipped {
@@ -1357,11 +1473,13 @@ pub fn forge_releases_json(forge: &ForgeReleases) -> serde_json::Value {
             repo,
             effects,
             calls,
+            governor,
         } => serde_json::json!({
             "status": "ran",
             "repo": repo,
             "effects": effects.iter().map(pr_effect_json).collect::<Vec<_>>(),
             "calls": calls,
+            "governor": governor.json(),
         }),
         ForgeReleases::Skipped { reason } => {
             serde_json::json!({ "status": "skipped", "reason": reason })
@@ -1378,8 +1496,10 @@ pub fn forge_releases_human(forge: &ForgeReleases) -> String {
             repo,
             effects,
             calls,
+            governor,
         } => {
             let _ = writeln!(out, "forge releases: ran over {repo} ({calls} call(s))");
+            let _ = writeln!(out, "  {}", governor.line());
             if effects.is_empty() {
                 let _ = writeln!(out, "  (nothing pending — the tags already carry releases)");
             }
@@ -1420,8 +1540,10 @@ pub fn release_live_gha(
             repo,
             effects,
             calls,
+            governor,
         } => {
             let _ = writeln!(out, "- forge releases: ran over `{repo}` ({calls} call(s))");
+            let _ = writeln!(out, "  - {}", governor.line());
             for effect in effects {
                 let _ = writeln!(out, "  - {}", pr_effect_gha(effect));
             }
