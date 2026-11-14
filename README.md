@@ -99,8 +99,11 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   `E-GIT-TAG-CONFLICT`, `E-GIT-TAG` with docs pages) and the
   `PreviewTagWriter` (probes real, mutations forecast, zero writes) +
   `halyard release --dry`: reconcile → pending → directives →
-  forecast, with live mode declining (`E-CLI-RELEASE`) until the live
-  release shell (push/forge effects) lands.
+  forecast, and the **live release shell (git side)**: `halyard release`
+  runs the same executor over the real writer and pushes the created
+  tags through `halyard_git::push` (the §11.2 effect — one
+  `git push --porcelain`, argv arrays, no force, no prompt; ADR-0012),
+  with forge releases deferred honestly (`M4.1b`).
 - **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
   (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
   `halyard check --pr-title` (planner-exact prediction with the §10.2
