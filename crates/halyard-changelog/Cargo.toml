@@ -26,5 +26,11 @@ criterion = { workspace = true }
 name = "release_notes"
 harness = false
 
+# M2: the §9.4 insertion machinery the `apply` changelog stage drives
+# (built-in styles + the user-template path).
+[[bench]]
+name = "stage_insert"
+harness = false
+
 [lints]
 workspace = true
