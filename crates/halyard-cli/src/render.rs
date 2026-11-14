@@ -516,6 +516,121 @@ pub fn doctor_gha(report: &DoctorReport) -> String {
     out
 }
 
+/// The §8.8 smart-minimal-fetch report (human): the selection
+/// provenance (why each tag was requested), the per-tag outcomes and
+/// the executed argv — the same observable the JSON document carries.
+pub fn fetch_human(report: &halyard_git::fetch::FetchReport) -> String {
+    let mut out = String::from("halyard fetch (§8.8)\n");
+    match report.remote.as_deref() {
+        Some(remote) => {
+            let _ = writeln!(
+                out,
+                "  remote {remote} · base branch {} · {} probed tags",
+                report.base_branch.as_deref().unwrap_or("(none)"),
+                report.probe_tags
+            );
+            if !report.selection.is_empty() {
+                out.push_str("selection (package → requested tag):\n");
+                for (package, tag) in &report.selection {
+                    let _ = writeln!(out, "  {package} → {tag}");
+                }
+            }
+            for row in &report.rows {
+                match row {
+                    halyard_git::fetch::FetchRow::Fetched { tag } => {
+                        let _ = writeln!(out, "  fetched: {tag}");
+                    }
+                    halyard_git::fetch::FetchRow::AlreadyLocal { tag } => {
+                        let _ = writeln!(out, "  already local: {tag}");
+                    }
+                    halyard_git::fetch::FetchRow::Failed { tag, error } => {
+                        let _ = writeln!(out, "  failed: {tag} — {error}");
+                    }
+                }
+            }
+            if report.fallback_used {
+                out.push_str("  degraded: the minimal fetch failed; the full-fetch fallback ran (§8.8 step 3)\n");
+            }
+            if !report.argv.is_empty() {
+                let _ = writeln!(out, "  git {}", report.argv.join(" "));
+            }
+            let _ = writeln!(
+                out,
+                "counters: fetched {} · already local {} · failed {}",
+                report.fetched, report.already_local, report.failed
+            );
+        }
+        None => out.push_str("  no remote configured — nothing to fetch\n"),
+    }
+    out
+}
+
+/// The §8.8 fetch report as a GHA job summary.
+pub fn fetch_gha(report: &halyard_git::fetch::FetchReport) -> String {
+    let mut out = String::from("## halyard fetch (§8.8)\n\n");
+    match report.remote.as_deref() {
+        Some(remote) => {
+            let _ = writeln!(
+                out,
+                "remote `{remote}` · base branch `{}` · {} probed tags\n",
+                report.base_branch.as_deref().unwrap_or("(none)"),
+                report.probe_tags
+            );
+            if !report.selection.is_empty() {
+                out.push_str("| package | requested tag | outcome |\n|---|---|---|\n");
+                for row in &report.rows {
+                    match row {
+                        halyard_git::fetch::FetchRow::Fetched { tag } => {
+                            let _ =
+                                writeln!(out, "| {} | {tag} | fetched |", label_of(report, tag));
+                        }
+                        halyard_git::fetch::FetchRow::AlreadyLocal { tag } => {
+                            let _ = writeln!(
+                                out,
+                                "| {} | {tag} | already local (I1) |",
+                                label_of(report, tag)
+                            );
+                        }
+                        halyard_git::fetch::FetchRow::Failed { tag, error } => {
+                            let _ = writeln!(
+                                out,
+                                "| {} | {tag} | failed ({}) |",
+                                label_of(report, tag),
+                                error.code()
+                            );
+                        }
+                    }
+                }
+            }
+            if report.fallback_used {
+                let _ = writeln!(
+                    out,
+                    "::warning::halyard fetch: the minimal fetch failed; the full-fetch \
+                     fallback ran (§8.8 step 3)"
+                );
+            }
+            let _ = writeln!(
+                out,
+                "fetched {} · already local {} · failed {}",
+                report.fetched, report.already_local, report.failed
+            );
+        }
+        None => out.push_str("No remote configured — nothing to fetch.\n"),
+    }
+    out
+}
+
+/// The package that selected `tag` (the §8.8 step-1 provenance), for
+/// the GHA table's first column; `(multiple)` when several packages
+/// selected the same tag (shared tags are legal).
+fn label_of<'a>(report: &'a halyard_git::fetch::FetchReport, tag: &str) -> &'a str {
+    report
+        .selection
+        .iter()
+        .find(|(_, selected)| selected.as_str() == tag)
+        .map_or("(multiple)", |(package, _)| package.as_str())
+}
+
 /// Plan as a GHA job summary.
 pub fn plan_gha(plan: &Plan, stats: &HistoryStats) -> String {
     let mut out = format!("## halyard plan\n\n{}\n", stats.human_line());
