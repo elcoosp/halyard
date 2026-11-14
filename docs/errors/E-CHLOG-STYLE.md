@@ -6,7 +6,8 @@
 ## What it means
 
 The requested changelog style is not shipped; the built-in styles are
-`keep-a-changelog`, `conventional` and `compact` (M3.5b).
+`keep-a-changelog`, `conventional`, `compact` and
+`github-release-notes` (M3.5b + the notes pipeline).
 
 ## Cause
 
@@ -15,9 +16,12 @@ The requested changelog style is not shipped; the built-in styles are
 
 ## Fix
 
-Use one of the built-in styles. `github-release-notes` stays unshipped
-(it needs forge context — compare links, remote URL) until the forge
-milestone lands; a minijinja template path arrives with it.
+Use one of the built-in styles. `github-release-notes` renders
+context-free through the style registry; the forge context (the compare
+link derived from the configured remote) rides `NotesContext` into
+`render_release_notes` — the per-release notes pipeline the machine's
+`ReleaseSpec.notes` consumes. A minijinja template path goes through
+`render_plan_template`, not a style name.
 
 ## Command
 
