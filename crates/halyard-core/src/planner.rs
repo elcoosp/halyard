@@ -826,8 +826,10 @@ fn minimal_bump(from: &Version, to: &Version) -> Bump {
 
 /// The tag template for one package (appendix A.3): the config override
 /// wins, then the single-package `v{version}` default, then the
-/// discovery-resolved template.
-fn effective_template(ws: &Workspace, pkg: &Package, cfg: &PlanConfig) -> TagTemplate {
+/// discovery-resolved template. Shared with the §11.1 step-2
+/// reconciliation ([`crate::release_state`]) so the planner and the tag
+/// phase can never disagree about a tag's name.
+pub(crate) fn effective_template(ws: &Workspace, pkg: &Package, cfg: &PlanConfig) -> TagTemplate {
     if let Some(template) = &cfg.tag_template {
         return template.clone();
     }
