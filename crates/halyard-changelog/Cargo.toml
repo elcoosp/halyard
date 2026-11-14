@@ -18,6 +18,13 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
+# The release-notes bench pins the section-extraction and render costs
+# of the planning runs' notes pipeline (M2.6-adjacent observability).
+criterion = { workspace = true }
+
+[[bench]]
+name = "release_notes"
+harness = false
 
 [lints]
 workspace = true
