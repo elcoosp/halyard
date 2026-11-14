@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let waits = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .sleeps
         .clone();
     println!("pass 1 waits: {waits:?} ms");
@@ -116,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("pass 3 events: {:#?}", governor.events());
     let waits = script
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .sleeps
         .clone();
     println!("total waits: {waits:?} ms");
