@@ -137,8 +137,7 @@ fn find_release_pr_maps_the_open_pr() -> Result<(), BoxError> {
         &pr_list(7, "chore: release v0.5.0", "## 🚀 Release plan"),
     ));
     let found = forge.find_release_pr(&branch())?;
-    let pr =
-        found.unwrap_or_else(|error| unreachable!("the scripted body carries the PR: {error}"));
+    let pr = found.unwrap_or_else(|| unreachable!("the scripted body carries the PR"));
     assert_eq!(pr.number, 7);
     assert_eq!(pr.branch, BRANCH);
     assert_eq!(pr.url, format!("https://github.com/{OWNER}/{REPO}/pull/7"));
@@ -160,7 +159,7 @@ fn re_find_is_conditional_and_304_returns_the_cached_pr() -> Result<(), BoxError
     assert!(first.is_some());
     transport.enqueue(response(304, ""));
     let second = forge.find_release_pr(&branch())?;
-    let pr = second.unwrap_or_else(|error| unreachable!("304 returns the cached PR: {error}"));
+    let pr = second.unwrap_or_else(|| unreachable!("304 returns the cached PR"));
     assert_eq!(pr.number, 7);
     let sent = transport.sent();
     assert_eq!(sent.len(), 2);
@@ -197,7 +196,7 @@ fn upsert_creates_with_derived_base() -> Result<(), BoxError> {
         sent[1]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the create carries a JSON body: {error}")),
+            .unwrap_or_else(|| unreachable!("the create carries a JSON body")),
     )?;
     assert_eq!(payload["head"], BRANCH);
     assert_eq!(payload["base"], "main", "the §11.2 prefix inverse");
@@ -237,7 +236,7 @@ fn upsert_updates_in_place() -> Result<(), BoxError> {
         sent[1]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("PATCH carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("PATCH carries a body")),
     )?;
     assert_eq!(payload["title"], "new title");
     assert_eq!(payload["body"], "new body");
@@ -283,7 +282,7 @@ fn create_release_is_get_by_tag_first_idempotent() -> Result<(), BoxError> {
         transport.sent()[1]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the create carries a JSON body: {error}")),
+            .unwrap_or_else(|| unreachable!("the create carries a JSON body")),
     )?;
     assert_eq!(payload["tag_name"], "core-v0.5.0");
     assert_eq!(payload["body"], "## Features\n\n- the painter walk");
@@ -335,8 +334,7 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
     let oid = forge.commit_via_api(&spec)?;
     assert_eq!(
         oid,
-        Oid::from_hex(NEW_COMMIT.as_bytes())
-            .unwrap_or_else(|error| unreachable!("fixture is 40 hex: {error}"))
+        Oid::from_hex(NEW_COMMIT.as_bytes()).unwrap_or_else(|| unreachable!("fixture is 40 hex"))
     );
     let sent = transport.sent();
     assert_eq!(sent.len(), 5, "ref + commit + tree + commit + ref update");
@@ -344,7 +342,7 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
         sent[2]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the tree create carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("the tree create carries a body")),
     )?;
     assert_eq!(tree_payload["base_tree"], BASE_TREE);
     assert_eq!(tree_payload["tree"][0]["path"], "crates/core/Cargo.toml");
@@ -358,7 +356,7 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
         sent[3]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the commit create carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("the commit create carries a body")),
     )?;
     assert_eq!(commit_payload["tree"], NEW_TREE);
     assert_eq!(commit_payload["parents"][0], BASE);
@@ -366,7 +364,7 @@ fn commit_via_api_writes_the_git_data_chain() -> Result<(), BoxError> {
         sent[4]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the ref update carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("the ref update carries a body")),
     )?;
     assert_eq!(ref_payload["sha"], NEW_COMMIT);
     assert_eq!(ref_payload["force"], false, "never forced (§11.2)");
@@ -405,7 +403,7 @@ fn commit_via_api_uploads_binary_files_as_base64_blobs() -> Result<(), BoxError>
         sent[2]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the blob create carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("the blob create carries a body")),
     )?;
     assert_eq!(
         blob_payload["encoding"], "base64",
@@ -417,7 +415,7 @@ fn commit_via_api_uploads_binary_files_as_base64_blobs() -> Result<(), BoxError>
         sent[3]
             .body
             .as_deref()
-            .unwrap_or_else(|error| unreachable!("the tree create carries a body: {error}")),
+            .unwrap_or_else(|| unreachable!("the tree create carries a body")),
     )?;
     assert_eq!(tree_payload["tree"][0]["sha"], BLOB);
     assert!(
