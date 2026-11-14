@@ -65,7 +65,10 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Human, global = true)]
     format: Format,
 
-    /// Colour policy: auto | always | never.
+    /// Colour policy: auto | always | never. Parsed and carried for the
+    /// §16.3 colour-aware renderers, which land with their milestone —
+    /// output is plain text until then (honouring `NO_COLOR` by
+    /// emitting no colour at all).
     #[arg(long, value_enum, default_value_t = Color::Auto, global = true)]
     color: Color,
 
@@ -82,10 +85,8 @@ struct Cli {
     #[arg(long, global = true)]
     offline: bool,
 
-    /// Ignore the persistent per-commit cache (M2.5, §8.7). The CLI
-    /// pipeline does not wire the cache yet (M2.6 close-out): planning
-    /// is uncached today, so the flag is accepted for forward
-    /// compatibility.
+    /// Skip the persistent per-commit cache (§8.7): plan uncached and
+    /// leave `$GIT_DIR/halyard/cache/v1/` untouched.
     #[arg(long, global = true)]
     no_cache: bool,
 
@@ -99,9 +100,9 @@ struct Cli {
 }
 
 /// The v1 command surface (§16.2; the remaining effectful commands —
-/// `pr`, `release`, `publish`, `fetch`, `check`, `migrate`, `init`,
-/// `action` — land with their milestones M4.x and are absent rather than
-/// stubbed; `apply` joined in M3.6).
+/// `release`, `publish`, `fetch`, `migrate`, `init`, `action` — land
+/// with their milestones M4.x/M5 and are absent rather than stubbed;
+/// `apply` joined in M3.6, `pr` in M4.2b and `check` in M4.3).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -217,7 +218,6 @@ impl CliError {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let _color = apply_color_policy(cli.color);
     let mut profiler = Profiler::start(cli.profile);
     let result = run(&cli, &mut profiler);
     profiler.finish();
@@ -237,20 +237,6 @@ fn main() -> ExitCode {
             }
             ExitCode::FAILURE
         }
-    }
-}
-
-/// Resolves the effective colour policy from `--color` plus the
-/// `NO_COLOR`/`CLICOLOR` conventions (§16.3). Read-only: `std::env::set_var`
-/// is `unsafe` in edition 2024 and this crate forbids `unsafe`, so the
-/// decision is passed to renderers instead of mutating the environment.
-fn apply_color_policy(color: Color) -> bool {
-    let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
-    let forced = std::env::var_os("CLICOLOR_FORCE").is_some_and(|v| v == "1");
-    match color {
-        Color::Never => false,
-        Color::Always => true,
-        Color::Auto => forced || !no_color,
     }
 }
 
@@ -346,22 +332,63 @@ fn cmd_plan(
     Ok(())
 }
 
-/// The `pr` command (M4.2b step 1): the §11.1 prepare-phase forecast.
-/// `--dry` drives the machine over the dry-run adapter — plan → §11.3
-/// body → find/upsert/close pass — and reports the effects, the §11.5
-/// call budget and the rendered body. Nothing is written and no network
-/// is touched (I5); live mode lands with the M4.1b forge adapter
+/// The §11.1 step-2 reconciliation for the `pr` forecast: the manifest
+/// versions and the enumerated tags are the only inputs — the same pure
+/// decision ([`halyard_core::release_state`]) the live run makes,
+/// resolved through the planner's own template rule and skip set, so the
+/// forecast can never disagree with the plan (I3). Returns the full
+/// state rows (Tagged/Pending/Behind — the report) and the deduplicated
+/// pending queue (the machine's tag-phase input).
+fn reconcile_for_pr(
+    context: &Context,
+    plan_config: &PlanConfig,
+    profiler: &mut Profiler,
+) -> (
+    Vec<halyard_core::PackageTagState>,
+    Vec<halyard_core::PendingRelease>,
+) {
+    let tag_names: Vec<halyard_core::BString> = context
+        .history
+        .tags()
+        .iter()
+        .map(|tag| tag.name.clone())
+        .collect();
+    let states = profiler.span("reconcile", || {
+        halyard_core::release_state::reconcile_tags(
+            &context.discovery.workspace,
+            &tag_names,
+            plan_config,
+        )
+    });
+    let pending = profiler.span("reconcile-pending", || {
+        halyard_core::release_state::pending_releases(
+            &context.discovery.workspace,
+            &tag_names,
+            plan_config,
+        )
+    });
+    (states, pending)
+}
+
+/// The `pr` command (M4.2b step 1): the §11.1 forecast over the dry-run
+/// adapter. `--dry` drives the full machine pass — the §11.1 step-2
+/// manifest-vs-tags reconciliation feeds the tag phase, the plan renders
+/// the §11.3 body for the prepare phase — and reports the effects, the
+/// §11.5 call budget and the body. Nothing is written and no network is
+/// touched (I5); live mode lands with the M4.1b forge adapter
 /// (`E-CLI-PR`).
 fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
     if !dry {
         return Err(CliError::new(
             "E-CLI-PR",
             "live Release-PR mode needs a forge adapter (M4.1b, not implemented yet); \
-             use `halyard pr --dry` for the offline prepare-phase forecast",
+             use `halyard pr --dry` for the offline forecast",
         ));
     }
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
+    let plan_config: PlanConfig = context.config.plan_config();
+    let (states, pending) = reconcile_for_pr(&context, &plan_config, profiler);
     // §11.2: the release branch is `halyard/release/<base>`. The plan's
     // `base_branch` stays `HEAD` until the live shell resolves the
     // remote HEAD (planner.rs) — the forecast names exactly what a live
@@ -378,9 +405,21 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
                 .map_err(|e| CliError::new(e.code(), e.to_string()))?,
         )
     };
-    // The prepare-phase input: nothing pending — the tag-phase
-    // reconciliation (manifest-vs-tags, §11.1 step 2) is the live run's
-    // shell work; the dry forecast states this in the report.
+    // The tag-phase queue: one `ReleaseSpec` per pending release. The
+    // notes stay empty — the live tag phase renders them from the
+    // package changelog (§9.4) once the notes pipeline lands with the
+    // live slice; the forecast does not fabricate entries that do not
+    // exist yet.
+    let pending_specs: Vec<halyard_forge::ReleaseSpec> = pending
+        .iter()
+        .map(|release| halyard_forge::ReleaseSpec {
+            tag: release.tag.clone(),
+            notes: String::new(),
+        })
+        .collect();
+    // The prepare-phase input: the Release PR the plan would upsert —
+    // the machine gates it behind the tag phase (PROPAGATE, §11.1
+    // step 2) when anything is pending.
     let title = release_pr_title(&plan);
     let release_pr = body.clone().map(|body| halyard_forge::PrSpec {
         branch: branch.clone(),
@@ -393,12 +432,22 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
                 &halyard_forge::PreviewForge::new(),
                 &halyard_forge::MachineInput {
                     branch: branch.clone(),
-                    pending_releases: Vec::new(),
+                    pending_releases: pending_specs,
                     release_pr,
                 },
             )
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let pending_rows: Vec<serde_json::Value> = pending
+        .iter()
+        .map(|release| {
+            serde_json::json!({
+                "package": release.package,
+                "version": release.version.to_string(),
+                "tag": release.tag,
+            })
+        })
+        .collect();
     match cli.format {
         Format::Json => {
             let effects: Vec<serde_json::Value> =
@@ -408,6 +457,8 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
                 "title": title,
                 "branch": branch.as_str(),
                 "pending_plan": !plan.releases.is_empty(),
+                "pending_releases": pending_rows,
+                "propagated": report.propagated,
                 "effects": effects,
                 "calls": report.calls,
                 "body": body,
@@ -415,11 +466,11 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
         }
         Format::Gha => print!(
             "{}",
-            render::pr_dry_gha(&title, branch.as_str(), &report, body.as_deref())
+            render::pr_dry_gha(&title, branch.as_str(), &states, &report, body.as_deref())
         ),
         Format::Human => print!(
             "{}",
-            render::pr_dry_human(&title, branch.as_str(), &report, body.as_deref())
+            render::pr_dry_human(&title, branch.as_str(), &states, &report, body.as_deref())
         ),
     }
     Ok(())
@@ -642,6 +693,10 @@ struct Context {
 }
 
 /// Discovers the workspace, resolves configuration and paints history.
+/// The git engine runs over the §8.7 persistent cache unless `--no-cache`
+/// is given ([`plan_cache`]); the cache-key components (trie layout hash,
+/// config hash) ride along so a layout or policy change invalidates the
+/// cached attributions cleanly (§8.7).
 fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
     let discovery = profiler
         .span("discover", || {
@@ -651,10 +706,42 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
     let config = profiler.span("config", || resolve_config(cli))?;
     let history = profiler
         .span("history", || {
-            GitHistory::build(
+            // §8.7 cache-key component: the trie layout hash over the
+            // package roots and their include/exclude filters (sorted by
+            // root, matching the hash's normalization).
+            let filters: Vec<(String, Vec<String>, Vec<String>)> = discovery
+                .workspace
+                .packages()
+                .iter()
+                .map(|pkg| {
+                    (
+                        pkg.root.as_str().to_owned(),
+                        pkg.include
+                            .include()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                        pkg.include
+                            .exclude()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    )
+                })
+                .collect();
+            let mut filters = filters;
+            filters.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+            let cache = plan_cache(cli);
+            GitHistory::build_with_options(
                 std::path::Path::new("."),
                 &discovery.workspace,
-                config.initial_max_commits,
+                halyard_git::GitHistoryOptions {
+                    initial_max_commits: config.initial_max_commits,
+                    cache,
+                    layout_hash: halyard_core::trie::layout_hash(&discovery.workspace, &filters),
+                    config_hash: halyard_config::config_hash(&config),
+                    ..halyard_git::GitHistoryOptions::default()
+                },
             )
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
@@ -663,6 +750,28 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
         discovery,
         history,
     })
+}
+
+/// Opens the §8.7 persistent plan cache under `$GIT_DIR/halyard/cache/v1/`
+/// (`None` under `--no-cache`). A cache that cannot open (unwritable
+/// `$GIT_DIR`, corrupt header) degrades to an uncached run with a warning
+/// — §8.7: the cache is an optimization, never a correctness surface, so
+/// planning must proceed.
+fn plan_cache(cli: &Cli) -> Option<halyard_cache::Cache> {
+    if cli.no_cache {
+        return None;
+    }
+    match halyard_cache::Cache::open(std::path::Path::new(".git")) {
+        Ok(cache) => Some(cache),
+        Err(error) => {
+            eprintln!(
+                "warning: [{}] planning proceeds uncached (the cache is safe to delete \
+                 and will be rebuilt)",
+                error.code()
+            );
+            None
+        }
+    }
 }
 
 /// Layers: defaults < file (repo `halyard.toml` or `--config`) < env.
