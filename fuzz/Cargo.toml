@@ -30,3 +30,10 @@ path = "fuzz_targets/tag_template.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "json_span"
+path = "fuzz_targets/json_span.rs"
+test = false
+doc = false
+bench = false
