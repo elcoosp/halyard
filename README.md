@@ -5,13 +5,17 @@ world. Zero-config for Cargo + pnpm + single-package repos, extensible to
 every ecosystem, with a *Release PR* UX better than release-please and a
 runtime measured in milliseconds.
 
-**Status: M3 mutation slices landed (M3.1–M3.6, incl. the M3.2/M3.4
-lockfile patchers and the M3.5b style registry); M4 forge slice underway —
-M4.1a Forge seam + `MemoryForge`, M4.2a §11.1 Release-PR state machine,
-M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr --dry` forecast
-over the dry-run `PreviewForge`), M4.3 `check` command (§11.6 PR-title
-lint) — plus the §11.1 tag-phase reconciliation (manifest-vs-tags) and
-the M2.6 close-out CLI persistent-cache wiring.** The architecture and multi-year master plan lives in
+**Status: M4 forge slice landed through M4.1c — M4.1a Forge seam +
+`MemoryForge`, M4.1b GitHub REST adapter (live `pr`, `forge-smoke`),
+M4.1c GitHub App-JWT auth (`HALYARD_APP_*`), M4.2a §11.1 Release-PR
+state machine, M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr
+--dry` forecast over the dry-run `PreviewForge`), M4.3 `check` command
+(§11.6 PR-title lint), the §11.1 tag-phase reconciliation
+(manifest-vs-tags) with its git-side write/push/pinpoint paths and the
+live `release` shell, the §9.4 release-notes pipeline, the M2.6
+close-out CLI persistent-cache wiring — and M5.5's §11.5 call governor
+(pacing, `Retry-After`, deterministic backoff, per-run budget) wired
+into the live forge paths (ADR-0015).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
