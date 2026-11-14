@@ -27,6 +27,7 @@ use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_forge::Forge as _;
 use halyard_forge_github::{ForgeEndpoint, GitHubRestForge, UreqTransport};
 use halyard_git::GitHistory;
+use halyard_git::fetch::TagFetcher as _;
 use halyard_git::tag_target::{GixTagTargetResolver, ManifestVersionProbe};
 
 mod check;
@@ -104,10 +105,11 @@ struct Cli {
 }
 
 /// The v1 command surface (§16.2; the remaining effectful commands —
-/// `publish`, `fetch`, `migrate`, `init`, `action` — land with their
+/// `publish`, `migrate`, `init`, `action` — land with their
 /// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
-/// in M3.6, `pr` in M4.2b, `check` in M4.3 and `release --dry` (the
-/// §11.1 git-side tag-phase forecast) in the tag-phase slice).
+/// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
+/// §11.1 git-side tag-phase forecast) in the tag-phase slice and `fetch`
+/// (§8.8) in the smart-minimal-fetch slice).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -163,6 +165,13 @@ enum Command {
         #[arg(value_name = "PKG")]
         package: String,
     },
+    /// Smart minimal fetch (§8.8): probe the remote's tags, select each
+    /// package's latest release tag and fetch those tags plus the base
+    /// branch in one minimal `git fetch` (blob-less, tag-bounded,
+    /// shallow-deepening bounded by the previous releases), with the
+    /// documented full-fetch fallback (ADR-0016). Idempotent (I1):
+    /// tags already local at the probed target are not requested again.
+    Fetch,
     /// Lint a squash-merge PR title and gate on pending releases
     /// (§11.6): the title is the bump source in squash-merge repos, so
     /// `check --pr-title` predicts — per pending package — the bump the
@@ -185,7 +194,14 @@ enum Command {
         format: GraphFormat,
     },
     /// Environment diagnostics (shallow clone? commit-graph? tags?).
-    Doctor,
+    /// `--registries` adds the opt-in §13 registry reachability probe
+    /// (network touched only by the flag, I5).
+    Doctor {
+        /// Probe the default registries (crates.io + npm) for
+        /// reachability and protocol comprehension (M5.1).
+        #[arg(long)]
+        registries: bool,
+    },
     /// Read-only forge reachability probe (the nightly `forge-smoke`
     /// job's subcommand, ADR-0013): builds the GitHub REST adapter from
     /// `HALYARD_FORGE_TOKEN`/`GITHUB_TOKEN`, probes release-tag
@@ -308,6 +324,7 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_forge_smoke(cli, repo.as_deref(), api_base.as_deref())
         }
         Command::Release { dry, no_push } => cmd_release(cli, profiler, *dry, *no_push),
+        Command::Fetch => cmd_fetch(cli, profiler),
         Command::Explain { package } => {
             cmd_explain(cli, profiler, package)?;
             Ok(ExitCode::SUCCESS)
@@ -324,8 +341,8 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_graph(cli, profiler, *format)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Doctor => {
-            cmd_doctor(cli, profiler)?;
+        Command::Doctor { registries } => {
+            cmd_doctor(cli, profiler, *registries)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Schema { what } => {
@@ -1207,6 +1224,84 @@ impl ManifestVersionProbe for ShellProbe {
 /// `--no-push` skips the phase; a missing remote is an honest skip).
 /// Forge releases stay deferred (M4.1b) — reported, never faked.
 /// Failures are resumable (I2) and fail the run (exit 1).
+/// The §8.8 smart minimal fetch (M4.6): probe → select → classify →
+/// one minimal `git fetch` with the documented full-fetch fallback
+/// (ADR-0016). Discovery and config only — deliberately **not** the
+/// history walk: a shallow clone (the very state `fetch` exists to
+/// repair) fails the walk with `E-GIT-SHALLOW`, so the command cannot
+/// require it. The remote is `origin` (the same convention the §11.2
+/// push phase uses); the base branch is the resolved config override,
+/// defaulting to `HEAD` like the planner's own resolution.
+fn cmd_fetch(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
+    let discovery = profiler
+        .span("discover", || {
+            discover_repo(std::path::Path::new("."), &DiscoverInput::default())
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let config = profiler.span("config", || resolve_config(cli))?;
+    let plan_config: PlanConfig = config.plan_config();
+    let base = plan_config
+        .base_branch
+        .clone()
+        .unwrap_or_else(|| "HEAD".to_owned());
+    let fetcher = halyard_git::fetch::GixTagFetcher::open(std::path::Path::new("."))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let report = profiler
+        .span("fetch", || {
+            fetcher.fetch_release_tags(&discovery.workspace, &plan_config, "origin", Some(&base))
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    match cli.format {
+        Format::Json => print_pretty_json(&fetch_json_document(&report))?,
+        Format::Gha => print!("{}", render::fetch_gha(&report)),
+        Format::Human => print!("{}", render::fetch_human(&report)),
+    }
+    // §15.4: a failed row fails the run (I2 — the re-run completes; the
+    // tags that landed classify as AlreadyLocal next time).
+    Ok(if report.failed > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The `fetch` JSON document (stable field order via `serde_json::json!`;
+/// built here so the renderers stay renderer-only, §7.2 style).
+fn fetch_json_document(report: &halyard_git::fetch::FetchReport) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = report
+        .rows
+        .iter()
+        .map(|row| match row {
+            halyard_git::fetch::FetchRow::Fetched { tag } => {
+                serde_json::json!({ "tag": tag, "outcome": "fetched" })
+            }
+            halyard_git::fetch::FetchRow::AlreadyLocal { tag } => {
+                serde_json::json!({ "tag": tag, "outcome": "already_local" })
+            }
+            halyard_git::fetch::FetchRow::Failed { tag, error } => {
+                serde_json::json!({ "tag": tag, "outcome": "failed", "error": error.code() })
+            }
+        })
+        .collect();
+    let selection: serde_json::Map<String, serde_json::Value> = report
+        .selection
+        .iter()
+        .map(|(package, tag)| (package.clone(), serde_json::Value::String(tag.clone())))
+        .collect();
+    serde_json::json!({
+        "remote": report.remote,
+        "base_branch": report.base_branch,
+        "selection": serde_json::Value::Object(selection),
+        "rows": rows,
+        "argv": report.argv,
+        "probe_tags": report.probe_tags,
+        "fetched": report.fetched,
+        "already_local": report.already_local,
+        "failed": report.failed,
+        "fallback_used": report.fallback_used,
+    })
+}
+
 fn cmd_release(
     cli: &Cli,
     profiler: &mut Profiler,
@@ -1669,8 +1764,8 @@ fn cmd_graph(cli: &Cli, profiler: &mut Profiler, format: GraphFormat) -> Result<
 }
 
 /// The `doctor` command.
-fn cmd_doctor(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
-    let report = doctor::check(cli, profiler)?;
+fn cmd_doctor(cli: &Cli, profiler: &mut Profiler, registries: bool) -> Result<(), CliError> {
+    let report = doctor::check(cli, profiler, registries)?;
     match cli.format {
         Format::Json => print_pretty_json(&json_value(&report)?)?,
         Format::Gha => print!("{}", render::doctor_gha(&report)),
