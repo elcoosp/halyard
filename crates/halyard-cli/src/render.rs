@@ -19,6 +19,118 @@ use crate::check;
 use crate::doctor::DoctorReport;
 use halyard_conventional::TitleLint;
 
+/// The walk provenance the shell surfaces (the M2.6 stats wiring): the
+/// git engine's own counters — [`halyard_git::GitHistory`]'s tree-diff
+/// statistics (§8.4, the M2.3 acceptance metric: entries read vs a
+/// naive diff), merge-policy statistics (§8.5) and the degraded /
+/// truncated markers (§8.3) — rendered identically in every report.
+/// Plain deterministic data (I3): no clock, no randomness.
+pub struct HistoryStats {
+    /// True when the walk ran without a commit-graph (§8.3 degraded
+    /// marker; correctness unaffected).
+    pub degraded: bool,
+    /// True when the walk stopped at `initial_release.max_commits` (§8.3).
+    pub truncated: bool,
+    /// Tree objects opened by the guided walk (§8.4).
+    pub trees_read: u64,
+    /// Tree entries iterated by the guided walk.
+    pub entries_read: u64,
+    /// Subtree comparisons answered from the memo LRU.
+    pub memo_hits: u64,
+    /// Commits whose whole tree comparison was skipped by a Bloom
+    /// negative.
+    pub bloom_skips: u64,
+    /// True when no changed-path filter was available (the documented
+    /// ceiling, never a wrong answer).
+    pub bloom_unavailable: bool,
+    /// Merge commits dropped under the first-parent policy (§8.5).
+    pub merges_dropped: usize,
+    /// Merge commits kept as change entries.
+    pub merges_kept: usize,
+    /// (commit, revert) pairs canceled inside the window.
+    pub reverts_canceled: usize,
+    /// Reverts kept as `fix` because their target is outside the window.
+    pub reverts_as_fix: usize,
+}
+
+impl HistoryStats {
+    /// Reads the counters off a built [`GitHistory`] (the engine's own
+    /// public fields — no re-measurement, no second walk).
+    #[must_use]
+    pub fn of(history: &halyard_git::GitHistory) -> Self {
+        let diff = &history.tree_diff_stats;
+        let merge = &history.merge_stats;
+        Self {
+            degraded: history.degraded,
+            truncated: history.truncated,
+            trees_read: diff.trees_read,
+            entries_read: diff.entries_read,
+            memo_hits: diff.memo_hits,
+            bloom_skips: diff.bloom_skips,
+            bloom_unavailable: diff.bloom_unavailable,
+            merges_dropped: merge.merges_dropped,
+            merges_kept: merge.merges_kept,
+            reverts_canceled: merge.reverts_canceled,
+            reverts_as_fix: merge.reverts_as_fix,
+        }
+    }
+
+    /// The stable JSON shape the report documents carry under `history`
+    /// (field order via `json!` — `BTreeMap` ordering, deterministic I3).
+    #[must_use]
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "degraded": self.degraded,
+            "truncated": self.truncated,
+            "trees_read": self.trees_read,
+            "entries_read": self.entries_read,
+            "memo_hits": self.memo_hits,
+            "bloom_skips": self.bloom_skips,
+            "bloom_unavailable": self.bloom_unavailable,
+            "merges_dropped": self.merges_dropped,
+            "merges_kept": self.merges_kept,
+            "reverts_canceled": self.reverts_canceled,
+            "reverts_as_fix": self.reverts_as_fix,
+        })
+    }
+
+    /// One skimmable human line (§16.3) naming the walk shape and every
+    /// counter.
+    #[must_use]
+    pub fn human_line(&self) -> String {
+        let mut flags = Vec::new();
+        if self.degraded {
+            flags.push("degraded (no commit-graph)");
+        }
+        if self.truncated {
+            flags.push("truncated at initial_release.max_commits");
+        }
+        let flags = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" {};", flags.join(", "))
+        };
+        format!(
+            "walk:{flags} {trees} trees / {entries} entries read, {memo} memo hits, \
+             {bloom} bloom skips (filter {availability}); merges {dropped} dropped / \
+             {kept} kept, reverts {canceled} canceled / {as_fix} as-fix",
+            trees = self.trees_read,
+            entries = self.entries_read,
+            memo = self.memo_hits,
+            bloom = self.bloom_skips,
+            availability = if self.bloom_unavailable {
+                "unavailable"
+            } else {
+                "available"
+            },
+            dropped = self.merges_dropped,
+            kept = self.merges_kept,
+            canceled = self.reverts_canceled,
+            as_fix = self.reverts_as_fix,
+        )
+    }
+}
+
 /// Renders the `apply --dry` preview (`plan_apply::dry_run_preview`): the
 /// byte patches the plan would write, per file, sorted by path (I3).
 pub fn apply_dry(preview: &BTreeMap<String, Vec<DryPatch>>) -> String {
@@ -133,7 +245,7 @@ pub fn apply_report(
 }
 
 /// Renders the plan as an aligned human table plus per-release reasons.
-pub fn plan_human(plan: &Plan) -> String {
+pub fn plan_human(plan: &Plan, stats: &HistoryStats) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -142,6 +254,7 @@ pub fn plan_human(plan: &Plan) -> String {
         head = short(&plan.head),
         base = plan.base_branch,
     );
+    out.push_str(&stats.human_line());
     if plan.releases.is_empty() {
         out.push_str("nothing to release.\n");
     } else {
@@ -404,8 +517,8 @@ pub fn doctor_gha(report: &DoctorReport) -> String {
 }
 
 /// Plan as a GHA job summary.
-pub fn plan_gha(plan: &Plan) -> String {
-    let mut out = String::from("## halyard plan\n\n");
+pub fn plan_gha(plan: &Plan, stats: &HistoryStats) -> String {
+    let mut out = format!("## halyard plan\n\n{}\n", stats.human_line());
     if plan.releases.is_empty() {
         out.push_str("Nothing to release.\n");
     } else {
