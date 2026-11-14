@@ -526,7 +526,7 @@ pub trait Forge {
     fn rate_limit(&self) -> RateInfo;
 }
 ```
-Adapters: `github` (REST; GraphQL only where it reduces calls), later `gitlab`, `gitea/forgejo`, `bitbucket`. *(As-built note, 2026-11: the shipped trait carries two further methods — `close_pr` and `calls()` (the §11.5 call log), the latter two with honest `E-FORGE-UNSUPPORTED` defaults — and two adapters: `MemoryForge` (deterministic reference + failpoint harness) and `PreviewForge` (the dry-run forecast, real probes / forecasted mutations); the REST adapter is M4.1b.)*
+Adapters: `github` (REST; GraphQL only where it reduces calls), later `gitlab`, `gitea/forgejo`, `bitbucket`. *(As-built note, 2026-11: the shipped trait carries two further methods — `close_pr` and `calls()` (the §11.5 call log), the latter two with honest `E-FORGE-UNSUPPORTED` defaults — and two adapters: `MemoryForge` (deterministic reference + failpoint harness) and `PreviewForge` (the dry-run forecast, real probes / forecasted mutations); the REST adapter is M4.1b — as-built (ADR-0013): the transport vocabulary (plain-data `HttpRequest`/`HttpResponse` + the `HttpTransport` seam + the scripted `MemoryTransport`) lives in this crate, the adapter itself is the `halyard-forge-github` crate (layer rule widened consciously), `ForgeError::Transport`/`E-FORGE-TRANSPORT` joined the taxonomy, token auth ships and App-JWT is the declared M4.1c follow-up, and the nightly `forge-smoke` job runs through the adapter.)*
 
 ### 11.5 GitHub specifics
 - **Token:** default `GITHUB_TOKEN`; known limitation: PRs/pushes made with it don't trigger other workflows ⇒ support GitHub App auth natively (JWT → installation token minted by the binary; no extra Action step) and PAT.
