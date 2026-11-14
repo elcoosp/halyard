@@ -331,7 +331,7 @@ Year-2 plugin system (WASM component model, WIT interface mirroring this trait) 
 ## 8. Git engine (`halyard-git`) — the performance heart
 
 ### 8.1 Requirements
-- Use `gix` with **minimal features** (`default-features = false`, enable only `revision`, `blob-diff`/tree-diff as needed, `max-performance-safe`). No `git2`, no `libgit2`, no `git` subprocess in planning.
+- Use `gix` with **minimal features** (`default-features = false`, enable only `revision`, `blob-diff`/tree-diff as needed, `max-performance-safe`). No `git2`, no `libgit2`, no `git` subprocess in planning. *(As-built note, 2026-11: `max-performance-safe` no longer exists in gix 0.90 — the shipped minimal functional set is `features = ["sha1"]`, no network client, no index, no worktree machinery; see `crates/halyard-git/Cargo.toml`.)*
 - Must handle: shallow clones (detect and emit actionable error or auto-deepen), partial (`--filter=blob:none`) clones, packed-refs, commit-graph (v1 with generation numbers v2), alternates, worktrees, submodules (ignored).
 
 ### 8.2 Resolving base refs
