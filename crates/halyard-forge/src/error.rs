@@ -42,6 +42,16 @@ pub enum ForgeError {
         /// What is malformed.
         reason: String,
     },
+    /// The exchange never produced a usable HTTP result: a
+    /// connection-level failure (DNS, TLS, refused, timeout), a
+    /// server-side 5xx, or a response the adapter cannot read
+    /// (`E-FORGE-TRANSPORT`; ADR-0013). Retryable at the run level —
+    /// never a caller bug, never a credentials problem.
+    Transport {
+        /// What failed at the transport layer (never credentials, never
+        /// a status the adapter interpreted).
+        reason: String,
+    },
     /// The adapter does not implement this capability
     /// (`E-FORGE-UNSUPPORTED`); the trait's default
     /// [`Forge::commit_via_api`](crate::Forge::commit_via_api) produces it, mirroring the lockfile
@@ -61,6 +71,7 @@ impl ForgeError {
             Self::RateLimited { .. } => Self::RATE_LIMIT_CODE,
             Self::Conflict { .. } => Self::CONFLICT_CODE,
             Self::Request { .. } => Self::REQUEST_CODE,
+            Self::Transport { .. } => Self::TRANSPORT_CODE,
             Self::Unsupported { .. } => Self::UNSUPPORTED_CODE,
         }
     }
@@ -91,6 +102,13 @@ impl ForgeError {
         }
     }
 
+    /// Builds an [`ForgeError::Transport`].
+    pub fn transport(reason: impl Into<String>) -> Self {
+        Self::Transport {
+            reason: reason.into(),
+        }
+    }
+
     /// Builds an [`ForgeError::Unsupported`] naming the adapter type.
     pub fn unsupported(adapter: impl Into<String>) -> Self {
         Self::Unsupported {
@@ -108,6 +126,8 @@ impl ForgeError {
     pub const CONFLICT_CODE: &'static str = "E-FORGE-CONFLICT";
     /// Stable code of [`ForgeError::Request`].
     pub const REQUEST_CODE: &'static str = "E-FORGE-REQUEST";
+    /// Stable code of [`ForgeError::Transport`].
+    pub const TRANSPORT_CODE: &'static str = "E-FORGE-TRANSPORT";
     /// Stable code of [`ForgeError::Unsupported`].
     pub const UNSUPPORTED_CODE: &'static str = "E-FORGE-UNSUPPORTED";
 }
@@ -137,6 +157,13 @@ impl std::fmt::Display for ForgeError {
                     Self::REQUEST_CODE
                 )
             }
+            Self::Transport { reason } => {
+                write!(
+                    f,
+                    "[{}] forge transport failed: {reason}",
+                    Self::TRANSPORT_CODE
+                )
+            }
             Self::Unsupported { adapter } => write!(
                 f,
                 "[{}] adapter {adapter} does not implement this capability",
@@ -164,6 +191,10 @@ mod tests {
             (
                 ForgeError::request("empty branch"),
                 ForgeError::REQUEST_CODE,
+            ),
+            (
+                ForgeError::transport("connection refused"),
+                ForgeError::TRANSPORT_CODE,
             ),
             (
                 ForgeError::unsupported("GitHubRest"),
