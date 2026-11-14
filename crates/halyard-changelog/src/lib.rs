@@ -5,11 +5,14 @@
 //! `Unreleased` section and is byte-identical to the first run (I1/I3).
 //!
 //! The built-in style set ([`Style`]): `keep-a-changelog` (M3.5),
-//! `conventional` (grouped by conventional commit type, M3.5b) and
-//! `compact` (one flat bullet list, M3.5b). Other §9.4 styles
-//! (`github-release-notes`) need forge context (compare links, remote
-//! URL) and stay unshipped; requesting them yields
-//! [`ChangelogError::Style`] (`E-CHLOG-STYLE`).
+//! `conventional` (grouped by conventional commit type, M3.5b),
+//! `compact` (one flat bullet list, M3.5b) and `github-release-notes`
+//! (the forge-release body; M4.3b notes pipeline). The style registry is
+//! context-free — the compare link (the forge context) rides
+//! [`NotesContext`] into [`render_release_notes`], the per-release entry
+//! point the machine's `ReleaseSpec.notes` consumes; requesting a
+//! genuinely unknown style yields [`ChangelogError::Style`]
+//! (`E-CHLOG-STYLE`).
 //!
 //! The §11.3 Release-PR body renderer ([`pr_body`], M4.3a) lives here
 //! too: it is markdown rendering over a [`Plan`] — the same pure
@@ -26,8 +29,13 @@ use halyard_core::plan::{Plan, PlanRelease};
 use minijinja::{Environment, context};
 
 pub mod pr_body;
+pub mod release_notes;
 
 pub use pr_body::{extract_embedded_plan, render_release_body};
+pub use release_notes::{
+    NotesContext, compare_url, extract_version_section, render_release_notes,
+    render_release_notes_for_version,
+};
 
 /// The stable `<!-- halyard:insert -->` marker (§9.4) and the Unreleased
 /// heading the renderer replaces.
@@ -36,8 +44,10 @@ const UNRELEASED_HEADING: &str = "## [Unreleased]";
 
 /// The built-in changelog styles (§9.4) and their config names — the
 /// M3.5b style registry that replaced the `style != "keep-a-changelog"`
-/// string check. `github-release-notes` stays unshipped (it needs forge
-/// context: compare links, remote URL).
+/// string check. The registry is context-free: `github-release-notes`
+/// renders without a compare link here, and the forge context rides
+/// [`NotesContext`] through [`render_release_notes`] (the notes
+/// pipeline).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
     /// `keep-a-changelog`: `## [version]` + `### Section` groups taken
@@ -49,6 +59,11 @@ pub enum Style {
     /// `compact`: one flat bullet list per release, breaking entries
     /// first, no section grouping (M3.5b).
     Compact,
+    /// `github-release-notes`: the §9.4 forge-release body — `###`
+    /// groups (breaking first) and, when the caller supplies the forge
+    /// context, the `**Full Changelog**` compare line (M4.3b notes
+    /// pipeline; the registry render is context-free).
+    GithubReleaseNotes,
 }
 
 impl Style {
@@ -60,6 +75,7 @@ impl Style {
             "keep-a-changelog" => Some(Self::KeepAChangelog),
             "conventional" => Some(Self::Conventional),
             "compact" => Some(Self::Compact),
+            "github-release-notes" => Some(Self::GithubReleaseNotes),
             _ => None,
         }
     }
@@ -71,6 +87,7 @@ impl Style {
             Self::KeepAChangelog => "keep-a-changelog",
             Self::Conventional => "conventional",
             Self::Compact => "compact",
+            Self::GithubReleaseNotes => "github-release-notes",
         }
     }
 }
@@ -108,8 +125,9 @@ pub fn render_release_template(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChangelogError {
     /// The requested style is not shipped (`E-CHLOG-STYLE`); the built-in
-    /// set is `keep-a-changelog`, `conventional` and `compact` — user
-    /// templates go through [`render_plan_template`], not a style name.
+    /// set is `keep-a-changelog`, `conventional`, `compact` and
+    /// `github-release-notes` — user templates go through
+    /// [`render_plan_template`], not a style name.
     Style {
         /// The style name as requested.
         requested: String,
@@ -165,8 +183,8 @@ impl std::fmt::Display for ChangelogError {
             Self::Style { requested } => write!(
                 f,
                 "[E-CHLOG-STYLE] changelog style {requested:?} is not available; the built-in \
-                 styles are \"keep-a-changelog\", \"conventional\" and \"compact\" (user \
-                 templates go through render_plan_template)"
+                 styles are \"keep-a-changelog\", \"conventional\", \"compact\" and \
+                 \"github-release-notes\" (user templates go through render_plan_template)"
             ),
             Self::Template { reason } => write!(
                 f,
@@ -231,6 +249,12 @@ fn render_release_styled(release: &PlanRelease, style: Style) -> Result<String, 
         }
         Style::Conventional => Ok(conventional_body(&release.to, &sections)),
         Style::Compact => Ok(compact_body(&release.to, &sections)),
+        Style::GithubReleaseNotes => Ok(github_notes_body(
+            &release.to,
+            &sections,
+            None,
+            /* heading */ true,
+        )),
     }
 }
 
@@ -477,6 +501,40 @@ fn compact_body(version: &str, sections: &Sections) -> String {
     out
 }
 
+/// The `github-release-notes` body (§9.4): `###` groups (breaking
+/// first), no per-type renaming (the planner's entry titles are already
+/// the release-notes vocabulary), and — when the caller supplies the
+/// forge context — the `**Full Changelog**` compare line closes the
+/// body. `heading` distinguishes the two consumers: the changelog
+/// document path renders `## [version]` (the merged doc needs the
+/// version anchor); the notes pipeline renders a heading-less body (the
+/// forge release title already carries the tag).
+pub(crate) fn github_notes_body(
+    version: &str,
+    sections: &Sections,
+    compare: Option<&str>,
+    heading: bool,
+) -> String {
+    let (breaking, rest) = split_breaking(sections);
+    let mut out = String::new();
+    if heading {
+        let _ = writeln!(out, "## [{version}]");
+    }
+    for (title, lines) in breaking.iter().chain(rest.iter()) {
+        let _ = writeln!(out, "\n### {title}\n");
+        for line in lines {
+            let _ = writeln!(out, "- {line}");
+        }
+    }
+    if let Some(compare) = compare {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let _ = writeln!(out, "**Full Changelog**: {compare}");
+    }
+    out
+}
+
 /// The keep-a-changelog release template (minijinja, compiled per call —
 /// releases are one-shot documents, not hot-loop text).
 static RELEASE_TEMPLATE: &str = r"## [{{ version }}]
@@ -572,7 +630,7 @@ mod tests {
 
     #[test]
     fn unknown_style_is_an_error() {
-        match render_plan(&sample_plan(), "github-release-notes", None) {
+        match render_plan(&sample_plan(), "not-a-style", None) {
             Err(err) => assert_eq!(err.code(), "E-CHLOG-STYLE"),
             Ok(out) => unreachable!("unknown style must error, got {out:?}"),
         }
@@ -586,6 +644,7 @@ mod tests {
             ("keep-a-changelog", Style::KeepAChangelog),
             ("conventional", Style::Conventional),
             ("compact", Style::Compact),
+            ("github-release-notes", Style::GithubReleaseNotes),
         ] {
             let parsed = Style::parse(name).unwrap_or_else(|| unreachable!("{name} parses"));
             assert_eq!(parsed, expected);
@@ -651,7 +710,7 @@ mod tests {
     fn compact_and_conventional_reruns_are_byte_identical() -> Result<(), Box<dyn std::error::Error>>
     {
         let plan = sample_plan();
-        for style in ["compact", "conventional"] {
+        for style in ["compact", "conventional", "github-release-notes"] {
             let first = render_plan(&plan, style, None)?;
             let second = render_plan(&plan, style, Some(&first))?;
             assert_eq!(first, second, "{style} re-run is byte-identical");
@@ -661,14 +720,15 @@ mod tests {
 
     #[test]
     fn unknown_style_error_names_the_built_ins() {
-        match render_plan(&sample_plan(), "github-release-notes", None) {
+        match render_plan(&sample_plan(), "not-a-style", None) {
             Err(err) => {
                 assert_eq!(err.code(), "E-CHLOG-STYLE");
                 let message = err.to_string();
                 assert!(
                     message.contains("keep-a-changelog")
                         && message.contains("conventional")
-                        && message.contains("compact"),
+                        && message.contains("compact")
+                        && message.contains("github-release-notes"),
                     "message names the shipped styles: {message}"
                 );
             }
