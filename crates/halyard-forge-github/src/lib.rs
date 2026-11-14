@@ -1,6 +1,6 @@
 //! The GitHub REST adapter (M4.1b, §11.4): a full
 //! [`Forge`](halyard_forge::Forge) implementation over GitHub REST v3,
-//! plus the blocking-`ureq` [`HttpTransport`] the shell injects and the
+//! plus the blocking-`ureq` [`halyard_forge::transport::HttpTransport`] the shell injects and the
 //! GitHub App credentials (M4.1c: JWT → installation token, ADR-0014).
 //!
 //! Layer rule (§7.2 as widened by ADR-0013): this crate depends on
