@@ -48,8 +48,11 @@ halyard apply
 # Forecast the §11.1 machine pass over the preview forge: the tag-phase
 # reconciliation (manifest-vs-tags), the prepare-phase Release-PR
 # upsert/close, the §11.5 call budget and the §11.3 body. Nothing is
-# written; no network is touched (I5).
-halyard pr --dry
+# written; no network is touched (I5). The JSON carries each pending
+# release's forge notes (§9.4 `github-release-notes`, rendered from the
+# package changelog's section for the released version — no section, no
+# fabricated notes).
+halyard pr --dry --format json | jq '.pending_releases[].notes'
 
 # Lint a squash-merge PR title and predict the conveyed bump (§11.6).
 halyard check --pr-title "feat(parser): accept spans"
@@ -72,12 +75,14 @@ halyard check --exit-code
 | `apply [--dry]` | available (M3.6) |
 | `pr --dry` | available (M4.2b step 1; live mode declines with `E-CLI-PR` until the M4.1b forge adapter) |
 | `check [--pr-title] [--exit-code]` | available (M4.3) |
-| `release --dry` | available (§11.1 step-2 git-side forecast over `halyard-git::tag::PreviewTagWriter`, targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance; live mode declines with `E-CLI-RELEASE` until the live release shell) |
+| `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); `--dry` forecasts everything offline; forge releases defer honestly (`M4.1b`) |
 | `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 `apply` is the **only** filesystem-writing command: it applies the plan's
 version-bump edits atomically (fsync + rename, `halyard-edit`), never
-partially. Everything above it is read-only.
+partially. The other writing command is `release` (live): it creates git
+refs (annotated release tags) and pushes them to `origin` — the git-side
+§11.1 step-2 effects above. Everything else is read-only.
 
 ## Global flags
 
