@@ -61,6 +61,16 @@ fn build_tagged_workspace(label: &str) -> Result<GitFixture, BoxError> {
     Ok(fx)
 }
 
+/// The `target` object of the first forecast directive (`None` when the
+/// forecast carries no directive or no provenance).
+fn first_target(value: &serde_json::Value) -> Option<&serde_json::Value> {
+    value
+        .get("directives")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("target"))
+}
+
 /// Runs the binary; returns (exit code, combined output).
 fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(u8, String), BoxError> {
     let out = Command::new(env!("CARGO_BIN_EXE_halyard"))
@@ -176,6 +186,90 @@ fn release_dry_human_render_lists_directives() -> Result<(), BoxError> {
     assert!(
         text.contains("nothing written"),
         "the header disclaims writes: {text}"
+    );
+    Ok(())
+}
+
+/// The worktree-only bump state: the manifest says 0.1.1 on disk while
+/// HEAD's manifest still says 0.1.0 — the version was never committed,
+/// so the pinpoint walk cannot verify a target and the documented HEAD
+/// fallback applies (the phase still runs, honestly).
+fn build_dirty_workspace(label: &str) -> Result<(GitFixture, String), BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.write(
+        "Cargo.toml",
+        "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n",
+    )?;
+    let head = fx
+        .head_oid()?
+        .ok_or_else(|| "fixture without HEAD".to_owned())?;
+    Ok((fx, head))
+}
+
+#[test]
+fn release_dry_targets_the_commit_that_introduced_the_version() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("pinpoint")?;
+    let bump = fx
+        .head_oid()?
+        .ok_or_else(|| "fixture without HEAD".to_owned())?;
+    let (code, text) = halyard(fx.root(), &["release", "--dry", "--format", "json"])?;
+    assert_eq!(code, 0, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let target = first_target(&value).ok_or("the directive carries no target")?;
+    assert_eq!(
+        target.get("source").and_then(serde_json::Value::as_str),
+        Some("manifest_pinpoint"),
+        "the bump commit is pinpointed: {text}"
+    );
+    assert_eq!(
+        target.get("commit").and_then(serde_json::Value::as_str),
+        Some(bump.as_str()),
+        "the target is the commit that introduced 0.1.1, not HEAD-agnostic: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_dry_falls_back_to_head_when_the_version_was_never_committed() -> Result<(), BoxError> {
+    let (fx, head) = build_dirty_workspace("dirty")?;
+    let (code, text) = halyard(fx.root(), &["release", "--dry", "--format", "json"])?;
+    assert_eq!(code, 0, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let target = first_target(&value).ok_or("the directive carries no target")?;
+    assert_eq!(
+        target.get("source").and_then(serde_json::Value::as_str),
+        Some("head_fallback"),
+        "a never-committed version cannot be pinpointed: {text}"
+    );
+    assert_eq!(
+        target.get("commit").and_then(serde_json::Value::as_str),
+        Some(head.as_str()),
+        "the fallback targets the snapshot HEAD: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_dry_human_render_names_the_target_provenance() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("human-pinpoint")?;
+    let (code, text) = halyard(fx.root(), &["release", "--dry"])?;
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("manifest pinpoint"),
+        "the pinpoint provenance is named: {text}"
+    );
+    assert!(
+        text.contains("target "),
+        "the resolved target commit is shown: {text}"
+    );
+
+    let (fx, _head) = build_dirty_workspace("human-fallback")?;
+    let (code, text) = halyard(fx.root(), &["release", "--dry"])?;
+    assert_eq!(code, 0, "{text}");
+    assert!(
+        text.contains("HEAD fallback"),
+        "the fallback provenance is named: {text}"
     );
     Ok(())
 }
