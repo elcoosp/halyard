@@ -12,6 +12,11 @@ code 5 (forge rate-limited). Real adapters are expected to honour
 per-run call budget — the design goal is ≤ 2 REST calls on the update
 path (§11.5), so hitting this error usually means the budget was broken.
 
+*(As-built, M5.5: the §11.5 call governor ships this contract —
+`halyard_forge::governor::Governor` honors the suggested `Retry-After`
+exactly, spaces content-creating calls, and fails closed with
+`E-FORGE-BUDGET` when the armed per-run budget is spent.)*
+
 ## Cause
 
 - the run exceeded the forge's request budget (retry header carries the
