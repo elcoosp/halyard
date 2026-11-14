@@ -60,7 +60,7 @@ pattern from M1 onward where useful).
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
 | `E-CLI-PR` | [E-CLI-PR.md](E-CLI-PR.md) | CLI live Release-PR decline (M4.2b `pr --dry`) |
 | `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | CLI live release decline (§11.1 tag-phase `release --dry`) |
-| `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4) |
+| `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4; token + App modes since M4.1c) |
 | `E-FORGE-TRANSPORT` | [E-FORGE-TRANSPORT.md](E-FORGE-TRANSPORT.md) | Forge transport failure — connection, 5xx, unreadable response (M4.1b) |
 | `E-FORGE-RATE-LIMIT` | [E-FORGE-RATE-LIMIT.md](E-FORGE-RATE-LIMIT.md) | forge throttling (M4.1a, exit code 5) |
 | `E-FORGE-CONFLICT` | [E-FORGE-CONFLICT.md](E-FORGE-CONFLICT.md) | forge CAS precondition (M4.1a, §11.2) |
