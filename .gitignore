@@ -29,3 +29,7 @@ crates/*/core
 # cargo-fuzz artifacts
 /fuzz/target
 fuzz/Cargo.lock
+
+# session deliverables (ship ceremony, not codebase)
+ship.toml
+.github/pr-body.md
