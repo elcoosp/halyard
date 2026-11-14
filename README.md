@@ -65,13 +65,23 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   [`Forge`](crates/halyard-forge/src/lib.rs) trait (§11.4), its data
   vocabulary, the `E-FORGE-*` taxonomy and the deterministic
   `MemoryForge` reference adapter with call log + failpoint harness.
+- **GitHub REST adapter + App auth (M4.1b/M4.1c, ADR-0013/ADR-0014)** —
+  `halyard-forge-github`: the full `Forge` implementation over REST v3
+  (ETag conditionals, GET-by-tag-first idempotence, the Git-Data
+  `commit_via_api` chain) over the seam's `HttpTransport` (blocking
+  `ureq` + rustls), plus the blocking `UreqTransport`; M4.1c adds the
+  GitHub App credentials (`AppCredentials`: PKCS#1/PKCS#8 PEM → `ring`
+  RS256 signer, JWT → installation-token mint on a conservative
+  45-minute TTL, injected `EpochClock` for testable determinism) and the
+  shell's `HALYARD_APP_*` env wire-up (`pr` live, the release forge
+  half, `forge-smoke` — whose JSON carries the resolved `auth_mode`).
 - **Release-PR state machine (M4.2a)** — `halyard_forge::state`:
   `run_release_machine` executes the §11.1 tag phase (GET-by-tag-first
   release creation, PROPAGATE gating) and prepare phase (find → upsert /
   no-op / close) against any `&dyn Forge`, with the §11.5 call budgets
   and the §15.2 failure-injection matrix pinned in tests. The seam gained
   `Forge::close_pr` (§11.1 step 3); the shell's git-side tag/push
-  effects and the M4.1b REST adapter are the remaining slices.
+  effects landed with ADR-0012 and the REST adapter with ADR-0013.
 - **Release-PR body renderer (M4.3a)** — `halyard-changelog::pr_body`:
   the §11.3 stable body (plan table, changelog preview, override footer)
   with the embedded plan (canonical JSON → DEFLATE → base64) and the
@@ -84,7 +94,7 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   the full §11.1 machine pass — the tag phase (fed by the manifest-vs-tags
   reconciliation) first, the prepare phase under the PROPAGATE gate —
   reporting the effects, the call-budget forecast and the body; live mode
-  declines with `E-CLI-PR` until the M4.1b adapter lands.
+  runs the same machine over the M4.1b GitHub REST adapter (below).
 - **Tag-phase reconciliation (§11.1 step 2)** —
   `halyard_core::release_state`: the stateless manifest-vs-tags decision
   (Tagged / Pending / Behind) as a pure function over the workspace, the
@@ -102,8 +112,9 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
   forecast, and the **live release shell (git side)**: `halyard release`
   runs the same executor over the real writer and pushes the created
   tags through `halyard_git::push` (the §11.2 effect — one
-  `git push --porcelain`, argv arrays, no force, no prompt; ADR-0012),
-  with forge releases deferred honestly (`M4.1b`).
+  `git push --porcelain`, argv arrays, no force, no prompt; ADR-0012);
+  the forge half (GET-by-tag-first release creation) runs over the M4.1b
+  adapter when credentials allow it and is an honest skip otherwise.
 - **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
   (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
   `halyard check --pr-title` (planner-exact prediction with the §10.2
@@ -135,6 +146,7 @@ crates/
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
   halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
+  halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
