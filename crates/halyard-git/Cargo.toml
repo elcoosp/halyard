@@ -44,5 +44,9 @@ tempfile = { workspace = true }
 name = "walk"
 harness = false
 
+[[bench]]
+name = "tag_write"
+harness = false
+
 [lints]
 workspace = true
