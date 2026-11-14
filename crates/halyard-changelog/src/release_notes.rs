@@ -146,6 +146,20 @@ pub fn compare_url(remote_url: &str, from_tag: Option<&str>, to_tag: &str) -> Op
     Some(format!("{base}/compare/{from}...{to_tag}"))
 }
 
+/// The `owner/repo` slug of a GitHub remote URL — the same four-shape
+/// grammar [`compare_url`] normalizes (`https://github.com/o/r(.git)`,
+/// `git@github.com:o/r(.git)`, `ssh://git@github.com/o/r(.git)`); a
+/// foreign forge renders `None`. The forge adapter wire-up derives the
+/// REST repo coordinates from it (M4.1b), so one parser owns the
+/// remote-shape knowledge.
+#[must_use]
+pub fn repo_slug(remote_url: &str) -> Option<(String, String)> {
+    let base = web_base(remote_url)?;
+    let path = base.strip_prefix("https://github.com/")?;
+    let (owner, repo) = path.split_once('/')?;
+    Some((owner.to_owned(), repo.to_owned()))
+}
+
 /// The `https://github.com/o/r` web base of a remote URL, when the
 /// remote is GitHub-shaped.
 fn web_base(remote_url: &str) -> Option<String> {
@@ -182,7 +196,26 @@ fn web_base(remote_url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::web_base;
+    use super::{repo_slug, web_base};
+
+    #[test]
+    fn repo_slug_reads_the_github_shapes() {
+        let cases = [
+            ("https://github.com/octo/halyard.git", ("octo", "halyard")),
+            ("https://github.com/octo/halyard", ("octo", "halyard")),
+            ("git@github.com:octo/halyard.git", ("octo", "halyard")),
+            ("ssh://git@github.com/octo/halyard.git", ("octo", "halyard")),
+        ];
+        for (remote, expected) in cases {
+            assert_eq!(
+                repo_slug(remote),
+                Some((expected.0.to_owned(), expected.1.to_owned())),
+                "{remote} resolves to its slug"
+            );
+        }
+        assert_eq!(repo_slug("https://gitlab.com/octo/halyard.git"), None);
+        assert_eq!(repo_slug("https://github.com/octo-only"), None);
+    }
 
     #[test]
     fn web_base_rejects_foreign_and_broken_shapes() {
