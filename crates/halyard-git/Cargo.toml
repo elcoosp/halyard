@@ -48,5 +48,9 @@ harness = false
 name = "tag_write"
 harness = false
 
+[[bench]]
+name = "tag_target"
+harness = false
+
 [lints]
 workspace = true
