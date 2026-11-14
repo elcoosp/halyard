@@ -38,6 +38,8 @@ pattern from M1 onward where useful).
 | `E-GIT-SHALLOW` | [E-GIT-SHALLOW.md](E-GIT-SHALLOW.md) | git engine shallow clone (M2) |
 | `E-GIT-REF` | [E-GIT-REF.md](E-GIT-REF.md) | git engine ref database (M2) |
 | `E-GIT-OBJECT` | [E-GIT-OBJECT.md](E-GIT-OBJECT.md) | git engine object reads (M2) |
+| `E-GIT-TAG` | [E-GIT-TAG.md](E-GIT-TAG.md) | git engine tag write path (M4.2b, §11.1 step 2) |
+| `E-GIT-TAG-CONFLICT` | [E-GIT-TAG-CONFLICT.md](E-GIT-TAG-CONFLICT.md) | git engine release-tag conflict (M4.2b, §11.1 step 2) |
 | `E-PLAN-CYCLE` | [E-PLAN-CYCLE.md](E-PLAN-CYCLE.md) | planner cycle (M1.9) |
 | `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
 | `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
@@ -48,6 +50,7 @@ pattern from M1 onward where useful).
 | `E-CACHE-IO` | [E-CACHE-IO.md](E-CACHE-IO.md) | cache read/write/fsync (M2.5) |
 | `E-CACHE-LOCK` | [E-CACHE-LOCK.md](E-CACHE-LOCK.md) | cache advisory lock (M2.5) |
 | `E-CHLOG-STYLE` | [E-CHLOG-STYLE.md](E-CHLOG-STYLE.md) | changelog style (M3.x) |
+| `E-CHLOG-TEMPLATE` | [E-CHLOG-TEMPLATE.md](E-CHLOG-TEMPLATE.md) | changelog user template (M3.5) |
 | `E-CHLOG-FILE` | [E-CHLOG-FILE.md](E-CHLOG-FILE.md) | changelog existing file (M3.x) |
 | `E-CHLOG-PRBODY` | [E-CHLOG-PRBODY.md](E-CHLOG-PRBODY.md) | Release-PR body / embedded plan (M4.3a, §11.3) |
 | `E-CLI-CWD` | [E-CLI-CWD.md](E-CLI-CWD.md) | CLI -C handling (M1.10) |
@@ -55,6 +58,7 @@ pattern from M1 onward where useful).
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
 | `E-CLI-PR` | [E-CLI-PR.md](E-CLI-PR.md) | CLI live Release-PR decline (M4.2b `pr --dry`) |
+| `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | CLI live release decline (§11.1 tag-phase `release --dry`) |
 | `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4) |
 | `E-FORGE-RATE-LIMIT` | [E-FORGE-RATE-LIMIT.md](E-FORGE-RATE-LIMIT.md) | forge throttling (M4.1a, exit code 5) |
 | `E-FORGE-CONFLICT` | [E-FORGE-CONFLICT.md](E-FORGE-CONFLICT.md) | forge CAS precondition (M4.1a, §11.2) |
