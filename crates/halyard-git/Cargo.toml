@@ -37,6 +37,8 @@ halyard-test-support = { workspace = true }
 insta = { workspace = true }
 dhat = "0.3"
 criterion = { workspace = true }
+# The `cached_walk` example holds the fixture repo in a temp dir.
+tempfile = { workspace = true }
 
 [[bench]]
 name = "walk"
