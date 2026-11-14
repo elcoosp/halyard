@@ -60,6 +60,20 @@ pub enum ForgeError {
         /// The adapter type that was asked.
         adapter: String,
     },
+    /// The run's own call budget was exhausted (`E-FORGE-BUDGET`, the
+    /// §11.5 governor): the operation was refused *before* it reached
+    /// the forge — a fail-closed local policy, never a forge complaint,
+    /// never retried here. The re-run resumes where the pass stopped
+    /// (I2) without duplicate artifacts.
+    Budget {
+        /// The refused operation (`"upsert_pr"`, …).
+        op: String,
+        /// Forwarded attempts already spent this run (§11.5: injected
+        /// failures and retries are observable spend).
+        spent: u32,
+        /// The configured per-run budget.
+        budget: u32,
+    },
 }
 
 impl ForgeError {
@@ -73,6 +87,7 @@ impl ForgeError {
             Self::Request { .. } => Self::REQUEST_CODE,
             Self::Transport { .. } => Self::TRANSPORT_CODE,
             Self::Unsupported { .. } => Self::UNSUPPORTED_CODE,
+            Self::Budget { .. } => Self::BUDGET_CODE,
         }
     }
 
@@ -115,6 +130,15 @@ impl ForgeError {
             adapter: adapter.into(),
         }
     }
+
+    /// Builds an [`ForgeError::Budget`] (the §11.5 governor's refusal).
+    pub fn budget(op: impl Into<String>, spent: u32, budget: u32) -> Self {
+        Self::Budget {
+            op: op.into(),
+            spent,
+            budget,
+        }
+    }
 }
 
 impl ForgeError {
@@ -130,6 +154,8 @@ impl ForgeError {
     pub const TRANSPORT_CODE: &'static str = "E-FORGE-TRANSPORT";
     /// Stable code of [`ForgeError::Unsupported`].
     pub const UNSUPPORTED_CODE: &'static str = "E-FORGE-UNSUPPORTED";
+    /// Stable code of [`ForgeError::Budget`].
+    pub const BUDGET_CODE: &'static str = "E-FORGE-BUDGET";
 }
 
 impl std::fmt::Display for ForgeError {
@@ -169,6 +195,12 @@ impl std::fmt::Display for ForgeError {
                 "[{}] adapter {adapter} does not implement this capability",
                 Self::UNSUPPORTED_CODE
             ),
+            Self::Budget { op, spent, budget } => write!(
+                f,
+                "[{}] forge call budget exhausted: {op} refused after \
+                 {spent}/{budget} calls this run",
+                Self::BUDGET_CODE
+            ),
         }
     }
 }
@@ -199,6 +231,10 @@ mod tests {
             (
                 ForgeError::unsupported("GitHubRest"),
                 ForgeError::UNSUPPORTED_CODE,
+            ),
+            (
+                ForgeError::budget("upsert_pr", 40, 40),
+                ForgeError::BUDGET_CODE,
             ),
         ];
         for (err, code) in cases {
