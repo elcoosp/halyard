@@ -1,6 +1,6 @@
 [package]
 name = "halyard-forge-github"
-description = "The GitHub REST adapter (M4.1b, §11.4): a full `Forge` implementation over REST v3 with ETag conditionals, plus the blocking-ureq transport"
+description = "The GitHub REST adapter (M4.1b, §11.4): a full `Forge` implementation over REST v3 with ETag conditionals, App-JWT installation-token auth (M4.1c) and the blocking-ureq transport"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -20,6 +20,12 @@ serde_json = { workspace = true }
 # Git-data blob payloads are base64 (the `encoding: "base64"` upload path);
 # the same engine choice as halyard-changelog's embedded-plan encoding.
 base64 = "0.22"
+# M4.1c (ADR-0014): RS256 signing for the GitHub App JWT. `ring` is
+# already in the runtime graph (rustls' provider), has no build scripts
+# and no default features to prune; the PKCS#8 wrapper around the PEM's
+# PKCS#1 body lives in `src/app_auth.rs`. Widened consciously in
+# `xtask/src/layers.rs`.
+ring = { version = "0.17", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # The scripted-contract tests parse GitHub-shaped bodies and encode the
@@ -31,6 +37,12 @@ base64 = "0.22"
 
 [[bench]]
 name = "forge_calls"
+harness = false
+
+# M4.1c (ADR-0014): the App-auth CPU floor — the JWT mint and the
+# scripted mint+probe pass shapes.
+[[bench]]
+name = "app_auth"
 harness = false
 
 [lints]
