@@ -62,16 +62,13 @@ fn path_shaped_values_classify_as_templates() {
 #[test]
 fn bare_unknown_names_stay_caller_bugs() {
     let err = StyleSource::from_config("keepachangelog")
-        .err()
-        .expect("an unknown name is the documented error");
+        .expect_err("an unknown name is the documented error");
     assert_eq!(err.code(), "E-CHLOG-STYLE", "{err}");
     assert!(
         err.to_string().contains("keepachangelog"),
         "the error names the requested value: {err}"
     );
-    let err = StyleSource::from_config("")
-        .err()
-        .expect("empty is not a path");
+    let err = StyleSource::from_config("").expect_err("empty is not a path");
     assert_eq!(err.code(), "E-CHLOG-STYLE", "{err}");
 }
 
