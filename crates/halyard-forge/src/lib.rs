@@ -41,9 +41,13 @@
 //! machine over it ([`state::run_release_machine`]) with the
 //! [`Forge::close_pr`] capability; M4.2b step 1 ships the dry-run
 //! adapter ([`PreviewForge`]) the shell's `pr --dry` forecast runs on.
-//! The remaining M4.1b slice is the GitHub REST adapter (`ETag`
-//! conditionals, backoff, App-JWT auth) — the nightly `forge-smoke` job
-//! stays latent until it exists.
+//! M4.1b ships the transport vocabulary ([`transport`]: plain-data
+//! requests/responses, the [`transport::HttpTransport`] effect seam and
+//! the scripted [`transport::MemoryTransport`]) plus the
+//! `E-FORGE-TRANSPORT` code; the GitHub REST adapter that consumes it
+//! lives in the `halyard-forge-github` crate (ADR-0013 — the layer rule
+//! keeps this crate on core only). The nightly `forge-smoke` job runs
+//! through that adapter.
 
 #![forbid(unsafe_code)]
 
@@ -52,12 +56,14 @@ pub mod memory;
 pub mod preview;
 pub mod spec;
 pub mod state;
+pub mod transport;
 
 pub use error::ForgeError;
 pub use memory::{CallRecord, MemoryForge};
 pub use preview::PreviewForge;
 pub use spec::{ApiCommit, ApiFile, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
 pub use state::{MachineEffect, MachineInput, MachineReport, run_release_machine};
+pub use transport::{HttpRequest, HttpResponse, HttpTransport, MemoryTransport};
 
 /// The forge contract (§11.4): every operation the Release-PR state
 /// machine (§11.1) performs against a forge. Object-safe — adapters are
