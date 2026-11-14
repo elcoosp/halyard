@@ -27,6 +27,9 @@ tempfile = { workspace = true }
 # is off by default and enabled only by `cargo test -p halyard-cache
 # --features loom --release` (§15.1 concurrency layer).
 loom = "0.7"
+# M2.6 close-out: the record-roundtrip bench pins the insert/flush and
+# reopen/get costs of the planning runs' §8.7 operations.
+criterion = { workspace = true }
 
 [features]
 # Miri-only test scaffolding (tests/miri.rs): the real mmap syscalls are
@@ -36,6 +39,10 @@ loom = "0.7"
 miri = []
 # Loom model checking of the record/lock state machine (tests/loom.rs).
 loom = []
+
+[[bench]]
+name = "roundtrip"
+harness = false
 
 # This crate cannot use `[lints] workspace = true` together with a lint
 # override (cargo rejects the combination), so the workspace lint table is
