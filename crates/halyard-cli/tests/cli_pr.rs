@@ -345,11 +345,16 @@ fn pr_dry_empty_plan_reports_the_close_probe() -> Result<(), BoxError> {
 }
 
 #[test]
-fn live_mode_declines_with_e_cli_pr() -> Result<(), BoxError> {
+fn live_mode_fails_closed_without_credentials() -> Result<(), BoxError> {
+    // M4.1b (ADR-0013): live mode runs the machine over the GitHub REST
+    // adapter; without a token it fails closed with the adapter's auth
+    // code before any network attempt (an anonymous run is never
+    // attempted).
     let fx = build_workspace("live")?;
     let (code, out) = halyard(fx.root(), &["pr"])?;
-    assert_eq!(code, 1, "live mode has no adapter yet: {out}");
-    assert!(out.contains("forge adapter (M4.1b"), "{out}");
+    assert_eq!(code, 1, "live mode without a token fails closed: {out}");
+    assert!(out.contains("E-FORGE-AUTH"), "{out}");
+    assert!(out.contains("GITHUB_TOKEN"), "{out}");
     let (code, out) = halyard(fx.root(), &["--format", "json", "pr"])?;
     assert_eq!(code, 1, "{out}");
     let value: serde_json::Value = serde_json::from_str(out.trim())?;
@@ -357,7 +362,7 @@ fn live_mode_declines_with_e_cli_pr() -> Result<(), BoxError> {
         .get("error")
         .and_then(|error| error.get("code"))
         .and_then(serde_json::Value::as_str);
-    assert_eq!(code, Some("E-CLI-PR"));
+    assert_eq!(code, Some("E-FORGE-AUTH"));
     Ok(())
 }
 
