@@ -15,7 +15,14 @@ state machine, M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr
 live `release` shell, the §9.4 release-notes pipeline, the M2.6
 close-out CLI persistent-cache wiring — and M5.5's §11.5 call governor
 (pacing, `Retry-After`, deterministic backoff, per-run budget) wired
-into the live forge paths (ADR-0015).** The architecture and multi-year master plan lives in
+into the live forge paths (ADR-0015) — and the §8.8 smart minimal fetch
+(`halyard fetch`: probe → per-package selection through the planner's
+template rule → one minimal `git fetch`, shallow-deepening bounded by
+the previous releases, documented full-fetch fallback; ADR-0016) and the
+M5.1 registry existence-probe crate (`halyard-registry`: the `Registry`
+seam over the forge transport — crates.io sparse index + npm packument
+`published()`, deterministic visibility wait, `doctor --registries`
+opt-in probe; ADR-0017).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -146,11 +153,13 @@ crates/
   halyard-eco-cargo      Cargo adapter: discovery, manifest + lockfile patchers
   halyard-eco-npm        npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher
   halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase,
-                         tag-target pinpoint (§8, §11.1)
+                         tag-target pinpoint, tag push, smart minimal fetch (§8, §11.1)
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
   halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
+  halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
+                         packument `published()` + deterministic visibility wait (§13)
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
@@ -182,6 +191,7 @@ cargo run -p halyard-test-support --example fixture_tour
 cargo run -p halyard-core --example workspace_demo
 cargo run -p halyard-core --example pending_releases
 cargo run -p halyard-conventional --example parse_commit
+cargo run -p halyard-conventional --example lint_title
 cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
 cargo run -p halyard-config --example resolve_layers
@@ -192,11 +202,22 @@ cargo run -p halyard-eco-npm --example scan_package_json
 cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
 cargo run -p halyard-git --example walk_history
 cargo run -p halyard-git --example cached_walk
+cargo run -p halyard-git --example tag_phase
+cargo run -p halyard-git --example tag_forecast
+cargo run -p halyard-git --example tag_push
+cargo run -p halyard-git --example tag_target
+cargo run -p halyard-git --example fetch_plan
 cargo run -p halyard-cache --example dump
 cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
+cargo run -p halyard-changelog --example render_release_notes
+cargo run -p halyard-changelog --example render_user_template
 cargo run -p halyard-forge --example release_lifecycle
 cargo run -p halyard-forge --example release_machine
+cargo run -p halyard-forge --example pr_preview
+cargo run -p halyard-forge --example governed_release
+cargo run -p halyard-forge-github --example forge_exchange
+cargo run -p halyard-forge-github --example app_exchange
 ```
 
 Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
