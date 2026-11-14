@@ -278,15 +278,12 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
             target,
             pkg.ecosystem.resolve(ws.interner()),
         );
-        let reasons: Vec<PlanReason> = state
-            .reasons(pkg.id)
+        let raw_reasons = state.reasons(pkg.id);
+        let reasons: Vec<PlanReason> = raw_reasons
             .iter()
             .map(|reason| wire_reason(reason, ws))
             .collect();
-        let changelog = pkg.changelog.as_ref().map(|file| PlanChangelog {
-            file: file.to_string(),
-            entry_md: render_entry(target, state.reasons(pkg.id), digest, cfg),
-        });
+        let changelog = Some(release_changelog(pkg, target, raw_reasons, digest, cfg));
         let registry = match pkg.ecosystem {
             Ecosystem::Cargo => cfg.publish_cargo_registry.clone(),
             _ => cfg.publish_npm_registry.clone(),
@@ -869,6 +866,38 @@ fn wire_reason(reason: &Reason, ws: &Workspace) -> PlanReason {
             why: why.wire_key().to_owned(),
         },
         Reason::InitialRelease => PlanReason::InitialRelease,
+    }
+}
+
+/// The zero-config changelog path (§6.1 single-package mode: "changelog
+/// at root"): `<package root>/CHANGELOG.md`, with root-only packages at
+/// the repo root. Pure derivation from the package data — the planner
+/// never reads the filesystem (§4).
+fn default_changelog_file(pkg: &Package) -> String {
+    let root = pkg.root.as_str();
+    if root.is_empty() {
+        "CHANGELOG.md".to_owned()
+    } else {
+        format!("{root}/CHANGELOG.md")
+    }
+}
+
+/// One release's changelog contract (§5.8): the configured file, or the
+/// §6.1 single-package default — the adapters leave `changelog` unset
+/// today, so the default keeps the §9.4 chain fed on zero-config repos.
+fn release_changelog(
+    pkg: &Package,
+    target: &Version,
+    reasons: &[Reason],
+    digest: &HistoryDigest,
+    cfg: &PlanConfig,
+) -> PlanChangelog {
+    PlanChangelog {
+        file: pkg
+            .changelog
+            .as_ref()
+            .map_or_else(|| default_changelog_file(pkg), ToString::to_string),
+        entry_md: render_entry(target, reasons, digest, cfg),
     }
 }
 
