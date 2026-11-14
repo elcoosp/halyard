@@ -10,6 +10,7 @@ use halyard_core::HistoryProvider;
 use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
 use halyard_edit::{ApplyReport, DryPatch};
 use halyard_forge::{MachineEffect, MachineReport};
+use halyard_git::push::{TagPushReport, TagPushRow};
 use halyard_git::tag::{TagOutcome, TagPhaseReport, TagPhaseRow};
 use halyard_git::tag_target::TagTargetSource;
 
@@ -758,17 +759,22 @@ fn source_key(source: TagTargetSource) -> &'static str {
 }
 
 /// The outcome text of one tag-phase row (shared by the renderers): the
-/// forecast reads "would create" (nothing was written), the no-op reads
-/// "already tagged" (I1), failures carry their `E-GIT-*` code. Resolved
-/// rows carry their target provenance (the §11.1 precision rule's answer
-/// and its degradation status).
-fn release_row_text(row: &TagPhaseRow, provenance: Option<&TargetProvenance>) -> String {
+/// forecast reads "would create" (nothing was written), the live run
+/// reads "created", the no-op reads "already tagged" (I1), failures
+/// carry their `E-GIT-*` code. Resolved rows carry their target
+/// provenance (the §11.1 precision rule's answer and its degradation
+/// status).
+fn release_row_text(
+    row: &TagPhaseRow,
+    provenance: Option<&TargetProvenance>,
+    created: &str,
+) -> String {
     let target =
         provenance.map(|p| format!(" — target {} ({})", short(&p.commit), source_text(p.source)));
     match row {
         TagPhaseRow::Applied { tag, outcome } => {
             let outcome = match outcome {
-                TagOutcome::Created { .. } => "would create",
+                TagOutcome::Created { .. } => created,
                 TagOutcome::AlreadyTagged { .. } => "already tagged",
             };
             format!("{tag} — {outcome}{}", target.as_deref().unwrap_or_default())
@@ -781,30 +787,16 @@ fn release_row_text(row: &TagPhaseRow, provenance: Option<&TargetProvenance>) ->
     }
 }
 
-/// Renders the `release --dry` forecast (§11.1 step 2, git side): the
-/// directives the tag phase owes, classified against the real ref state,
-/// with the counters and each directive's resolved target provenance.
-/// Nothing was written.
-pub fn release_dry_human(
-    head: &str,
+/// The tag-phase rows + the Behind rows (the shared body of the dry and
+/// live human renders — the two modes differ only in header, outcome
+/// wording and the push section).
+fn release_rows_human(
+    out: &mut String,
     states: &[PackageTagState],
     report: &TagPhaseReport,
     provenance: &TargetProvenanceMap,
-) -> String {
-    let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "dry run: tag-phase forecast over the preview writer (nothing written)"
-    );
-    let _ = writeln!(out, "head: {}", short(head));
-    let _ = writeln!(
-        out,
-        "tag directives (§11.1 step 2): {} owed, {} would create, {} already tagged, {} failed",
-        report.rows.len(),
-        report.created,
-        report.already_tagged,
-        report.failed
-    );
+    created: &str,
+) {
     if report.rows.is_empty() {
         let _ = writeln!(out, "  (nothing owed: every manifest version is tagged)");
     }
@@ -812,7 +804,7 @@ pub fn release_dry_human(
         let _ = writeln!(
             out,
             "  - {}",
-            release_row_text(row, provenance.get(row_tag(row)))
+            release_row_text(row, provenance.get(row_tag(row)), created)
         );
     }
     let behind: Vec<&PackageTagState> = states
@@ -832,18 +824,156 @@ pub fn release_dry_human(
             state.manifest_version
         );
     }
+}
+
+/// The push section of the release render (§11.2): skipped honestly
+/// under `--no-push` or without a configured remote, a forecast in the
+/// dry run (`would push` rows), the real outcomes in the live run.
+pub fn release_push_human(push: Option<&TagPushReport>, forecast: bool) -> String {
+    let mut out = String::new();
+    match push {
+        None => {
+            let _ = writeln!(out, "push: skipped (--no-push)");
+        }
+        Some(report) if report.remote.is_none() => {
+            let _ = writeln!(
+                out,
+                "push: skipped (no remote 'origin' configured; the tags stay local)"
+            );
+        }
+        Some(report) => {
+            let label = if forecast {
+                "push forecast (origin, offline)"
+            } else {
+                "push (origin)"
+            };
+            let _ = writeln!(
+                out,
+                "{label}: {} pushed, {} already on remote, {} failed",
+                report.pushed, report.already_on_remote, report.failed
+            );
+            for row in &report.rows {
+                let line = match row {
+                    TagPushRow::Pushed { tag } => format!("{tag} — pushed"),
+                    TagPushRow::AlreadyOnRemote { tag } => format!("{tag} — already on remote"),
+                    TagPushRow::WouldPush { tag } => format!("{tag} — would push"),
+                    TagPushRow::Failed { tag, error } => {
+                        format!("{tag} — failed [{}]: {error}", error.code())
+                    }
+                };
+                let _ = writeln!(out, "  - {line}");
+            }
+        }
+    }
     out
 }
 
-/// One `release --dry` directive as a stable JSON row, carrying its
-/// resolved target provenance (commit + source).
-pub fn release_row_json(row: &TagPhaseRow, provenance: &TargetProvenanceMap) -> serde_json::Value {
+/// The human render of a finished tag phase — shared by the dry forecast
+/// (preview writer, "would create") and the live run (real writer,
+/// "created").
+fn release_phase_human(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
+    created: &str,
+    counters: (usize, usize, usize, usize),
+) -> String {
+    let (owed, created_n, already_n, failed_n) = counters;
+    let mut out = String::new();
+    let _ = writeln!(out, "head: {}", short(head));
+    let _ = writeln!(
+        out,
+        "tag directives (§11.1 step 2): {owed} owed, {created_n} {created}, {already_n} already \
+         tagged, {failed_n} failed"
+    );
+    release_rows_human(&mut out, states, report, provenance, created);
+    out
+}
+
+/// Renders the `release --dry` forecast (§11.1 step 2, git side): the
+/// directives the tag phase owes, classified against the real ref state,
+/// with the counters, each directive's resolved target provenance and
+/// the push forecast (§11.2). Nothing was written.
+pub fn release_dry_human(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
+    push: Option<&TagPushReport>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "dry run: tag-phase forecast over the preview writer (nothing written)"
+    );
+    out.push_str(&release_phase_human(
+        head,
+        states,
+        report,
+        provenance,
+        "would create",
+        (
+            report.rows.len(),
+            report.created,
+            report.already_tagged,
+            report.failed,
+        ),
+    ));
+    out.push_str(&release_push_human(push, true));
+    out
+}
+
+/// Renders the live release run (§11.1 step 2, git side): the annotated
+/// tags the real writer created, the §11.2 push outcomes, and the
+/// honestly deferred forge half (M4.1b).
+pub fn release_live_human(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
+    push: Option<&TagPushReport>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "live run: tag phase over the real writer (annotated tags)"
+    );
+    out.push_str(&release_phase_human(
+        head,
+        states,
+        report,
+        provenance,
+        "created",
+        (
+            report.rows.len(),
+            report.created,
+            report.already_tagged,
+            report.failed,
+        ),
+    ));
+    out.push_str(&release_push_human(push, false));
+    let _ = writeln!(
+        out,
+        "forge releases: deferred (M4.1b creates forge releases over the forge adapter)"
+    );
+    out
+}
+
+/// One `release` directive as a stable JSON row, carrying its resolved
+/// target provenance (commit + source). `created_key` distinguishes the
+/// forecast (`would_create`) from the live run (`created`).
+pub fn release_row_json(
+    row: &TagPhaseRow,
+    provenance: &TargetProvenanceMap,
+    created_key: &'static str,
+) -> serde_json::Value {
     let target = provenance.get(row_tag(row));
     let mut value = match row {
         TagPhaseRow::Applied { tag, outcome } => serde_json::json!({
             "tag": tag,
             "outcome": match outcome {
-                TagOutcome::Created { .. } => "would_create",
+                TagOutcome::Created { .. } => created_key,
                 TagOutcome::AlreadyTagged { .. } => "already_tagged",
             },
         }),
@@ -867,13 +997,56 @@ pub fn release_row_json(row: &TagPhaseRow, provenance: &TargetProvenanceMap) -> 
     value
 }
 
+/// One push row as a stable JSON row.
+fn push_row_json(row: &TagPushRow) -> serde_json::Value {
+    match row {
+        TagPushRow::Pushed { tag } => serde_json::json!({ "tag": tag, "outcome": "pushed" }),
+        TagPushRow::AlreadyOnRemote { tag } => {
+            serde_json::json!({ "tag": tag, "outcome": "already_on_remote" })
+        }
+        TagPushRow::WouldPush { tag } => {
+            serde_json::json!({ "tag": tag, "outcome": "would_push" })
+        }
+        TagPushRow::Failed { tag, error } => serde_json::json!({
+            "tag": tag,
+            "outcome": "failed",
+            "error_code": error.code(),
+        }),
+    }
+}
+
+/// The push section as a stable JSON document (`remote: null` when the
+/// phase was skipped — `--no-push` or no configured remote).
+pub fn release_push_json(push: Option<&TagPushReport>, forecast: bool) -> serde_json::Value {
+    match push {
+        None => serde_json::json!({
+            "remote": serde_json::Value::Null,
+            "forecast": forecast,
+            "rows": [],
+            "pushed": 0,
+            "already_on_remote": 0,
+            "failed": 0,
+        }),
+        Some(report) => serde_json::json!({
+            "remote": report.remote,
+            "forecast": forecast,
+            "rows": report.rows.iter().map(push_row_json).collect::<Vec<_>>(),
+            "pushed": report.pushed,
+            "already_on_remote": report.already_on_remote,
+            "failed": report.failed,
+        }),
+    }
+}
+
 /// Renders the `release --dry` forecast for GitHub Actions summaries
-/// (each directive carries its resolved target provenance).
+/// (each directive carries its resolved target provenance, plus the push
+/// forecast).
 pub fn release_dry_gha(
     head: &str,
     states: &[PackageTagState],
     report: &TagPhaseReport,
     provenance: &TargetProvenanceMap,
+    push: Option<&TagPushReport>,
 ) -> String {
     let mut out = String::from("## halyard release (dry)\n\n");
     let _ = writeln!(out, "- head: `{}`", short(head));
@@ -885,38 +1058,50 @@ pub fn release_dry_gha(
         report.already_tagged,
         report.failed
     );
-    if report.rows.is_empty() {
-        let _ = writeln!(out, "- nothing owed: every manifest version is tagged");
-    }
-    for row in &report.rows {
-        let _ = writeln!(
-            out,
-            "  - {}",
-            release_row_text(row, provenance.get(row_tag(row)))
-        );
-    }
-    let behind: Vec<&PackageTagState> = states
-        .iter()
-        .filter(|s| s.state == TagState::Behind)
-        .collect();
-    for state in &behind {
-        let _ = writeln!(
-            out,
-            "  - behind, not tagged: `{}` (manifest {} < latest tag {})",
-            state.package,
-            state.manifest_version,
-            state
-                .latest_version
-                .as_ref()
-                .map_or_else(String::new, ToString::to_string)
-        );
-    }
+    release_rows_human(&mut out, states, report, provenance, "would create");
+    out.push_str(&release_push_human(push, true));
     if report.failed > 0 {
         let _ = writeln!(
             out,
             "\n::warning title=tag-phase conflicts::{} directive(s) failed; resolve the \
              conflicts by hand and re-run",
             report.failed
+        );
+    }
+    out
+}
+
+/// Renders the live release run for GitHub Actions summaries.
+pub fn release_live_gha(
+    head: &str,
+    states: &[PackageTagState],
+    report: &TagPhaseReport,
+    provenance: &TargetProvenanceMap,
+    push: Option<&TagPushReport>,
+) -> String {
+    let mut out = String::from("## halyard release (live)\n\n");
+    let _ = writeln!(out, "- head: `{}`", short(head));
+    let _ = writeln!(
+        out,
+        "- tag directives (§11.1 step 2): {} owed ({} created, {} already tagged, {} failed)",
+        report.rows.len(),
+        report.created,
+        report.already_tagged,
+        report.failed
+    );
+    release_rows_human(&mut out, states, report, provenance, "created");
+    out.push_str(&release_push_human(push, false));
+    let _ = writeln!(
+        out,
+        "- forge releases: deferred (M4.1b creates forge releases over the forge adapter)"
+    );
+    if report.failed > 0 || push.is_some_and(|p| p.failed > 0) {
+        let _ = writeln!(
+            out,
+            "\n::warning title=tag-phase failures::{} directive(s) and {} push row(s) failed; \
+             the phase is resumable — resolve the conflicts by hand and re-run",
+            report.failed,
+            push.map_or(0, |p| p.failed)
         );
     }
     out
