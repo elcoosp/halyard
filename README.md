@@ -127,15 +127,17 @@ crates/
   halyard-discover       topology + manifests → Workspace (§6)
   halyard-eco-cargo      Cargo adapter: discovery, manifest + lockfile patchers
   halyard-eco-npm        npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher
-  halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase (§8)
+  halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase,
+                         tag-target pinpoint (§8, §11.1)
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
   halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
-  xtask                  check-layers, schema-check, perf-gate, size-gate,
-                         corpus, gen-repo, bench-competitors, discover-diff,
-                         git-diff, replay, bench-public, pgo
-  halyard-cli            the user shell (plan/apply/check/pr/release/explain/status/graph/doctor)
+  xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
+                         size-gate, corpus, gen-repo, bench-competitors,
+                         discover-diff, git-diff, replay, bench-public, pgo
+  halyard-cli            the user shell (plan/apply/check/pr/release/explain/status/
+                         graph/doctor/schema/completions)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
