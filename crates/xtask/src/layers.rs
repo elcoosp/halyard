@@ -71,12 +71,25 @@ const RULES: &[LayerRule] = &[
         external: Some(&[]),
     },
     // M4.1a forge seam (§11.4): pure vocabulary — the trait, its data
-    // types and the failure taxonomy. No HTTP here; the REST adapter
-    // joins in M4.1b and inherits the same core-only rule.
+    // types, the failure taxonomy and the M4.1b transport vocabulary
+    // (plain data + the scripted `MemoryTransport`, no HTTP client).
+    // The rule is unchanged by M4.1b: the REST adapter moved OUT to its
+    // own crate (ADR-0013) instead of widening this allow-list.
     LayerRule {
         name: "halyard-forge",
         workspace: &["halyard-core"],
         external: Some(&[]),
+    },
+    // M4.1b GitHub REST adapter (ADR-0013): depends on the seam crate
+    // (`halyard-forge`) + core; owns the only HTTP client in the runtime
+    // graph. `ureq` is the §19 default decision 4 (blocking, rustls, no
+    // async runtime); `serde`/`serde_json` parse the REST bodies;
+    // `base64` encodes the git-data blob payloads (mirroring
+    // halyard-changelog's embedded-plan encoding).
+    LayerRule {
+        name: "halyard-forge-github",
+        workspace: &["halyard-core", "halyard-forge"],
+        external: Some(&["serde", "serde_json", "ureq", "base64"]),
     },
     LayerRule {
         name: "halyard-test-support",
