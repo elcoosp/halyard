@@ -258,6 +258,40 @@ pub fn parse_created_sha(body: &str) -> Result<String, ForgeError> {
         .ok_or_else(|| ForgeError::transport(format!("object body carries no sha: {body:.200}")))
 }
 
+/// A parsed installation-token body (the M4.1c mint response: `token`,
+/// `expires_at` — the adapter rides only the token; the TTL is its own
+/// conservative bound).
+#[derive(Debug, Deserialize)]
+pub struct RestInstallationToken {
+    /// The installation access token.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// The ISO-8601 expiry the forge reports (recorded for the
+    /// research page; deliberately not parsed).
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+/// Parses an installation-token mint body (M4.1c).
+///
+/// # Errors
+///
+/// [`ForgeError::Transport`] when the body is not the documented JSON
+/// object or carries no token (the exchange produced nothing usable —
+/// never a fabricated credential).
+pub fn parse_installation_token(body: &str) -> Result<String, ForgeError> {
+    let parsed: RestInstallationToken = serde_json::from_str(body)
+        .map_err(|error| ForgeError::transport(format!("unparseable token body: {error}")))?;
+    parsed
+        .token
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| {
+            ForgeError::transport(format!(
+                "the mint body carries no installation token: {body:.200}"
+            ))
+        })
+}
+
 /// The `errors[].code` values of a validation-failure body — the
 /// `already_exists` discriminator the I1 race mapping needs (research
 /// §4).
