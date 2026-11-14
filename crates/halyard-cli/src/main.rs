@@ -11,6 +11,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -23,6 +24,8 @@ use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, reso
 use halyard_core::planner::{PlanConfig, Snapshot, plan as core_plan};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
+use halyard_forge::Forge as _;
+use halyard_forge_github::{ForgeEndpoint, GitHubRestForge, UreqTransport};
 use halyard_git::GitHistory;
 use halyard_git::tag_target::{GixTagTargetResolver, ManifestVersionProbe};
 
@@ -124,12 +127,14 @@ enum Command {
         #[arg(long)]
         dry: bool,
     },
-    /// Forecast the Release PR without touching a forge (M4.2b step 1,
-    /// §11.1 prepare phase): plan → §11.3 body → machine pass over the
-    /// dry-run adapter. Live mode lands with the M4.1b GitHub adapter.
+    /// The §11.1 prepare phase (M4.2b + M4.1b): plan → §11.3 body →
+    /// machine pass over the adapter — `--dry` forecasts offline over
+    /// the preview adapter (no network, I5); live mode runs the same
+    /// machine over the GitHub REST adapter (ADR-0013): the Release PR
+    /// is opened/rewritten/closed for real, gated on
+    /// `GITHUB_TOKEN`/`HALYARD_FORGE_TOKEN` and a GitHub-shaped origin.
     Pr {
-        /// Forecast the prepare phase offline (the only implemented
-        /// mode; live mode needs the M4.1b forge adapter).
+        /// Forecast the prepare phase offline (no network touched).
         #[arg(long)]
         dry: bool,
     },
@@ -137,8 +142,10 @@ enum Command {
     /// annotated-tag directives, targets resolved by the §11.1
     /// manifest-pinpoint walk, tags created through the real writer and
     /// pushed to `origin` (§11.2; `--no-push` skips the push phase).
-    /// Forge releases stay deferred (M4.1b — reported, never faked);
-    /// `--dry` forecasts everything offline (no writes, no network).
+    /// The forge half (GET-by-tag-first release creation) runs over the
+    /// M4.1b GitHub REST adapter when credentials allow it and is
+    /// reported as an honest skip otherwise; `--dry` forecasts
+    /// everything offline (no writes, no network).
     Release {
         /// Forecast the tag phase offline — nothing written, no network
         /// touched (I5); the push section forecasts what a live run
@@ -179,6 +186,22 @@ enum Command {
     },
     /// Environment diagnostics (shallow clone? commit-graph? tags?).
     Doctor,
+    /// Read-only forge reachability probe (the nightly `forge-smoke`
+    /// job's subcommand, ADR-0013): builds the GitHub REST adapter from
+    /// `HALYARD_FORGE_TOKEN`/`GITHUB_TOKEN`, probes release-tag
+    /// existence (a GET, never a mutation) and prints the rate snapshot
+    /// and the §11.5 call log. Nothing is written anywhere.
+    ForgeSmoke {
+        /// The `owner/repo` slug to probe (default: `GITHUB_REPOSITORY`,
+        /// else the GitHub slug of the configured `origin` remote).
+        #[arg(long, value_name = "OWNER/REPO")]
+        repo: Option<String>,
+        /// The API base to probe (default: `GITHUB_API_URL`, else
+        /// `https://api.github.com`; the loopback mock lane overrides
+        /// this).
+        #[arg(long, value_name = "URL")]
+        api_base: Option<String>,
+    },
     /// Emit JSON Schemas (plan | config).
     Schema {
         /// Which frozen schema to print.
@@ -280,6 +303,9 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         Command::Pr { dry } => {
             cmd_pr(cli, profiler, *dry)?;
             Ok(ExitCode::SUCCESS)
+        }
+        Command::ForgeSmoke { repo, api_base } => {
+            cmd_forge_smoke(cli, repo.as_deref(), api_base.as_deref())
         }
         Command::Release { dry, no_push } => cmd_release(cli, profiler, *dry, *no_push),
         Command::Explain { package } => {
@@ -390,21 +416,18 @@ fn reconcile_snapshot(
     (states, pending)
 }
 
-/// The `pr` command (M4.2b step 1): the §11.1 forecast over the dry-run
-/// adapter. `--dry` drives the full machine pass — the §11.1 step-2
-/// manifest-vs-tags reconciliation feeds the tag phase, the plan renders
-/// the §11.3 body for the prepare phase — and reports the effects, the
-/// §11.5 call budget and the body. Nothing is written and no network is
-/// touched (I5); live mode lands with the M4.1b forge adapter
+/// The `pr` command (M4.2b + M4.1b): the §11.1 prepare phase over the
+/// adapter the mode selects. `--dry` drives the full machine pass over
+/// the preview adapter — the §11.1 step-2 manifest-vs-tags
+/// reconciliation feeds the tag phase, the plan renders the §11.3 body
+/// — and reports the effects, the §11.5 call budget and the body;
+/// nothing is written and no network is touched (I5). Live mode runs
+/// the same machine over the GitHub REST adapter
+/// ([`GitHubRestForge`]): the Release PR is opened, rewritten or —
+/// under an empty plan — closed for real, fail-closed on missing
+/// credentials (`E-FORGE-AUTH`) and on a non-GitHub origin
 /// (`E-CLI-PR`).
 fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
-    if !dry {
-        return Err(CliError::new(
-            "E-CLI-PR",
-            "live Release-PR mode needs a forge adapter (M4.1b, not implemented yet); \
-             use `halyard pr --dry` for the offline forecast",
-        ));
-    }
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let plan_config: PlanConfig = context.config.plan_config();
@@ -457,10 +480,27 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
         title: title.clone(),
         body,
     });
+    // The adapter the mode selects: the preview adapter forecasts an
+    // empty forge offline; the live mode builds the GitHub REST adapter
+    // from the environment and the origin remote (fail-closed on
+    // missing credentials and foreign forges).
+    let (forge, slug): (Box<dyn halyard_forge::Forge>, Option<String>) = if dry {
+        (Box::new(halyard_forge::PreviewForge::new()), None)
+    } else {
+        let credentials = forge_credentials()?;
+        let slug = credentials.endpoint.slug();
+        let forge = Box::new(GitHubRestForge::with_transport(
+            credentials.endpoint,
+            &credentials.token,
+            UreqTransport::new(),
+        )) as Box<dyn halyard_forge::Forge>;
+        (forge, Some(slug))
+    };
+    let mode_label = if dry { "pr-dry" } else { "pr-live" };
     let report = profiler
-        .span("pr-dry", || {
+        .span(mode_label, || {
             halyard_forge::run_release_machine(
-                &halyard_forge::PreviewForge::new(),
+                forge.as_ref(),
                 &halyard_forge::MachineInput {
                     branch: branch.clone(),
                     pending_releases: pending_specs.clone(),
@@ -483,32 +523,288 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
             })
         })
         .collect();
+    render_pr_report(
+        cli,
+        &title,
+        &branch,
+        &states,
+        &report,
+        body.as_deref(),
+        &serde_json::json!({
+            "dry": dry,
+            "repo": slug,
+            "pending_plan": !plan.releases.is_empty(),
+            "pending_releases": pending_rows,
+        }),
+    );
+    Ok(())
+}
+
+/// The `pr` report rendering (all three formats) — the shell's output
+/// surface, split out so the machine pass stays the only logic in
+/// `cmd_pr`.
+/// The `dry` flag rides the extras document (the report view is the
+/// single bundle the shell's renderer consumes).
+fn view_dry(extras: &serde_json::Value) -> bool {
+    extras
+        .get("dry")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_default()
+}
+
+fn render_pr_report(
+    cli: &Cli,
+    title: &str,
+    branch: &halyard_forge::BranchName,
+    states: &[halyard_core::PackageTagState],
+    report: &halyard_forge::MachineReport,
+    body: Option<&str>,
+    extras: &serde_json::Value,
+) {
     match cli.format {
         Format::Json => {
             let effects: Vec<serde_json::Value> =
                 report.effects.iter().map(render::pr_effect_json).collect();
-            print_pretty_json(&serde_json::json!({
-                "mode": "dry",
+            let document = serde_json::json!({
+                "mode": if view_dry(extras) { "dry" } else { "live" },
                 "title": title,
                 "branch": branch.as_str(),
-                "pending_plan": !plan.releases.is_empty(),
-                "pending_releases": pending_rows,
                 "propagated": report.propagated,
                 "effects": effects,
                 "calls": report.calls,
                 "body": body,
-            }))?;
+                "repo": extras.get("repo"),
+                "pending_plan": extras.get("pending_plan"),
+                "pending_releases": extras.get("pending_releases"),
+            });
+            let _ = print_pretty_json(&document);
         }
-        Format::Gha => print!(
-            "{}",
-            render::pr_dry_gha(&title, branch.as_str(), &states, &report, body.as_deref())
-        ),
-        Format::Human => print!(
-            "{}",
-            render::pr_dry_human(&title, branch.as_str(), &states, &report, body.as_deref())
-        ),
+        Format::Gha => {
+            let rendered = if view_dry(extras) {
+                render::pr_dry_gha(title, branch.as_str(), states, report, body)
+            } else {
+                render::pr_live_gha(title, branch.as_str(), states, report, body)
+            };
+            print!("{rendered}");
+        }
+        Format::Human => {
+            let rendered = if view_dry(extras) {
+                render::pr_dry_human(title, branch.as_str(), states, report, body)
+            } else {
+                render::pr_live_human(title, branch.as_str(), states, report, body)
+            };
+            print!("{rendered}");
+        }
     }
-    Ok(())
+}
+
+/// The live forge wire-up's environment-derived credentials (ADR-0013):
+/// the token (`HALYARD_FORGE_TOKEN` first — the nightly smoke job's
+/// contract — then `GITHUB_TOKEN`), the `owner/repo` coordinates from
+/// the configured `origin` (the changelog crate's remote-shape grammar,
+/// the same parser the compare link rides) and the API base
+/// (`GITHUB_API_URL` override, else github.com — GitHub Enterprise and
+/// the loopback mock lane both ride this).
+struct ForgeCredentials {
+    endpoint: ForgeEndpoint,
+    token: String,
+}
+
+fn forge_credentials() -> Result<ForgeCredentials, CliError> {
+    let token = std::env::var("HALYARD_FORGE_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .ok_or_else(|| {
+            CliError::new(
+                "E-FORGE-AUTH",
+                "live forge mode needs a token: export GITHUB_TOKEN (or HALYARD_FORGE_TOKEN) \
+                 with repo access and re-run `halyard doctor` to verify",
+            )
+        })?;
+    let remote_url = remote_origin_url()?;
+    let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
+    let (owner, repo) = slug.ok_or_else(|| {
+        CliError::new(
+            "E-CLI-PR",
+            "live forge mode needs a GitHub origin: set remote.origin.url to a GitHub \
+             remote (the adapter is the M4.1b GitHub REST one; foreign forges are Year-2 \
+             milestones)",
+        )
+    })?;
+    let api_base = std::env::var("GITHUB_API_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://api.github.com".to_owned());
+    let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok(ForgeCredentials { endpoint, token })
+}
+
+/// The smoke probe's read-only credentials (ADR-0013): the token
+/// (`HALYARD_FORGE_TOKEN` first — the nightly job's contract — then
+/// `GITHUB_TOKEN`).
+fn forge_token() -> Result<String, CliError> {
+    std::env::var("HALYARD_FORGE_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .ok_or_else(|| {
+            CliError::new(
+                "E-FORGE-AUTH",
+                "forge-smoke needs a read-capable token: set HALYARD_FORGE_TOKEN (the \
+                 nightly job's secret) or GITHUB_TOKEN",
+            )
+        })
+}
+
+/// The smoke probe's target: an explicit `--repo OWNER/REPO`, else
+/// `GITHUB_REPOSITORY` (the Actions convention), else the configured
+/// origin's GitHub slug; the API base rides `--api-base` /
+/// `GITHUB_API_URL`, defaulting to github.com (GitHub Enterprise and
+/// the loopback mock lane override it).
+fn resolve_smoke_endpoint(
+    repo: Option<&str>,
+    api_base: Option<&str>,
+) -> Result<(ForgeEndpoint, String, String), CliError> {
+    let slug = repo
+        .map(str::to_owned)
+        .or_else(|| std::env::var("GITHUB_REPOSITORY").ok())
+        .or_else(|| {
+            remote_origin_url()
+                .ok()
+                .flatten()
+                .and_then(|url| halyard_changelog::repo_slug(&url))
+                .map(|(owner, name)| format!("{owner}/{name}"))
+        })
+        .ok_or_else(|| {
+            CliError::new(
+                "E-CLI-PR",
+                "forge-smoke needs a repository: pass --repo OWNER/REPO, set \
+                 GITHUB_REPOSITORY, or configure a GitHub remote.origin.url",
+            )
+        })?;
+    let (owner, name) = slug
+        .split_once('/')
+        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty())
+        .ok_or_else(|| {
+            CliError::new(
+                "E-FORGE-REQUEST",
+                format!("the repository slug {slug:?} must be OWNER/REPO"),
+            )
+        })?;
+    let base = api_base
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("GITHUB_API_URL")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "https://api.github.com".to_owned());
+    let endpoint = ForgeEndpoint::with_base(owner, name, &base)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok((endpoint, slug, base))
+}
+
+/// The `forge-smoke` command (ADR-0013): the read-only probe the
+/// nightly job invokes (`HALYARD_FORGE_TOKEN`). Builds the GitHub REST
+/// adapter from the environment and fires one existence probe — a GET
+/// on a synthetic tag, the documented 404→`false` shape — then prints
+/// the rate snapshot and the §11.5 call log. Nothing is written: the
+/// smoke proves reachability and auth, never mutates (I1 trivially).
+/// Failures exit with the adapter's §15.4 code (`E-FORGE-*`).
+fn cmd_forge_smoke(
+    cli: &Cli,
+    repo: Option<&str>,
+    api_base: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let (endpoint, slug, base) = resolve_smoke_endpoint(repo, api_base)?;
+    let token = forge_token()?;
+    let forge = GitHubRestForge::with_transport(endpoint, &token, UreqTransport::new());
+    // The probe: existence of a synthetic tag — a GET, answered by the
+    // documented 404→`false` mapping; expected `false` on a healthy
+    // forge (the tag is never created).
+    let probe_tag = "halyard-forge-smoke-probe";
+    let release_exists = forge
+        .release_exists(probe_tag)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let rate = forge.rate_limit();
+    let calls = forge.calls();
+    let call_rows: Vec<serde_json::Value> = calls
+        .iter()
+        .map(|record| {
+            serde_json::json!({
+                "method": record.method,
+                "target": record.target,
+            })
+        })
+        .collect();
+    match cli.format {
+        Format::Json => print_pretty_json(&serde_json::json!({
+            "mode": "smoke",
+            "repo": slug,
+            "api_base": base,
+            "probe_tag": probe_tag,
+            "release_exists": release_exists,
+            "rate_limit": { "limit": rate.limit, "remaining": rate.remaining },
+            "calls": call_rows,
+        }))?,
+        Format::Gha => {
+            let mut out = String::new();
+            let _ = writeln!(out, "forge smoke: {slug} @ {base}");
+            let _ = writeln!(
+                out,
+                "- probe {probe_tag}: {}",
+                if release_exists {
+                    "present"
+                } else {
+                    "absent (expected)"
+                }
+            );
+            let _ = writeln!(
+                out,
+                "- rate limit observed: {}/{}",
+                rate.remaining, rate.limit
+            );
+            let _ = writeln!(out, "- calls: {}", calls.len());
+            for record in &calls {
+                let _ = writeln!(out, "- {:>5} {}", record.method, record.target);
+            }
+            print!("{out}");
+        }
+        Format::Human => {
+            let mut out = String::new();
+            let _ = writeln!(out, "forge smoke: {slug} @ {base}");
+            let _ = writeln!(
+                out,
+                "release probe {probe_tag}: {}",
+                if release_exists {
+                    "present"
+                } else {
+                    "absent (expected — the probe tag is never created)"
+                }
+            );
+            let _ = writeln!(
+                out,
+                "rate limit (observed headers): {}/{} remaining/limit",
+                rate.remaining, rate.limit
+            );
+            let _ = writeln!(out, "calls ({}):", calls.len());
+            for record in &calls {
+                let _ = writeln!(out, "  {:>5} {}", record.method, record.target);
+            }
+            print!("{out}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The tag-phase queue with the §9.4 release notes: one `ReleaseSpec`
@@ -677,6 +973,17 @@ fn cmd_release(
         })
         .collect();
     let push = release_push_phase(dry, no_push, &created, profiler)?;
+    // The forge half (§11.1 step 2, M4.1b): GET-by-tag-first release
+    // creation over the GitHub REST adapter. Live mode only — the dry
+    // run forecasts it as absent (I5); live runs without credentials or
+    // against a foreign origin report an honest skip, never a fake.
+    let forge_releases = if dry {
+        render::ForgeReleases::Skipped {
+            reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
+        }
+    } else {
+        forge_release_phase(&context, profiler, &pending)?
+    };
     // I2: the phase is resumable — failures render as rows and fail the
     // run (§15.4 exit 1) so CI stops on a partial tag phase.
     let failed = report.failed > 0 || push.as_ref().is_some_and(|p| p.failed > 0);
@@ -690,6 +997,7 @@ fn cmd_release(
                 push.as_ref(),
                 dry,
                 &head_hex,
+                &forge_releases,
             );
             print_pretty_json(&document)?;
         }
@@ -697,7 +1005,14 @@ fn cmd_release(
             let rendered = if dry {
                 render::release_dry_gha(&head_hex, &states, &report, &provenance, push.as_ref())
             } else {
-                render::release_live_gha(&head_hex, &states, &report, &provenance, push.as_ref())
+                render::release_live_gha(
+                    &head_hex,
+                    &states,
+                    &report,
+                    &provenance,
+                    push.as_ref(),
+                    &forge_releases,
+                )
             };
             print!("{rendered}");
         }
@@ -705,7 +1020,14 @@ fn cmd_release(
             let rendered = if dry {
                 render::release_dry_human(&head_hex, &states, &report, &provenance, push.as_ref())
             } else {
-                render::release_live_human(&head_hex, &states, &report, &provenance, push.as_ref())
+                render::release_live_human(
+                    &head_hex,
+                    &states,
+                    &report,
+                    &provenance,
+                    push.as_ref(),
+                    &forge_releases,
+                )
             };
             print!("{rendered}");
         }
@@ -714,6 +1036,83 @@ fn cmd_release(
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    })
+}
+
+/// The live release's forge half (§11.1 step 2, M4.1b): the pending
+/// releases ride the §11.1 machine's tag phase over the GitHub REST
+/// adapter — GET-by-tag-first creation with the notes-pipeline payloads.
+/// Missing credentials or a foreign origin is an honest skip rendered
+/// into the report (the git-side half still ran); adapter failures fail
+/// the run fail-closed (I2: the re-run completes — GET finds what
+/// landed).
+fn forge_release_phase(
+    context: &Context,
+    profiler: &mut Profiler,
+    pending: &[halyard_core::PendingRelease],
+) -> Result<render::ForgeReleases, CliError> {
+    let token = std::env::var("HALYARD_FORGE_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|value| !value.is_empty())
+        });
+    let Some(token) = token else {
+        return Ok(render::ForgeReleases::Skipped {
+            reason: "no forge credentials (export GITHUB_TOKEN to create forge releases)"
+                .to_owned(),
+        });
+    };
+    let remote_url = remote_origin_url()?;
+    let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
+    let Some((owner, repo)) = slug else {
+        return Ok(render::ForgeReleases::Skipped {
+            reason: "origin is not a GitHub remote — forge releases are skipped, never faked"
+                .to_owned(),
+        });
+    };
+    let api_base = std::env::var("GITHUB_API_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://api.github.com".to_owned());
+    let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let forge = GitHubRestForge::with_transport(endpoint, &token, UreqTransport::new());
+    // The notes payloads ride the same notes pipeline `pr --dry` uses;
+    // the plan feeds the entry-preview fallback (no fabrication).
+    let plan_config: PlanConfig = context.config.plan_config();
+    let plan = plan_from_context(context, profiler)?;
+    let (states, _) = reconcile_snapshot(context, &plan_config, profiler);
+    let remote = remote_origin_url()?;
+    let specs = pending_specs(
+        pending,
+        &plan,
+        &states,
+        &context.discovery.workspace,
+        remote.as_deref(),
+    )?;
+    let branch = halyard_forge::BranchName::new(&format!("halyard/release/{}", plan.base_branch))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let report = profiler
+        .span("release-forge-phase", || {
+            halyard_forge::run_release_machine(
+                &forge,
+                &halyard_forge::MachineInput {
+                    branch,
+                    pending_releases: specs,
+                    // The tag phase owns this pass (§11.1 step 2); the
+                    // Release PR is the `pr` command's prepare phase.
+                    release_pr: None,
+                },
+            )
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok(render::ForgeReleases::Ran {
+        repo: format!("{owner}/{repo}"),
+        effects: report.effects,
+        calls: report.calls,
     })
 }
 
@@ -812,7 +1211,8 @@ fn release_push_phase(
 
 /// The `release` JSON document (stable field order via `serde_json::json!`;
 /// built here so the renderers stay renderer-only, §7.2 style). The live
-/// document carries the honestly deferred forge half.
+/// document carries the forge half's real outcome — ran over the M4.1b
+/// adapter or an honest skip.
 fn release_json_document(
     pending: &[halyard_core::PendingRelease],
     report: &halyard_git::tag::TagPhaseReport,
@@ -820,6 +1220,7 @@ fn release_json_document(
     push: Option<&halyard_git::push::TagPushReport>,
     dry: bool,
     head_hex: &str,
+    forge_releases: &render::ForgeReleases,
 ) -> serde_json::Value {
     let pending_rows: Vec<serde_json::Value> = pending
         .iter()
@@ -858,7 +1259,7 @@ fn release_json_document(
             "already_tagged": report.already_tagged,
             "failed": report.failed,
             "push": render::release_push_json(push, dry),
-            "forge_releases": "deferred (M4.1b)",
+            "forge_releases": render::forge_releases_json(forge_releases),
         })
     }
 }
@@ -1306,15 +1707,146 @@ fn cmd_apply(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliErr
     } else {
         native_lockfile_refreshes(&context.discovery.workspace, &adapters, &declined)?
     };
+    // The changelog stage (M2, §9.4): the resolved `changelog.style` —
+    // a built-in name or a user-template path the shell reads (the
+    // renderer stays pure, §4) — drives the §9.4 insertion machinery
+    // per changelog file. Every file is pre-rendered in memory before
+    // the first write (§9.1 all-or-none across the stage); the writes
+    // go through the same atomic protocol as the plan edits, and the
+    // re-run is byte-identical (I1: in-place section replacement).
+    let changelog_rows = changelog_stage(&context, &plan)?;
     match cli.format {
         Format::Json => {
-            print_pretty_json(&apply_report_json(&report, &native_refreshes))?;
+            print_pretty_json(&apply_report_json(
+                &report,
+                &native_refreshes,
+                &changelog_rows,
+            ))?;
         }
         Format::Gha | Format::Human => {
-            print!("{}", render::apply_report(&report, &native_refreshes));
+            print!(
+                "{}",
+                render::apply_report(&report, &native_refreshes, &changelog_rows)
+            );
         }
     }
     Ok(())
+}
+
+/// The apply command's changelog stage (M2, §9.4): the plan's releases
+/// group by their changelog file (a fixed group shares one document),
+/// each group renders through the resolved style — [`halyard_changelog::StyleSource`]
+/// splits built-in names from user-template paths, the shell reads the
+/// template file — and the §9.4 insertion machinery anchors the section
+/// after the marker or the `Unreleased` heading. A byte-identical
+/// re-render is reported `unchanged` and never written (I1).
+fn changelog_stage(
+    context: &Context,
+    plan: &halyard_core::Plan,
+) -> Result<Vec<render::ChangelogRow>, CliError> {
+    if plan.releases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let setting = context
+        .config
+        .changelog_style
+        .as_deref()
+        .unwrap_or("keep-a-changelog");
+    let source = halyard_changelog::StyleSource::from_config(setting)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The template path is the shell's read (the renderer stays pure):
+    // an unreadable file is the caller's config error, surfaced with
+    // the template code before anything is written.
+    let (style_label, template_source) = match &source {
+        halyard_changelog::StyleSource::BuiltIn(style) => (style.name().to_owned(), None),
+        halyard_changelog::StyleSource::Template(path) => {
+            let text = std::fs::read_to_string(path).map_err(|error| {
+                CliError::new(
+                    "E-CHLOG-TEMPLATE",
+                    format!("cannot read the changelog template {path:?}: {error}"),
+                )
+            })?;
+            (format!("template:{path}"), Some(text))
+        }
+    };
+    // Group by changelog file, stable in file order (I3). The file is
+    // the package's configured changelog, or the same
+    // `<root>/CHANGELOG.md` default `pending_specs` already establishes
+    // (§5.3/§6.1) — the adapters leave `changelog` unset today, so the
+    // default is the zero-config shape.
+    let mut groups: std::collections::BTreeMap<String, Vec<&halyard_core::plan::PlanRelease>> =
+        std::collections::BTreeMap::new();
+    for release in &plan.releases {
+        let file = changelog_file_for(&context.discovery.workspace, &release.package)?;
+        groups.entry(file).or_default().push(release);
+    }
+    // Pre-render everything in memory (§9.1: all files render or none
+    // is written), then stage the atomic writes.
+    let mut staged: Vec<(String, String, &'static str)> = Vec::new();
+    for (file, releases) in &groups {
+        let existing = std::fs::read_to_string(file).ok();
+        let rendered = match &template_source {
+            Some(template) => halyard_changelog::render_releases_into_template(
+                existing.as_deref(),
+                releases,
+                template,
+            ),
+            None => halyard_changelog::render_releases_into(existing.as_deref(), releases, setting),
+        }
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+        let outcome = if existing.as_deref() == Some(rendered.as_str()) {
+            "unchanged"
+        } else if existing.is_none() {
+            "created"
+        } else {
+            "updated"
+        };
+        staged.push((file.clone(), rendered, outcome));
+    }
+    let mut rows = Vec::with_capacity(staged.len());
+    for (file, rendered, outcome) in staged {
+        halyard_edit::atomic_write(std::path::Path::new(&file), rendered.as_bytes())
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+        rows.push(render::ChangelogRow {
+            file,
+            style: style_label.clone(),
+            outcome,
+        });
+    }
+    Ok(rows)
+}
+
+/// The changelog file a release writes: the package's configured
+/// `changelog`, else the `<root>/CHANGELOG.md` default (the same
+/// convention `pending_specs` rides for the release-notes extraction).
+fn changelog_file_for(
+    workspace: &halyard_core::package::Workspace,
+    package: &str,
+) -> Result<String, CliError> {
+    let pkg = workspace
+        .packages()
+        .iter()
+        .find(|pkg| workspace.interner().get(pkg.name) == Some(package))
+        .ok_or_else(|| {
+            CliError::new(
+                "E-CLI-NO-PACKAGE",
+                format!(
+                    "plan release {package:?} names no workspace package (internal \
+                     inconsistency)"
+                ),
+            )
+        })?;
+    Ok(pkg.changelog.as_ref().map_or_else(
+        || {
+            let root = pkg.root.as_str();
+            if root.is_empty() {
+                "CHANGELOG.md".to_owned()
+            } else {
+                format!("{root}/CHANGELOG.md")
+            }
+        },
+        |path| path.as_str().to_owned(),
+    ))
 }
 
 /// The §9.2 rule-4 / §9.3 native fallbacks (M3.2+M3.4): an in-memory
@@ -1405,6 +1937,7 @@ fn native_lockfile_refreshes(
 fn apply_report_json(
     report: &halyard_edit::ApplyReport,
     native_refreshes: &[(String, Vec<String>)],
+    changelog_rows: &[render::ChangelogRow],
 ) -> serde_json::Value {
     let files: Vec<serde_json::Value> = report
         .files
@@ -1444,6 +1977,7 @@ fn apply_report_json(
         "files": files,
         "lockfiles": lockfiles,
         "native_refresh": native,
+        "changelog": changelog_rows.iter().map(render::changelog_row_json).collect::<Vec<_>>(),
         "applied": report.total_applied(),
         "skipped": report.total_skipped(),
     })
