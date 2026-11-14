@@ -100,9 +100,10 @@ struct Cli {
 }
 
 /// The v1 command surface (§16.2; the remaining effectful commands —
-/// `release`, `publish`, `fetch`, `migrate`, `init`, `action` — land
-/// with their milestones M4.x/M5 and are absent rather than stubbed;
-/// `apply` joined in M3.6, `pr` in M4.2b and `check` in M4.3).
+/// `publish`, `fetch`, `migrate`, `init`, `action` — land with their
+/// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
+/// in M3.6, `pr` in M4.2b, `check` in M4.3 and `release --dry` (the
+/// §11.1 git-side tag-phase forecast) in the tag-phase slice).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -128,6 +129,18 @@ enum Command {
     Pr {
         /// Forecast the prepare phase offline (the only implemented
         /// mode; live mode needs the M4.1b forge adapter).
+        #[arg(long)]
+        dry: bool,
+    },
+    /// Forecast the git-side tag phase (§11.1 step 2): reconcile →
+    /// pending releases → annotated-tag directives, classified against
+    /// the real ref state by the preview writer — created / already
+    /// tagged / conflicts. Nothing is written; live mode (annotated tag
+    /// creation, tag push, forge releases) lands with the live release
+    /// shell.
+    Release {
+        /// Forecast the tag phase offline (the only implemented mode;
+        /// live mode needs the live shell's push/forge effects).
         #[arg(long)]
         dry: bool,
     },
@@ -262,6 +275,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_pr(cli, profiler, *dry)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Release { dry } => {
+            cmd_release(cli, profiler, *dry)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Explain { package } => {
             cmd_explain(cli, profiler, package)?;
             Ok(ExitCode::SUCCESS)
@@ -332,14 +349,14 @@ fn cmd_plan(
     Ok(())
 }
 
-/// The §11.1 step-2 reconciliation for the `pr` forecast: the manifest
-/// versions and the enumerated tags are the only inputs — the same pure
-/// decision ([`halyard_core::release_state`]) the live run makes,
-/// resolved through the planner's own template rule and skip set, so the
-/// forecast can never disagree with the plan (I3). Returns the full
-/// state rows (Tagged/Pending/Behind — the report) and the deduplicated
-/// pending queue (the machine's tag-phase input).
-fn reconcile_for_pr(
+/// The §11.1 step-2 reconciliation shared by the `pr` and `release`
+/// forecasts: the manifest versions and the enumerated tags are the only
+/// inputs — the same pure decision ([`halyard_core::release_state`]) the
+/// live run makes, resolved through the planner's own template rule and
+/// skip set, so the forecast can never disagree with the plan (I3).
+/// Returns the full state rows (Tagged/Pending/Behind — the report) and
+/// the deduplicated pending queue (the tag phase's input).
+fn reconcile_snapshot(
     context: &Context,
     plan_config: &PlanConfig,
     profiler: &mut Profiler,
@@ -388,7 +405,7 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let plan_config: PlanConfig = context.config.plan_config();
-    let (states, pending) = reconcile_for_pr(&context, &plan_config, profiler);
+    let (states, pending) = reconcile_snapshot(&context, &plan_config, profiler);
     // §11.2: the release branch is `halyard/release/<base>`. The plan's
     // `base_branch` stays `HEAD` until the live shell resolves the
     // remote HEAD (planner.rs) — the forecast names exactly what a live
@@ -472,6 +489,71 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
             "{}",
             render::pr_dry_human(&title, branch.as_str(), &states, &report, body.as_deref())
         ),
+    }
+    Ok(())
+}
+
+/// The `release` command (§11.1 step 2, git-side forecast): the
+/// reconciliation feeds [`halyard_git::tag::directives_for_pending`], the
+/// directives run through the preview tag writer — probes are real
+/// (existing tags classify exactly as the live run would), mutations are
+/// forecasts. Nothing is written and no network is touched (I5); live
+/// mode lands with the live release shell (`E-CLI-RELEASE`).
+fn cmd_release(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
+    if !dry {
+        return Err(CliError::new(
+            "E-CLI-RELEASE",
+            "live release mode (annotated tag creation, tag push, forge releases) needs \
+             the live release shell (M4.2b, not implemented yet); use `halyard release \
+             --dry` for the offline forecast",
+        ));
+    }
+    let context = context(cli, profiler)?;
+    let plan_config: PlanConfig = context.config.plan_config();
+    let (states, pending) = reconcile_snapshot(&context, &plan_config, profiler);
+    let Some(head) = context.history.head_oid() else {
+        return Err(CliError::new(
+            "E-GIT-HEAD",
+            "the repository has no commits; make an initial commit before forecasting a \
+             release",
+        ));
+    };
+    // Directives target HEAD — the documented §11.1 fallback (the
+    // manifest-blob pinpoint walk needs blob reads and would break
+    // blob-less clones).
+    let directives = halyard_git::tag::directives_for_pending(&pending, &head);
+    let writer = halyard_git::tag::PreviewTagWriter::open(std::path::Path::new("."))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let report = profiler.span("release-dry", || {
+        halyard_git::tag::run_tag_phase(&writer, &directives)
+    });
+    let head_hex = head.to_string();
+    match cli.format {
+        Format::Json => {
+            let pending_rows: Vec<serde_json::Value> = pending
+                .iter()
+                .map(|release| {
+                    serde_json::json!({
+                        "package": release.package,
+                        "version": release.version.to_string(),
+                        "tag": release.tag,
+                    })
+                })
+                .collect();
+            let directive_rows: Vec<serde_json::Value> =
+                report.rows.iter().map(render::release_row_json).collect();
+            print_pretty_json(&serde_json::json!({
+                "mode": "dry",
+                "head": head_hex,
+                "pending_releases": pending_rows,
+                "directives": directive_rows,
+                "created": report.created,
+                "already_tagged": report.already_tagged,
+                "failed": report.failed,
+            }))?;
+        }
+        Format::Gha => print!("{}", render::release_dry_gha(&head_hex, &states, &report)),
+        Format::Human => print!("{}", render::release_dry_human(&head_hex, &states, &report)),
     }
     Ok(())
 }
