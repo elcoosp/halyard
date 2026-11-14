@@ -30,6 +30,93 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M5.5 call-governor slice (§11.5 pacing/retry/budget) | done | feat/forge-call-governor (dirty; no commits) | M1: `halyard_forge::governor` (ADR-0015) — the `Governor` `Forge` decorator (wraps any `&dyn Forge`, `Forge::calls` keeps delegating so the machine's §11.5 accounting is untouched): `GovernorPolicy` (spacing/budget/retries/backoff base+cap; `default()` passive, `shell_default()` the §11.5 production shape), content-call pacing start-to-start (probes + `rate_limit()` unpaced), `Retry-After` honored exactly, transport backoff deterministic `base × 2^attempt` capped (no jitter — the I3 deviation ADR-0015 documents), per-run budget as a forwarded-attempts ledger (failures + retries count) refusing fail-closed *before* the call with the new `ForgeError::Budget` (`E-FORGE-BUDGET` page + index row; non-retryable errors never wait; exhausted retries return the last error verbatim), injected `GovernorClock`/`GovernorSleeper` + `system_time()` production pair, deterministic `events()` log; 12 contract tests (`tests/governor.rs`, red→green on record) + bench `governor` (passthrough ≈894 ns, pacing decision ×16 ≈4.6 µs, budget block ≈598 ns) + example `governed_release` + E-FORGE-RATE-LIMIT as-built + arch §11.5 as-built. M2 (M1 green first): `governor_policy_from_env` (`HALYARD_FORGE_MIN_CALL_SPACING_MS`/`_MAX_CALLS`/`_MAX_RETRIES` over `shell_default()`, invalid → fail-closed `E-FORGE-REQUEST` naming the variable), the three live forge sites wrapped (`pr` live, the release forge half, `forge-smoke`), `render::GovernorSummary` (`line()`/`json()`) riding the live pr JSON document + human/gha tails (dry JSON schema byte-stable), `ForgeReleases::Ran` gains the governor summary, `doctor` gains the `forge-governor` check (resolved policy; invalid env fails the check); 4 loopback e2e tests in `cli_forge.rs` (summary row + budget block fail-closed with zero refused HTTP + env grammar naming the variable + smoke governor row; red→green on record) | Publish (M5), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the `github-release-notes` PR-comment mode — all unchanged. Pre-existing reds repaired at base first: the two `cli_pr` warm-cache determinism pins now ride `--no-cache` (the cli_stats convention the M4.1c session left unfinished at HEAD) | 2026-11-14; session log below |
 
+| §8.8 smart-minimal-fetch slice (M4.6 step 1) + M5.1 registry existence probes | done | feat/fetch-and-registry-probes (dirty; no commits) | M1 (M4.6 step 1): `halyard_git::fetch` (ADR-0016) — the pure planner (`latest_tags_for`, `deepen_boundaries_for` through the now-public `halyard_core::planner::effective_template` so fetch/plan/tag-phase cannot disagree, `plan_fetch`, `fetch_attempts`) + the live `TagFetcher`/`GixTagFetcher` effect (probe → select → classify → one minimal fetch, full-fetch fallback of the same refs, I1-idempotent, divergent release tags fail-closed `E-GIT-TAG-CONFLICT`); three recipe points settled empirically + pinned by tests (shallow machinery only on shallow repos — `--shallow-exclude` fails complete clones; the boundary is each package's previous release tag; `--deepen` loops deferred, the full fetch is the terminal fallback); `GitError::Fetch` (`E-GIT-FETCH` page + index); CLI `halyard fetch` (discovery+config only — a shallow clone must be fetchable; human/json/gha, exit 1 on failed rows) + 17 engine tests (`tests/fetch.rs`, red→green) + 4 CLI tests (`cli_fetch.rs`, red→green) + bench `fetch_plan` (selection 40×202 ≈ 596 µs, boundaries ≈ 594 µs, attempts 40 ≈ 12 µs) + example `fetch_plan` + ADR-0016 + arch §8.8/§16.2 as-built + README/CLI-README rows. M2 (M1 green first, M5.1 step 1): the `halyard-registry` crate (ADR-0017) — the `Registry` seam over the forge transport (no HTTP client; `UreqTransport` injected at runtime, `MemoryTransport` in tests; layer rule `registry → forge`, 17 crates ✓), `CratesIo` sparse-index + `Npm` packument `published()` with fail-closed status semantics (`404` ⇒ not published — verified live; uninterpretable ⇒ `E-REG-PROTOCOL`; names never reach the wire invalid ⇒ `E-REG-NAME`), `wait_until_visible` with the deterministic doubling-capped backoff + injected `RegistrySleeper`; URL grammar VERIFIED live (Cargo Book + npm registry docs + direct HTTP probes) and recorded in `docs/research/registry-existence-probes.md`; 12 contract tests (red→green) + bench `probe` (sparse parse ≈ 2.9 µs, packument ≈ 28.6 µs) + example `probe_registries` + `doctor --registries` opt-in probe (immutable-version probes; I5 respected) + `E-REG-*` pages ×3 + index rows | The M4.6 corpus checkout-time acceptance (corpus lane), the M5.1 nightly live checks (opt-in lane), the `--deepen` loops, the M5.2 publisher (declared consumer), publish/M5.2+, the corpus-wide pnpm differential, the M2.6 dhat re-audit. Micro-debt cleaned (additive): cache write-back failures remapped `E-GIT-OBJECT` → the new `GitError::Cache` (`E-GIT-CACHE` page — a durability failure is not an object-read error), the dead always-`None` `TagCandidate::version` field removed, the README daily-commands list completed (8 example rows drifted) | 2026-11-14; session log below |
+
+### 2026-11-14 — §8.8 smart-minimal-fetch (M4.6 step 1, ADR-0016) + M5.1 registry existence probes (ADR-0017) (branch `feat/fetch-and-registry-probes`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `ba95b52` (the M5.5
+  governor slice). Baseline `cargo test --workspace --all-features
+  --locked` re-run green on a fresh toolchain (stable 1.100.0): 86
+  suites, 658 passed, 0 failed — including the cache crate's
+  `miri`+`loom` test scaffolding combined under `--all-features` (the
+  documented mutually-exclusive pair only changes the test backends).
+  The declared open start points were (1) publish (M5), (2) the corpus
+  pnpm differential, (3) the M2.6 dhat re-audit, (4) the
+  `github-release-notes` PR-comment mode. Picked §8.8 (fetch) as M1 —
+  the last §16.2 command absent rather than wired, with no network
+  research surface (a local `file://` remote exercises the whole
+  effect) — and M5.1's registry probes as M2 (the §7.1-reserved crate,
+  the §15.4-reserved `E-REG-*` family, the §13 primitive the M5.2
+  publisher needs first).
+- **M1 implemented (no stubs), one full red→green cycle** (17 engine
+  tests written first against the planned API, red on the unresolved
+  `halyard_git::fetch`, then implemented):
+  - `halyard-git/src/fetch.rs` — the §8.8 subsystem: pure planner +
+    live effect, mirroring the `tag`/`push` seam conventions (argv
+    arrays, `GIT_TERMINAL_PROMPT=0`, deterministic reports, report
+    tallies derived from rows). The empirical probes that shaped the
+    design (all pinned by tests, recorded in ADR-0016): on a **complete**
+    clone `--shallow-exclude` fails the whole fetch with `no commits
+    selected for shallow requests` (it is a deepening option); excluding
+    the *fetched* tag itself swallows the request (exit 128); excluding
+    the package's **previous** release tag while fetching the newer one
+    succeeds on shallow clones and bounds the deepening.
+  - Template resolution rides the planner's own rule: the first engine
+    run exposed that discovery templates differ from the §6.1
+    single-package default — `effective_template` became `pub` and the
+    planner takes `&PlanConfig`, so fetch, plan and the tag phase
+    cannot disagree (I3).
+  - `halyard fetch` (CLI): discovery + config only — deliberately not
+    the history walk (a shallow clone, the state fetch repairs, fails
+    the walk `E-GIT-SHALLOW`). Base branch = the config override,
+    defaulting to `HEAD` like the planner; remote = `origin` (the §11.2
+    convention). No `--dry` by design: the remote listing is the one
+    input an offline forecast cannot have (ADR-0016 records the
+    decision).
+- **M2 implemented (M1 green end-to-end first), one red→green cycle**
+  (12 contract tests first, red on the missing crate):
+  - `halyard-registry` (new crate, layer rule `registry → forge`): the
+    `Registry` seam + `CratesIo`/`Npm` clients + `wait_until_visible`
+    with the injected `RegistrySleeper`. The URL grammar was VERIFIED
+    per §0.4 — Cargo Book fetched, npm registry docs fetched, and both
+    registries probed live (`se/rd/serde`, `3/l/log`, missing → 404,
+    npm scoped unencoded, npm missing → 404, `versions` map keys) —
+    recorded in `docs/research/registry-existence-probes.md` with the
+    three remaining VERIFY items (mirror URL encoding, rate limits at
+    scale, yanked-version policy) honestly open.
+  - Wire-up: `halyard doctor --registries` — the opt-in probe against
+    immutable versions (`serde@1.0.0`, `react@0.0.1`; registries never
+    overwrite versions, so the probes are stable and read-only).
+- **Micro-debt/docs drift cleaned (additive, not milestone
+  substitutes).** The cache write-back failures in `halyard-git` were
+  mapped onto `E-GIT-OBJECT` — a durability failure is not an
+  object-read error; now `GitError::Cache` (`E-GIT-CACHE` page + index).
+  The `TagCandidate::version` field was constructed `None` and never
+  read or written by anyone (dead since M2.1) — removed with the
+  doc note that per-package versions derive on demand. The root
+  README's daily-commands list was 8 example rows behind the shipped
+  examples (lint_title, tag_phase/forecast/push/target, fetch_plan,
+  render_release_notes, render_user_template, pr_preview,
+  governed_release, forge_exchange, app_exchange) — completed; the
+  `Command` enum doc no longer lists `fetch` among the absent commands.
+- **Tests/bench/example totals.** 17 fetch engine tests + 4 CLI fetch
+  tests + 12 registry contract tests + 4 doctor-flag/CLI smoke paths
+  (the doctor wire rides the existing snapshot suite); benches
+  `fetch_plan` (3 groups) + `probe` (2 groups) registered and run;
+  examples `fetch_plan` + `probe_registries` run clean.
+- **Honest state at cut-off.** The M4.6 corpus checkout-time acceptance
+  and the M5.1 nightly live checks belong to their lanes and stay
+  deferred; `--deepen` loops are superseded by the terminal full-fetch
+  fallback (documented); the M5.2 publisher is the declared consumer of
+  the registry seam. Publish/M5.2+, the corpus-wide pnpm differential
+  and the M2.6 dhat re-audit remain open. Tree left dirty (no commits
+  made).
+- **Next session start point.** (1) The M5.2 publisher over the
+  `Registry` seam (topo layers, resume, visibility wait — all testable
+  against `MemoryTransport`), (2) the corpus-wide pnpm differential as
+  an xtask subcommand, (3) the M2.6 dhat re-audit with the cache warm,
+  (4) the `github-release-notes` PR-comment mode.
+
 ### 2026-11-14 — M4.1c App-JWT auth (ADR-0014) + walk-provenance reporting (branch `feat/github-app-jwt-auth`, tree left dirty, no commits)
 
 - **Inventory at session start.** The base commit `3122994` was NOT green on
