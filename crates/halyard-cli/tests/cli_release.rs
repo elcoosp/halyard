@@ -97,29 +97,332 @@ fn tag_count(root: &std::path::Path) -> Result<usize, BoxError> {
     Ok(text.lines().filter(|line| !line.trim().is_empty()).count())
 }
 
+/// Runs the binary; returns (exit code, combined output). `envs` are set
+/// for the child (the live tests isolate the tagger identity through
+/// `GIT_CONFIG_GLOBAL`).
+fn halyard_env(
+    root: &std::path::Path,
+    args: &[&str],
+    envs: &[(&str, &std::path::Path)],
+) -> Result<(u8, String), BoxError> {
+    let out = Command::new(env!("CARGO_BIN_EXE_halyard"))
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("NO_COLOR", "1")
+        .envs(envs.iter().map(|(key, value)| (*key, *value)))
+        .output()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let code = u8::try_from(out.status.code().unwrap_or_default()).unwrap_or_default();
+    Ok((code, text))
+}
+
+/// Writes an isolated global git config carrying a complete tagger
+/// identity, so the live tag phase is hermetic (the writer fails closed
+/// on an incomplete identity — the identity must be configured, never
+/// synthesized).
+fn identity_config(label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let path = std::env::temp_dir().join(format!(
+        "halyard-cli-release-{label}-{}-gitconfig",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        "[user]\n\tname = halyard fixture\n\temail = fixture@example.invalid\n",
+    )?;
+    Ok(path)
+}
+
+/// Writes an empty global git config (no `user.*`) — the incomplete
+/// identity the fail-closed test exercises.
+fn empty_identity_config(label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let path = std::env::temp_dir().join(format!(
+        "halyard-cli-release-{label}-{}-empty-gitconfig",
+        std::process::id()
+    ));
+    std::fs::write(&path, "")?;
+    Ok(path)
+}
+
+/// A bare `origin` wired into the fixture (the §11.2 push target).
+fn with_origin(fx: &GitFixture, label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let origin = fx.root().join(format!("{label}-origin.git"));
+    fx.run_git(&["init", "--bare", origin.to_string_lossy().as_ref()])?;
+    fx.run_git(&["remote", "add", "origin", origin.to_string_lossy().as_ref()])?;
+    Ok(origin)
+}
+
+/// The remote's tag names, as bare `git ls-remote` ground truth.
+fn remote_tags(fx: &GitFixture) -> Result<Vec<String>, BoxError> {
+    let out = fx.run_git(&["ls-remote", "--tags", "origin"])?;
+    let mut names = Vec::new();
+    for line in out.lines() {
+        let Some((_, reference)) = line.split_once('\t') else {
+            continue;
+        };
+        let Some(name) = reference.strip_prefix("refs/tags/") else {
+            continue;
+        };
+        names.push(name.strip_suffix("^{}").unwrap_or(name).to_owned());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The `push` section of a `release` JSON document.
+fn push_section(value: &serde_json::Value) -> &serde_json::Value {
+    value
+        .get("push")
+        .ok_or("the JSON document carries the push section")
+        .unwrap_or(&serde_json::Value::Null)
+}
+
 #[test]
-fn release_live_mode_declines_honestly() -> Result<(), BoxError> {
-    let fx = build_workspace("live-decline")?;
-    let (code, text) = halyard(fx.root(), &["release"])?;
-    assert_eq!(code, 1, "live mode is an error, not a silent no-op");
-    assert!(
-        text.contains("live release shell"),
-        "the decline explains itself: {text}"
+fn release_live_creates_and_pushes_tags() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-push")?;
+    with_origin(&fx, "live-push")?;
+    let identity = identity_config("live")?;
+    let (code, text) = halyard_env(
+        fx.root(),
+        &["release", "--format", "json"],
+        &[("GIT_CONFIG_GLOBAL", identity.as_path())],
+    )?;
+    assert_eq!(code, 0, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    assert_eq!(
+        value.get("mode").and_then(serde_json::Value::as_str),
+        Some("live")
+    );
+    assert_eq!(
+        value.get("created").and_then(serde_json::Value::as_i64),
+        Some(1)
+    );
+    let push = push_section(&value);
+    assert_eq!(
+        push.get("remote").and_then(serde_json::Value::as_str),
+        Some("origin")
+    );
+    assert_eq!(
+        push.get("pushed").and_then(serde_json::Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(
+        value
+            .get("forge_releases")
+            .and_then(serde_json::Value::as_str),
+        Some("deferred (M4.1b)"),
+        "the forge half is honestly deferred: {text}"
+    );
+    // Ground truth: the annotated tag exists locally and on the remote.
+    let kind = fx.run_git(&["cat-file", "-t", "v0.1.1"])?;
+    assert_eq!(kind.trim(), "tag", "the tag is an annotated tag object");
+    assert_eq!(remote_tags(&fx)?, vec!["v0.1.1".to_owned()]);
+    Ok(())
+}
+
+#[test]
+fn release_live_rerun_is_a_no_op_and_byte_identical() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-rerun")?;
+    with_origin(&fx, "live-rerun")?;
+    let identity = identity_config("live")?;
+    let env = [("GIT_CONFIG_GLOBAL", identity.as_path())];
+    let (first_code, first) = halyard_env(fx.root(), &["release", "--format", "json"], &env)?;
+    assert_eq!(first_code, 0, "{first}");
+    let (second_code, second) = halyard_env(fx.root(), &["release", "--format", "json"], &env)?;
+    assert_eq!(second_code, 0, "{second}");
+    let (third_code, third) = halyard_env(fx.root(), &["release", "--format", "json"], &env)?;
+    assert_eq!(third_code, 0);
+    let value: serde_json::Value = serde_json::from_str(second.trim())?;
+    // The re-run reconciles to *nothing owed* (the created tag now
+    // carries the manifest version) — the strong I1 no-op shape.
+    assert_eq!(
+        value
+            .get("already_tagged")
+            .and_then(serde_json::Value::as_i64),
+        Some(0),
+        "the re-run is a no-op (I1): {second}"
+    );
+    assert_eq!(
+        value.get("created").and_then(serde_json::Value::as_i64),
+        Some(0)
     );
     assert!(
-        text.contains("--dry"),
-        "the decline points at the forecast mode: {text}"
+        value
+            .get("pending_releases")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "nothing is pending after the tags landed: {second}"
     );
-    assert_eq!(tag_count(fx.root())?, 0, "the decline writes nothing");
-    // The stable §15.4 code rides the JSON error document.
-    let (code, out) = halyard(fx.root(), &["--format", "json", "release"])?;
-    assert_eq!(code, 1, "{out}");
-    let value: serde_json::Value = serde_json::from_str(out.trim())?;
-    let code = value
-        .get("error")
-        .and_then(|error| error.get("code"))
-        .and_then(serde_json::Value::as_str);
-    assert_eq!(code, Some("E-CLI-RELEASE"));
+    let push = push_section(&value);
+    assert_eq!(
+        push.get("pushed").and_then(serde_json::Value::as_i64),
+        Some(0),
+        "the remote re-run sends nothing (I1): {second}"
+    );
+    assert_eq!(second, third, "I3: the no-op report is byte-stable");
+    assert_eq!(tag_count(fx.root())?, 2, "no duplicate tags (I2)");
+    Ok(())
+}
+
+#[test]
+fn release_live_no_push_skips_the_phase() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-nopush")?;
+    let identity = identity_config("live")?;
+    let (code, text) = halyard_env(
+        fx.root(),
+        &["release", "--no-push", "--format", "json"],
+        &[("GIT_CONFIG_GLOBAL", identity.as_path())],
+    )?;
+    assert_eq!(code, 0, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let push = push_section(&value);
+    assert!(
+        push.get("remote").is_none_or(serde_json::Value::is_null),
+        "--no-push skips the push phase: {text}"
+    );
+    assert_eq!(
+        value.get("created").and_then(serde_json::Value::as_i64),
+        Some(1)
+    );
+    assert_eq!(tag_count(fx.root())?, 2, "the local tags still land");
+    Ok(())
+}
+
+#[test]
+fn release_live_without_remote_skips_push_honestly() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-noremote")?;
+    let identity = identity_config("live")?;
+    let (code, text) = halyard_env(
+        fx.root(),
+        &["release", "--format", "json"],
+        &[("GIT_CONFIG_GLOBAL", identity.as_path())],
+    )?;
+    assert_eq!(
+        code, 0,
+        "a local-only repository releases without a push: {text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let push = push_section(&value);
+    assert!(
+        push.get("remote").is_none_or(serde_json::Value::is_null),
+        "no remote configured is an honest skip: {text}"
+    );
+    assert_eq!(tag_count(fx.root())?, 2, "the local tags still land");
+    Ok(())
+}
+
+#[test]
+fn release_live_conflict_fails_closed() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-conflict")?;
+    with_origin(&fx, "live-conflict")?;
+    // Hostile pre-state: the remote carries v0.1.1 at the *parent* commit
+    // (an outside actor moved it), while the pinpoint targets the bump
+    // commit. The push must refuse — release tags are never moved.
+    let parent = fx.resolve("HEAD~1")?;
+    fx.run_git(&["tag", "-f", "v0.1.1", &parent])?;
+    fx.run_git(&["push", "origin", "refs/tags/v0.1.1"])?;
+    fx.run_git(&["tag", "-d", "v0.1.1"])?;
+    let identity = identity_config("live")?;
+    let (code, text) = halyard_env(
+        fx.root(),
+        &["release", "--format", "json"],
+        &[("GIT_CONFIG_GLOBAL", identity.as_path())],
+    )?;
+    assert_eq!(code, 1, "a divergent remote tag fails the run: {text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let push = push_section(&value);
+    assert_eq!(
+        push.get("failed").and_then(serde_json::Value::as_i64),
+        Some(1)
+    );
+    let row = push
+        .get("rows")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .ok_or("the push row exists")?;
+    assert_eq!(
+        row.get("error_code").and_then(serde_json::Value::as_str),
+        Some("E-GIT-TAG-CONFLICT"),
+        "the remote divergence carries the stable conflict code: {text}"
+    );
+    assert_eq!(
+        remote_tags(&fx)?,
+        vec!["v0.1.1".to_owned()],
+        "nothing forced"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_live_incomplete_identity_fails_closed() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("live-identity")?;
+    with_origin(&fx, "live-identity")?;
+    // An empty global config: no user.name/user.email. The writer never
+    // synthesizes a tagger (E-GIT-TAG) and nothing lands anywhere.
+    let empty = empty_identity_config("live-identity")?;
+    let (code, text) = halyard_env(
+        fx.root(),
+        &["release", "--format", "json"],
+        &[("GIT_CONFIG_GLOBAL", empty.as_path())],
+    )?;
+    assert_eq!(code, 1, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    assert_eq!(
+        value.get("failed").and_then(serde_json::Value::as_i64),
+        Some(1)
+    );
+    let row = value
+        .get("directives")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .ok_or("the directive row exists")?;
+    assert_eq!(
+        row.get("error_code").and_then(serde_json::Value::as_str),
+        Some("E-GIT-TAG"),
+        "an incomplete identity is a fail-closed E-GIT-TAG: {text}"
+    );
+    assert_eq!(tag_count(fx.root())?, 1, "nothing was written");
+    assert_eq!(
+        remote_tags(&fx)?,
+        Vec::<String>::new(),
+        "nothing was pushed"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_dry_forecasts_the_push_offline() -> Result<(), BoxError> {
+    let fx = build_merged_workspace("dry-push")?;
+    with_origin(&fx, "dry-push")?;
+    let (code, text) = halyard(fx.root(), &["release", "--dry", "--format", "json"])?;
+    assert_eq!(code, 0, "{text}");
+    let value: serde_json::Value = serde_json::from_str(text.trim())?;
+    let push = push_section(&value);
+    assert_eq!(
+        push.get("remote").and_then(serde_json::Value::as_str),
+        Some("origin")
+    );
+    assert_eq!(
+        push.get("forecast").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "the dry push section is a forecast"
+    );
+    assert_eq!(
+        push.get("rows")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("outcome"))
+            .and_then(serde_json::Value::as_str),
+        Some("would_push"),
+        "the forecast names what a live run would send"
+    );
+    // The forecast cannot write: the remote stays empty.
+    assert_eq!(remote_tags(&fx)?, Vec::<String>::new());
     Ok(())
 }
 
