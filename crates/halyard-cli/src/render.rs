@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use halyard_core::HistoryProvider;
-use halyard_core::{Plan, PlanRelease};
+use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
 use halyard_edit::{ApplyReport, DryPatch};
 use halyard_forge::{MachineEffect, MachineReport};
 
@@ -582,13 +582,14 @@ fn pr_effect_gha(effect: &MachineEffect) -> String {
     }
 }
 
-/// Renders the `pr --dry` forecast (M4.2b step 1): the machine's effects
-/// over the preview forge, the §11.5 call-budget forecast and the
-/// rendered §11.3 body. Deterministic (I3): the same repo state renders
-/// byte-identical text.
+/// Renders the `pr --dry` forecast (M4.2b step 1): the §11.1 step-2
+/// reconciliation rows, the machine's effects over the preview forge,
+/// the §11.5 call-budget forecast and the rendered §11.3 body.
+/// Deterministic (I3): the same repo state renders byte-identical text.
 pub fn pr_dry_human(
     title: &str,
     branch: &str,
+    states: &[PackageTagState],
     report: &MachineReport,
     body: Option<&str>,
 ) -> String {
@@ -599,6 +600,45 @@ pub fn pr_dry_human(
     );
     let _ = writeln!(out, "title: {title:?}");
     let _ = writeln!(out, "branch: {branch}");
+    // The §11.1 step-2 reconciliation, visible in the report (§16.3:
+    // the forecast shows what the live run would tag — and what it
+    // deliberately would not: a Behind row is reported, never tagged).
+    let pending: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Pending)
+        .collect();
+    let behind: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Behind)
+        .collect();
+    let _ = writeln!(
+        out,
+        "pending tags (manifest-vs-tags, §11.1 step 2): {}",
+        pending.len()
+    );
+    for state in &pending {
+        let _ = writeln!(
+            out,
+            "  - {} ({} {})",
+            state.tag, state.package, state.manifest_version
+        );
+    }
+    if pending.is_empty() {
+        let _ = writeln!(out, "  (every manifest version is tagged)");
+    }
+    for state in &behind {
+        let _ = writeln!(
+            out,
+            "  behind, not tagged: {} carries {} but the manifest says {} (a reverted \
+             merge is never re-tagged downward)",
+            state.latest_tag.as_deref().unwrap_or_default(),
+            state
+                .latest_version
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string),
+            state.manifest_version
+        );
+    }
     if report.effects.is_empty() {
         let _ = writeln!(
             out,
@@ -609,11 +649,14 @@ pub fn pr_dry_human(
     for effect in &report.effects {
         let _ = writeln!(out, "{}", pr_effect_gha(effect));
     }
+    if report.propagated {
+        let _ = writeln!(
+            out,
+            "prepare phase: deferred (PROPAGATE, §11.1 step 2) — the Release PR is \
+             forecast once the pending tags are current"
+        );
+    }
     let _ = writeln!(out, "forge calls forecast: {}", report.calls);
-    let _ = writeln!(
-        out,
-        "tag phase: not forecast (the live run reconciles manifest-vs-tags, §11.1 step 2)"
-    );
     if let Some(body) = body {
         let _ = writeln!(out, "body:");
         let _ = writeln!(out, "{body}");
@@ -623,10 +666,28 @@ pub fn pr_dry_human(
 
 /// The `pr --dry` forecast as a GHA job summary (body folded into a
 /// details block).
-pub fn pr_dry_gha(title: &str, branch: &str, report: &MachineReport, body: Option<&str>) -> String {
+pub fn pr_dry_gha(
+    title: &str,
+    branch: &str,
+    states: &[PackageTagState],
+    report: &MachineReport,
+    body: Option<&str>,
+) -> String {
     let mut out = String::from("## halyard pr (dry)\n\n");
     let _ = writeln!(out, "- title: `{title}`");
     let _ = writeln!(out, "- branch: `{branch}`");
+    let pending: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Pending)
+        .collect();
+    let _ = writeln!(out, "- pending tags (§11.1 step 2): {}", pending.len());
+    for state in &pending {
+        let _ = writeln!(
+            out,
+            "  - `{}` ({} {})",
+            state.tag, state.package, state.manifest_version
+        );
+    }
     if report.effects.is_empty() {
         let _ = writeln!(
             out,
@@ -636,6 +697,9 @@ pub fn pr_dry_gha(title: &str, branch: &str, report: &MachineReport, body: Optio
     }
     for effect in &report.effects {
         let _ = writeln!(out, "- {}", pr_effect_gha(effect));
+    }
+    if report.propagated {
+        let _ = writeln!(out, "- prepare phase deferred (PROPAGATE, §11.1 step 2)");
     }
     let _ = writeln!(out, "- forge calls forecast: {}", report.calls);
     if let Some(body) = body {
