@@ -39,6 +39,9 @@ halyard-forge = { workspace = true }
 # (the seam stays adapter-free; the shell owns the wire-up).
 halyard-forge-github = { workspace = true }
 halyard-changelog = { workspace = true }
+# M5.1 (§13): the doctor's opt-in `--registries` probe rides the
+# Registry seam over the forge transport (network only by the flag, I5).
+halyard-registry = { workspace = true }
 # M4.3 `check` (§11.6): the title-lint seam — the engine lives in the
 # parser leaf (policy injected via `TitleBumpRule`), the CLI binds the
 # resolved `PlanConfig` mapping and renders the verdicts.
