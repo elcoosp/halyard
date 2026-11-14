@@ -71,7 +71,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo run -p xtask -- corpus fetch --shallow
-      - run: cargo run -p xtask -- differential --all
+      # As-built: the differential suites are cargo test targets (the
+      # `differential` xtask subcommand was never wired); tests skip
+      # honestly when the ground-truth binary is absent.
+      - run: cargo test -p halyard-eco-cargo --test differential
+      - run: cargo test -p halyard-eco-npm --test differential
+      - run: cargo test -p halyard-discover --test differential
 
   forge-smoke:
     name: real-forge smoke (opt-in)
