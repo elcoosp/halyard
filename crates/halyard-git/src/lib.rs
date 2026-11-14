@@ -23,6 +23,7 @@
 pub mod bloom;
 pub mod merge;
 pub mod refs;
+pub mod tag;
 pub mod tree_diff;
 pub mod walk;
 
@@ -73,6 +74,27 @@ pub enum GitError {
         /// What went wrong.
         message: String,
     },
+    /// The tag-phase write path failed (`E-GIT-TAG`, §11.1 step 2):
+    /// tag-name validation, an unknown target, an incomplete tagger
+    /// identity, or a failed object write / reference creation. Nothing
+    /// is left half-written: a rejected directive writes nothing.
+    TagWrite {
+        /// What went wrong (includes the offending tag or target).
+        message: String,
+    },
+    /// A release tag already exists at a *different* target
+    /// (`E-GIT-TAG-CONFLICT`, §11.1 step 2). Fail-closed by design: the
+    /// reconciliation never moves a release tag — a moved tag would
+    /// misstate what was released. Resolve the conflict by hand (delete
+    /// or re-point the tag deliberately) and re-run.
+    TagConflict {
+        /// The short tag name in conflict.
+        tag: String,
+        /// The commit the existing tag points at.
+        existing: String,
+        /// The commit the directive asked for.
+        requested: String,
+    },
 }
 
 impl GitError {
@@ -84,6 +106,8 @@ impl GitError {
             Self::Shallow { .. } => "E-GIT-SHALLOW",
             Self::RefScan { .. } => "E-GIT-REF",
             Self::Object { .. } => "E-GIT-OBJECT",
+            Self::TagWrite { .. } => "E-GIT-TAG",
+            Self::TagConflict { .. } => "E-GIT-TAG-CONFLICT",
         }
     }
 }
@@ -106,6 +130,17 @@ impl std::fmt::Display for GitError {
             ),
             Self::RefScan { message } => write!(f, "[E-GIT-REF] {message}"),
             Self::Object { message } => write!(f, "[E-GIT-OBJECT] {message}"),
+            Self::TagWrite { message } => write!(f, "[E-GIT-TAG] {message}"),
+            Self::TagConflict {
+                tag,
+                existing,
+                requested,
+            } => write!(
+                f,
+                "[E-GIT-TAG-CONFLICT] tag {tag} already exists at {existing} but the tag phase \
+                 owes {requested}; release tags are never moved — delete or re-point {tag} \
+                 deliberately and re-run"
+            ),
         }
     }
 }
