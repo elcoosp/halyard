@@ -66,6 +66,7 @@ pattern from M1 onward where useful).
 | `E-FORGE-CONFLICT` | [E-FORGE-CONFLICT.md](E-FORGE-CONFLICT.md) | forge CAS precondition (M4.1a, §11.2) |
 | `E-FORGE-REQUEST` | [E-FORGE-REQUEST.md](E-FORGE-REQUEST.md) | forge spec validation (M4.1a) |
 | `E-FORGE-UNSUPPORTED` | [E-FORGE-UNSUPPORTED.md](E-FORGE-UNSUPPORTED.md) | forge capability decline (M4.1a) |
+| `E-FORGE-BUDGET` | [E-FORGE-BUDGET.md](E-FORGE-BUDGET.md) | per-run forge call budget exhausted by the governor (M5.5, §11.5) |
 
 ## Extension policy
 
