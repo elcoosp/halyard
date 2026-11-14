@@ -1,20 +1,21 @@
 //! The §11.1 step-2 **stateless reconciliation** (manifest-vs-tags): the
 //! pure decision behind the Release-PR state machine's tag phase.
 //!
-//! The machine ([`halyard_forge`], §11.1) consumes an already-reconciled
-//! pending list — "the caller owns everything the machine cannot see".
-//! This module owns that decision as a total function over the
-//! discovered [`Workspace`] and the repository's tag names, so the shell
-//! (`halyard pr --dry`, the live `release`) and the forecast report the
-//! same reconciliation (invariant I3: no hidden state, the manifest and
-//! the tags are the only inputs — stateless reconciliation is the
-//! architecture's self-healing primitive, §1.2/§11.1).
+//! The machine (the `halyard_forge` crate, §11.1) consumes an
+//! already-reconciled pending list — "the caller owns everything the
+//! machine cannot see." This module owns that decision as a total
+//! function over the discovered [`Workspace`] and the repository's tag
+//! names, so the shell (`halyard pr --dry`, the live `release`) and the
+//! forecast report the same reconciliation (invariant I3: no hidden
+//! state, the manifest and the tags are the only inputs — stateless
+//! reconciliation is the architecture's self-healing primitive,
+//! §1.2/§11.1).
 //!
 //! Classification per versioned package (§11.1 step 2):
 //!
 //! * the manifest version renders through the package's
-//!   [`TagTemplate`]; the package's latest tag version is the highest
-//!   version any matching tag carries ([`TagTemplate::extract_version`]);
+//!   `TagTemplate`; the package's latest tag version is the highest
+//!   version any matching tag carries (`TagTemplate::extract_version`);
 //! * **tagged** — a matching tag already carries the manifest version:
 //!   the release already happened, the re-run is a no-op (I1);
 //! * **pending** — no matching tag carries the manifest version and it
@@ -85,10 +86,11 @@ pub struct PendingRelease {
 /// Reconciles every release-enabled package in `ws` against `tags`
 /// (§11.1 step 2). `tags` are the repository's short tag names (e.g.
 /// `core-v0.4.1`, `refs/tags/` stripped, as
-/// [`halyard_git::refs::enumerate`] yields them). `cfg` carries the
+/// `core-v0.4.1`, `refs/tags/` stripped, as the git engine's
+/// `refs::enumerate` yields them). `cfg` carries the
 /// config tag-style override and the `release = false` set — the
-/// resolution ([`crate::planner::effective_template`]) and the skip set
-/// are the planner's own, so the tag phase and the plan can never
+/// resolution (the planner's private `effective_template`) and the skip
+/// set are the planner's own, so the tag phase and the plan can never
 /// disagree about a tag's name or a skipped package. The rows are
 /// sorted by package name; version-less packages are skipped.
 #[must_use]
