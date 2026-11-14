@@ -353,7 +353,10 @@ fn live_mode_fails_closed_without_credentials() -> Result<(), BoxError> {
     let fx = build_workspace("live")?;
     let (code, out) = halyard(fx.root(), &["pr"])?;
     assert_eq!(code, 1, "live mode without a token fails closed: {out}");
-    assert!(out.contains("E-FORGE-AUTH"), "{out}");
+    // The human render carries the message (the stable code rides the
+    // JSON error payload, asserted below — the miette report does not
+    // print the code).
+    assert!(out.contains("live forge mode needs credentials"), "{out}");
     assert!(out.contains("GITHUB_TOKEN"), "{out}");
     let (code, out) = halyard(fx.root(), &["--format", "json", "pr"])?;
     assert_eq!(code, 1, "{out}");
