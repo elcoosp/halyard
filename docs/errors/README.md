@@ -41,6 +41,8 @@ pattern from M1 onward where useful).
 | `E-GIT-TAG` | [E-GIT-TAG.md](E-GIT-TAG.md) | git engine tag write path (M4.2b, §11.1 step 2) |
 | `E-GIT-TAG-CONFLICT` | [E-GIT-TAG-CONFLICT.md](E-GIT-TAG-CONFLICT.md) | git engine release-tag conflict (M4.2b, §11.1 step 2) |
 | `E-GIT-PUSH` | [E-GIT-PUSH.md](E-GIT-PUSH.md) | git engine tag-push effect (§11.1 step 2 / §11.2) |
+| `E-GIT-FETCH` | [E-GIT-FETCH.md](E-GIT-FETCH.md) | git engine smart-minimal-fetch effect (§8.8, M4.6 step 1) |
+| `E-GIT-CACHE` | [E-GIT-CACHE.md](E-GIT-CACHE.md) | git engine cache write-back durability (§8.7) |
 | `E-PLAN-CYCLE` | [E-PLAN-CYCLE.md](E-PLAN-CYCLE.md) | planner cycle (M1.9) |
 | `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
 | `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
@@ -67,6 +69,9 @@ pattern from M1 onward where useful).
 | `E-FORGE-REQUEST` | [E-FORGE-REQUEST.md](E-FORGE-REQUEST.md) | forge spec validation (M4.1a) |
 | `E-FORGE-UNSUPPORTED` | [E-FORGE-UNSUPPORTED.md](E-FORGE-UNSUPPORTED.md) | forge capability decline (M4.1a) |
 | `E-FORGE-BUDGET` | [E-FORGE-BUDGET.md](E-FORGE-BUDGET.md) | per-run forge call budget exhausted by the governor (M5.5, §11.5) |
+| `E-REG-NAME` | [E-REG-NAME.md](E-REG-NAME.md) | registry probe invalid package name (M5.1, §13) |
+| `E-REG-IO` | [E-REG-IO.md](E-REG-IO.md) | registry probe transport failure (M5.1, §13) |
+| `E-REG-PROTOCOL` | [E-REG-PROTOCOL.md](E-REG-PROTOCOL.md) | registry probe uninterpretable response (M5.1, §13) |
 
 ## Extension policy
 
