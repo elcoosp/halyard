@@ -49,7 +49,37 @@ pub fn apply_dry(preview: &BTreeMap<String, Vec<DryPatch>>) -> String {
 /// applied/skipped counts, plus the M3.2/M3.4 lockfile stage rows
 /// (patches, or the native-refresh outcome when a patcher declined,
 /// §9.2 rule 4 / §9.3).
-pub fn apply_report(report: &ApplyReport, native_refreshes: &[(String, Vec<String>)]) -> String {
+/// One changelog-stage row (M2, §9.4): the file the stage rendered and
+/// what the write did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangelogRow {
+    /// The repo-relative changelog file.
+    pub file: String,
+    /// The style that drove the section bodies — a built-in name, or
+    /// `template:<path>` for the user-template path.
+    pub style: String,
+    /// `created` (fresh document), `updated` (anchored insertion) or
+    /// `unchanged` (the re-render was byte-identical — no write, I1).
+    pub outcome: &'static str,
+}
+
+/// One changelog-stage row as a stable JSON row.
+#[must_use]
+pub fn changelog_row_json(row: &ChangelogRow) -> serde_json::Value {
+    serde_json::json!({
+        "file": row.file,
+        "style": row.style,
+        "outcome": row.outcome,
+    })
+}
+
+/// Renders the apply report for humans: the edit rows, the lockfile
+/// rows, the native refreshes and the M2 changelog stage.
+pub fn apply_report(
+    report: &ApplyReport,
+    native_refreshes: &[(String, Vec<String>)],
+    changelog_rows: &[ChangelogRow],
+) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -90,6 +120,13 @@ pub fn apply_report(report: &ApplyReport, native_refreshes: &[(String, Vec<Strin
             out,
             "{file}: natively refreshed, members moved: {}",
             moved.join(", ")
+        );
+    }
+    for row in changelog_rows {
+        let _ = writeln!(
+            out,
+            "{}: changelog {} ({})",
+            row.file, row.outcome, row.style
         );
     }
     out
@@ -713,6 +750,113 @@ pub fn pr_dry_gha(
     out
 }
 
+/// Renders the live `pr` run (M4.1b) for humans: the same prepare-phase
+/// shapes as the forecast, over the real adapter — effects are effects,
+/// not forecasts.
+#[must_use]
+pub fn pr_live_human(
+    title: &str,
+    branch: &str,
+    states: &[PackageTagState],
+    report: &MachineReport,
+    body: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "live run: prepare phase over the GitHub REST adapter (M4.1b)"
+    );
+    let _ = writeln!(out, "title: {title:?}");
+    let _ = writeln!(out, "branch: {branch}");
+    // The §11.1 step-2 reconciliation, visible in the live report too:
+    // what the tag phase owed when this pass ran.
+    let pending: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Pending)
+        .collect();
+    let _ = writeln!(
+        out,
+        "pending tags (manifest-vs-tags, §11.1 step 2): {}",
+        pending.len()
+    );
+    for state in &pending {
+        let _ = writeln!(
+            out,
+            "  - {} ({} {})",
+            state.tag, state.package, state.manifest_version
+        );
+    }
+    let _ = writeln!(out, "forge calls: {}", report.calls);
+    if report.effects.is_empty() {
+        let _ = writeln!(
+            out,
+            "nothing to do: no pending plan, no stale Release PR ({} probe call)",
+            report.calls
+        );
+    }
+    for effect in &report.effects {
+        let _ = writeln!(out, "{}", pr_effect_gha(effect));
+    }
+    if report.propagated {
+        let _ = writeln!(
+            out,
+            "prepare phase: deferred (PROPAGATE, §11.1 step 2) — the Release PR moves once \
+             the pending tags are current"
+        );
+    }
+    if let Some(body) = body {
+        let _ = writeln!(out, "body:");
+        let _ = writeln!(out, "{body}");
+    }
+    out
+}
+
+/// Renders the live `pr` run (M4.1b) as a GHA job summary.
+#[must_use]
+pub fn pr_live_gha(
+    title: &str,
+    branch: &str,
+    states: &[PackageTagState],
+    report: &MachineReport,
+    body: Option<&str>,
+) -> String {
+    let mut out = String::from("## halyard pr (live)\n\n");
+    let _ = writeln!(out, "- title: `{title}`");
+    let _ = writeln!(out, "- branch: `{branch}`");
+    let pending: Vec<&PackageTagState> = states
+        .iter()
+        .filter(|s| s.state == TagState::Pending)
+        .collect();
+    let _ = writeln!(out, "- pending tags (§11.1 step 2): {}", pending.len());
+    for state in &pending {
+        let _ = writeln!(
+            out,
+            "  - `{}` ({} {})",
+            state.tag, state.package, state.manifest_version
+        );
+    }
+    if report.effects.is_empty() {
+        let _ = writeln!(
+            out,
+            "- nothing to do: no pending plan, no stale Release PR ({} probe call)",
+            report.calls
+        );
+    }
+    for effect in &report.effects {
+        let _ = writeln!(out, "- {}", pr_effect_gha(effect));
+    }
+    if report.propagated {
+        let _ = writeln!(out, "- prepare phase deferred (PROPAGATE, §11.1 step 2)");
+    }
+    let _ = writeln!(out, "- forge calls: {}", report.calls);
+    if let Some(body) = body {
+        let _ = writeln!(out, "\n<details><summary>PR body</summary>\n");
+        let _ = writeln!(out, "{body}");
+        let _ = writeln!(out, "</details>");
+    }
+    out
+}
+
 /// Truncated oid for display.
 fn short(oid: &str) -> String {
     oid.chars().take(8).collect()
@@ -925,14 +1069,15 @@ pub fn release_dry_human(
 }
 
 /// Renders the live release run (§11.1 step 2, git side): the annotated
-/// tags the real writer created, the §11.2 push outcomes, and the
-/// honestly deferred forge half (M4.1b).
+/// tags the real writer created, the §11.2 push outcomes, and the forge
+/// half's real outcome (M4.1b — ran over the adapter or an honest skip).
 pub fn release_live_human(
     head: &str,
     states: &[PackageTagState],
     report: &TagPhaseReport,
     provenance: &TargetProvenanceMap,
     push: Option<&TagPushReport>,
+    forge_releases: &ForgeReleases,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(
@@ -953,10 +1098,7 @@ pub fn release_live_human(
         ),
     ));
     out.push_str(&release_push_human(push, false));
-    let _ = writeln!(
-        out,
-        "forge releases: deferred (M4.1b creates forge releases over the forge adapter)"
-    );
+    out.push_str(&forge_releases_human(forge_releases));
     out
 }
 
@@ -1071,6 +1213,74 @@ pub fn release_dry_gha(
     out
 }
 
+/// The live release's forge half (M4.1b, §11.1 step 2): what the §11.1
+/// machine's tag phase did over the GitHub REST adapter — or the honest
+/// skip (no credentials, foreign origin, dry forecast).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForgeReleases {
+    /// The pass ran: the effects, the repo they ran against and the §11.5
+    /// call count (from the adapter's own log).
+    Ran {
+        /// The `owner/repo` the effects ran against.
+        repo: String,
+        /// The machine's effects, oldest first (`ReleaseCreated` /
+        /// `ReleaseExisted`).
+        effects: Vec<MachineEffect>,
+        /// Forge calls this pass consumed (the adapter's call log).
+        calls: usize,
+    },
+    /// The half did not run, and why — reported, never faked.
+    Skipped {
+        /// The actionable reason.
+        reason: String,
+    },
+}
+
+/// The forge-half JSON row (`release`'s `forge_releases` field).
+#[must_use]
+pub fn forge_releases_json(forge: &ForgeReleases) -> serde_json::Value {
+    match forge {
+        ForgeReleases::Ran {
+            repo,
+            effects,
+            calls,
+        } => serde_json::json!({
+            "status": "ran",
+            "repo": repo,
+            "effects": effects.iter().map(pr_effect_json).collect::<Vec<_>>(),
+            "calls": calls,
+        }),
+        ForgeReleases::Skipped { reason } => {
+            serde_json::json!({ "status": "skipped", "reason": reason })
+        }
+    }
+}
+
+/// The forge-half human block.
+#[must_use]
+pub fn forge_releases_human(forge: &ForgeReleases) -> String {
+    let mut out = String::new();
+    match forge {
+        ForgeReleases::Ran {
+            repo,
+            effects,
+            calls,
+        } => {
+            let _ = writeln!(out, "forge releases: ran over {repo} ({calls} call(s))");
+            if effects.is_empty() {
+                let _ = writeln!(out, "  (nothing pending — the tags already carry releases)");
+            }
+            for effect in effects {
+                let _ = writeln!(out, "  {}", pr_effect_gha(effect));
+            }
+        }
+        ForgeReleases::Skipped { reason } => {
+            let _ = writeln!(out, "forge releases: skipped — {reason}");
+        }
+    }
+    out
+}
+
 /// Renders the live release run for GitHub Actions summaries.
 pub fn release_live_gha(
     head: &str,
@@ -1078,6 +1288,7 @@ pub fn release_live_gha(
     report: &TagPhaseReport,
     provenance: &TargetProvenanceMap,
     push: Option<&TagPushReport>,
+    forge_releases: &ForgeReleases,
 ) -> String {
     let mut out = String::from("## halyard release (live)\n\n");
     let _ = writeln!(out, "- head: `{}`", short(head));
@@ -1091,10 +1302,21 @@ pub fn release_live_gha(
     );
     release_rows_human(&mut out, states, report, provenance, "created");
     out.push_str(&release_push_human(push, false));
-    let _ = writeln!(
-        out,
-        "- forge releases: deferred (M4.1b creates forge releases over the forge adapter)"
-    );
+    match forge_releases {
+        ForgeReleases::Ran {
+            repo,
+            effects,
+            calls,
+        } => {
+            let _ = writeln!(out, "- forge releases: ran over `{repo}` ({calls} call(s))");
+            for effect in effects {
+                let _ = writeln!(out, "  - {}", pr_effect_gha(effect));
+            }
+        }
+        ForgeReleases::Skipped { reason } => {
+            let _ = writeln!(out, "- forge releases: skipped ({reason})");
+        }
+    }
     if report.failed > 0 || push.is_some_and(|p| p.failed > 0) {
         let _ = writeln!(
             out,
