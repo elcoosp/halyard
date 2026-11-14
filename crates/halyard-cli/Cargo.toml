@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `halyard` command line: plan, apply, check, explain, status, graph, doctor, schema, completions"
+description = "The `halyard` command line: plan, apply, pr, check, explain, status, graph, doctor, schema, completions"
 
 [[bin]]
 name = "halyard"
@@ -25,6 +25,11 @@ halyard-eco-cargo = { workspace = true }
 # calls the pnpm verifier from the adapter crate that owns the grammar.
 halyard-eco-npm = { workspace = true }
 halyard-git = { workspace = true }
+# M2.6 close-out (§8.7): the planning pipeline opens the persistent
+# per-commit cache and hands it to `GitHistory::build_with_options`;
+# `--no-cache` skips it and a cache that cannot open degrades to an
+# uncached run (§8.7: the cache is an optimization, never a failure).
+halyard-cache = { workspace = true }
 # M4.2b step 1 (`pr --dry`): the shell drives the §11.1 machine over the
 # dry-run adapter (halyard-forge) and renders the §11.3 body through the
 # changelog renderer.
