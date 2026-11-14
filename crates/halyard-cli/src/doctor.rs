@@ -32,8 +32,14 @@ pub struct DoctorReport {
     pub healthy: bool,
 }
 
-/// Runs every check against the current directory.
-pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<DoctorReport, CliError> {
+/// Runs every check against the current directory. `registries` opts in
+/// to the §13 registry reachability probes (M5.1) — network touched
+/// only by the flag (I5; doctor itself never contacts the network).
+pub fn check(
+    cli: &Cli,
+    profiler: &mut crate::profile::Profiler,
+    registries: bool,
+) -> Result<DoctorReport, CliError> {
     let mut checks: Vec<Check> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -140,12 +146,71 @@ pub fn check(cli: &Cli, profiler: &mut crate::profile::Profiler) -> Result<Docto
         }),
     }
 
+    // The opt-in §13 registry probes (M5.1): one immutable-version
+    // `published()` probe per default registry — reachability AND
+    // protocol comprehension (the answer must parse), never a mutation.
+    if registries {
+        checks.extend(registry_checks());
+    }
+
     let healthy = checks.iter().all(|c| c.ok);
     Ok(DoctorReport {
         checks,
         warnings,
         healthy,
     })
+}
+
+/// The §13 registry reachability probes (`doctor --registries`, M5.1):
+/// the [`halyard_registry::Registry`] seam over the runtime transport,
+/// probing `serde@1.0.0` / `react@0.0.1` — versions published long
+/// before this code existed and immutable by the registries' own
+/// contract (§13: "the version can never be overwritten"), so the
+/// probes are stable and read-only. A failing probe fails the check
+/// with its `E-REG-*` code; the check verifies reachability and
+/// protocol comprehension, not the package (the visible flag is
+/// rendered either way).
+fn registry_checks() -> Vec<Check> {
+    let transport: std::sync::Arc<dyn halyard_forge::transport::HttpTransport> =
+        std::sync::Arc::new(halyard_forge_github::UreqTransport::new());
+    vec![
+        registry_check(
+            "registry-crates-io",
+            "serde",
+            "1.0.0",
+            &halyard_registry::CratesIo::new(std::sync::Arc::clone(&transport)),
+        ),
+        registry_check(
+            "registry-npm",
+            "react",
+            "0.0.1",
+            &halyard_registry::Npm::new(transport),
+        ),
+    ]
+}
+
+/// One registry probe rendered as a doctor [`Check`].
+fn registry_check<R: halyard_registry::Registry + ?Sized>(
+    name: &str,
+    package: &str,
+    version: &str,
+    registry: &R,
+) -> Check {
+    match registry.published(package, version) {
+        Ok(visible) => Check {
+            name: name.to_owned(),
+            ok: true,
+            detail: format!(
+                "{package}@{version} probe answered (visible: {visible}) — reachable and \
+                 protocol-comprehensible"
+            ),
+        },
+        Err(error) => Check {
+            name: name.to_owned(),
+            ok: false,
+            detail: format!("{}: {error}", error.code()),
+        },
+    }
 }
 
 /// The `halyard.toml` validity check (defaults count as valid).
