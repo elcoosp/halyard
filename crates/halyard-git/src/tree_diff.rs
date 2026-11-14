@@ -466,6 +466,11 @@ fn path_matches(
         path.strip_prefix(root).unwrap_or(path.as_bytes())
     };
     let rel = rel.strip_prefix(b"/").unwrap_or(rel);
+    // The empty default on a non-UTF-8 path is load-bearing, not a
+    // swallow: with no configured filter the package includes everything
+    // (a "" rel matches no glob, include-empty ⇒ attributed), and with
+    // filters it matches none of the UTF-8 globs — the path is neither
+    // dropped nor force-matched either way.
     let rel = std::str::from_utf8(rel).unwrap_or_default();
     let glob_matches =
         |g: &BString| halyard_core::glob::matches(std::str::from_utf8(g).unwrap_or_default(), rel);
