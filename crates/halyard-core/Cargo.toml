@@ -39,5 +39,9 @@ serde_json = { workspace = true }
 name = "bitset"
 harness = false
 
+[[bench]]
+name = "release_state"
+harness = false
+
 [lints]
 workspace = true
