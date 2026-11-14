@@ -8,11 +8,13 @@
 //! This crate is imperative-shell territory: it owns `gix` access, ODB
 //! reads and shallow-clone detection. The *planning read path* performs
 //! **no subprocess** (no `git` binary, invariant I6) and no network
-//! (I5). The two sanctioned exceptions are the §11.1 release-flow effect
-//! steps: the tag-phase write path ([`tag`], in-process `gix` writes)
-//! and the tag push ([`push`], which spawns `git` argv arrays with
+//! (I5). The sanctioned exceptions are the release-flow effect steps:
+//! the tag-phase write path ([`tag`], in-process `gix` writes), the tag
+//! push ([`push`], which spawns `git` argv arrays with
 //! `GIT_TERMINAL_PROMPT=0` — the architecture lists "push tags (single
-//! `git push`)" as an effect step; ADR-0012). The planner consumes
+//! `git push`)" as an effect step; ADR-0012) and the smart minimal
+//! fetch ([`fetch`], §8.8 — the one effect §I5 names explicitly, by
+//! invocation). The planner consumes
 //! only the materialized [`HistoryDigest`];
 //! the cache is consulted *before* the tree diff and never leaks into
 //! `halyard-core` (planner purity, §4).
@@ -26,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bloom;
+pub mod fetch;
 pub mod merge;
 pub mod push;
 pub mod refs;
@@ -111,6 +114,24 @@ pub enum GitError {
         /// What went wrong (includes the remote or offending tag).
         message: String,
     },
+    /// The smart-minimal-fetch effect failed (`E-GIT-FETCH`, §8.8): the
+    /// `git` binary could not run, the remote could not be probed
+    /// (unreachable, auth refused — never a prompt), or both fetch
+    /// attempts (minimal + the full-fetch fallback) exited non-zero.
+    /// Per-tag divergences surface as report rows, not this error.
+    Fetch {
+        /// What went wrong (includes the remote or the failing command).
+        message: String,
+    },
+    /// The persistent per-commit cache (§8.7) could not be updated
+    /// (`E-GIT-CACHE`): a record insert or the final flush failed. The
+    /// cache is an optimization, never a correctness surface (§8.7) —
+    /// the digest in memory is unaffected — but the durability failure
+    /// is a distinct code, not an object-read error.
+    Cache {
+        /// What went wrong (which cache operation and why).
+        message: String,
+    },
 }
 
 impl GitError {
@@ -125,6 +146,8 @@ impl GitError {
             Self::TagWrite { .. } => "E-GIT-TAG",
             Self::TagConflict { .. } => "E-GIT-TAG-CONFLICT",
             Self::TagPush { .. } => "E-GIT-PUSH",
+            Self::Fetch { .. } => "E-GIT-FETCH",
+            Self::Cache { .. } => "E-GIT-CACHE",
         }
     }
 }
@@ -159,6 +182,8 @@ impl std::fmt::Display for GitError {
                  deliberately and re-run"
             ),
             Self::TagPush { message } => write!(f, "[E-GIT-PUSH] {message}"),
+            Self::Fetch { message } => write!(f, "[E-GIT-FETCH] {message}"),
+            Self::Cache { message } => write!(f, "[E-GIT-CACHE] {message}"),
         }
     }
 }
@@ -340,7 +365,7 @@ impl GitHistory {
         // checksum-verified file state (§8.7; kill-safety means a crash
         // before this point loses at most the tail record).
         if let Some(cache) = cache.as_mut() {
-            cache.flush().map_err(|e| GitError::Object {
+            cache.flush().map_err(|e| GitError::Cache {
                 message: format!("cache flush failed: {e}"),
             })?;
         }
@@ -368,7 +393,7 @@ impl HistoryProvider for GitHistory {
 
 /// True when the repository is a shallow clone (`.git/shallow` present,
 /// §8.1). Works for worktrees too (the common dir carries the file).
-fn is_shallow(repo: &gix::Repository) -> bool {
+pub(crate) fn is_shallow(repo: &gix::Repository) -> bool {
     let git_dir = repo.git_dir();
     if git_dir.join("shallow").is_file() {
         return true;
@@ -588,8 +613,8 @@ fn build_commits(
                             body_start: extra.body_start,
                         },
                     )
-                    .map_err(|e| {
-                        map_git_err("E-GIT-OBJECT", format!("cache insert failed: {e}"))
+                    .map_err(|e| GitError::Cache {
+                        message: format!("cache insert failed: {e}"),
                     })?;
             }
             intersect(&filtered, &extra.new_for)
