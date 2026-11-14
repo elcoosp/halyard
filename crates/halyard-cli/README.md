@@ -72,7 +72,7 @@ halyard check --exit-code
 | `apply [--dry]` | available (M3.6) |
 | `pr --dry` | available (M4.2b step 1; live mode declines with `E-CLI-PR` until the M4.1b forge adapter) |
 | `check [--pr-title] [--exit-code]` | available (M4.3) |
-| `release --dry` | available (§11.1 step-2 git-side forecast over `halyard-git::tag::PreviewTagWriter`; live mode declines with `E-CLI-RELEASE` until the live release shell) |
+| `release --dry` | available (§11.1 step-2 git-side forecast over `halyard-git::tag::PreviewTagWriter`, targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance; live mode declines with `E-CLI-RELEASE` until the live release shell) |
 | `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 `apply` is the **only** filesystem-writing command: it applies the plan's
