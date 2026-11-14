@@ -33,7 +33,8 @@ halyard explain app
 # Preview the filesystem edits (version bumps) without writing anything.
 halyard apply --dry
 
-# Apply the plan's edits atomically (the only filesystem-writing command).
+# Apply the plan's edits atomically (manifests, lockfiles, changelogs;
+# `release` (live) additionally writes git refs — the two writing commands).
 halyard apply
 
 # A lockfile the in-memory patcher declines is refreshed natively and
@@ -73,10 +74,10 @@ halyard check --exit-code
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
 | `apply [--dry]` | available (M3.6) |
-| `pr [--dry]` | available (M4.2b step 1 forecast + M4.1b live): live mode runs the §11.1 machine over the GitHub REST adapter — fail-closed on missing credentials and foreign forges |
+| `pr [--dry]` | available (M4.2b step 1 forecast + M4.1b live): live mode runs the §11.1 machine over the GitHub REST adapter — fail-closed on missing credentials and foreign forges; the live report carries the §11.5 governor summary (M5.5) |
 | `check [--pr-title] [--exit-code]` | available (M4.3) |
-| `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
-| `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`) |
+| `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter — through the §11.5 governor (M5.5) — when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
+| `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`; M5.5 adds the governor row) |
 | `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 ## Forge credentials (M4.1c, ADR-0014)
@@ -103,6 +104,26 @@ version-bump edits atomically (fsync + rename, `halyard-edit`), never
 partially. The other writing command is `release` (live): it creates git
 refs (annotated release tags) and pushes them to `origin` — the git-side
 §11.1 step-2 effects above. Everything else is read-only.
+
+## Forge call governor (M5.5, §11.5, ADR-0015)
+
+The three live forge paths (`pr` live, the `release` forge half,
+`forge-smoke`) run through the §11.5 call governor: content-creating
+calls are spaced one second apart, `Retry-After` rate limits are
+honored exactly, transport failures retry with a deterministic capped
+backoff, and the report carries the end-of-run usage summary (policy,
+spend, waits). Three `HALYARD_FORGE_*` env knobs override the default
+policy — absent variables keep the default; an invalid value fails
+closed (`E-FORGE-REQUEST`) naming the variable:
+
+```bash
+export HALYARD_FORGE_MIN_CALL_SPACING_MS=1000   # pacing between content calls (0 = off)
+export HALYARD_FORGE_MAX_CALLS=40               # per-run call budget (E-FORGE-BUDGET when spent)
+export HALYARD_FORGE_MAX_RETRIES=3              # retries per operation after the first failure
+
+halyard doctor      # reports the resolved governor policy
+halyard pr --format json | jq '.governor'   # the run's summary: policy, spend, events
+```
 
 ## Global flags
 
