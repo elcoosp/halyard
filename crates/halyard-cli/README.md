@@ -3,7 +3,8 @@
 `halyard` plans, explains and ships releases from conventional commits in
 Cargo/pnpm repositories. Zero config required: run `halyard plan` inside
 any repository root (§16.1). Planning is pure and offline (no network, no
-subprocess during planning — the git engine is in-process `gix`).
+subprocess during planning — the git engine is in-process `gix`) and
+consults the §8.7 persistent per-commit cache.
 
 ## Local flow
 
@@ -30,40 +31,61 @@ halyard doctor
 halyard explain app
 
 # Preview the filesystem edits (version bumps) without writing anything.
-halyard apply --dry-run          # (M3.6)
+halyard apply --dry
 
 # Apply the plan's edits atomically (the only filesystem-writing command).
-halyard apply                    # (M3.6)
+halyard apply
 
-# Also refresh Cargo.lock / pnpm-lock.yaml after the version bumps.
-halyard apply --refresh-lockfile # (M3.6)
+# A lockfile the in-memory patcher declines is refreshed natively and
+# verified automatically (cargo update -w --offline / pnpm install
+# --lockfile-only --offline, §9.2 rule 4 / §9.3) — there is no separate
+# flag to pass.
+```
+
+## Release-PR forecast and checks
+
+```bash
+# Forecast the §11.1 machine pass over the preview forge: the tag-phase
+# reconciliation (manifest-vs-tags), the prepare-phase Release-PR
+# upsert/close, the §11.5 call budget and the §11.3 body. Nothing is
+# written; no network is touched (I5).
+halyard pr --dry
+
+# Lint a squash-merge PR title and predict the conveyed bump (§11.6).
+halyard check --pr-title "feat(parser): accept spans"
+
+# Gate CI: exit code 3 when a release is pending (§15.4).
+halyard check --exit-code
 ```
 
 ## Command status (honest)
 
 | Command | Status |
 |---|---|
-| `plan [--json]` | available (M1.10) |
+| `plan [--json] [--package]` | available (M1.10) |
 | `explain <pkg>` | available (M1.10) |
 | `status` | available (M1.10) |
 | `graph [--format]` | available (M1.10) |
 | `doctor` | available (M1.10) |
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
-| `apply [--dry-run] [--refresh-lockfile]` | **(M3.6)** — not present yet |
-| `pr` / `release` / `publish` / `fetch` / `check` / `migrate` / `init` / `action` | **(M3.6–M4.x)** — absent rather than stubbed |
+| `apply [--dry]` | available (M3.6) |
+| `pr --dry` | available (M4.2b step 1; live mode declines with `E-CLI-PR` until the M4.1b forge adapter) |
+| `check [--pr-title] [--exit-code]` | available (M4.3) |
+| `release` / `publish` / `fetch` / `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
-`apply` is delivered in M3.6 and will be the **only** filesystem-writing
-command: it applies the plan's version-bump edits atomically
-(fsync + rename, `halyard-edit`), never partially. Everything above it is
-read-only.
+`apply` is the **only** filesystem-writing command: it applies the plan's
+version-bump edits atomically (fsync + rename, `halyard-edit`), never
+partially. Everything above it is read-only.
 
 ## Global flags
 
-`--format human|json|gha`, `--color auto|always|never` (honours
-`NO_COLOR`/`CLICOLOR_FORCE`), `-C <dir>` (run as if started in `dir`),
-`--config <file>`, `--offline`, `--no-cache` (accepted for forward
-compatibility), `--profile` (Chrome-trace JSON to `$HALYARD_PROFILE_PATH`).
+`--format human|json|gha`, `--color auto|always|never` (parsed for the
+§16.3 colour-aware renderers, which land with their milestone — output is
+plain text until then), `-C <dir>` (run as if started in `dir`),
+`--config <file>`, `--offline`, `--no-cache` (skip the §8.7 persistent
+per-commit cache; leave `$GIT_DIR/halyard/cache/v1/` untouched),
+`--profile` (Chrome-trace JSON to `$HALYARD_PROFILE_PATH`).
 
 ## Errors
 
