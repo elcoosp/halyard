@@ -47,11 +47,17 @@
 //! `E-FORGE-TRANSPORT` code; the GitHub REST adapter that consumes it
 //! lives in the `halyard-forge-github` crate (ADR-0013 — the layer rule
 //! keeps this crate on core only). The nightly `forge-smoke` job runs
-//! through that adapter.
+//! through that adapter. M5.5 ships the §11.5 call governor
+//! ([`governor`], ADR-0015): a [`Forge`] decorator enforcing pacing,
+//! `Retry-After`, deterministic backoff and the per-run call budget
+//! (`E-FORGE-BUDGET`) with injected time — the seam *types* stay
+//! clock-free; the production [`governor::system_time`] pair is the
+//! sanctioned effect.
 
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod governor;
 pub mod memory;
 pub mod preview;
 pub mod spec;
@@ -59,6 +65,9 @@ pub mod state;
 pub mod transport;
 
 pub use error::ForgeError;
+pub use governor::{
+    Governor, GovernorClock, GovernorEvent, GovernorPolicy, GovernorSleeper, system_time,
+};
 pub use memory::{CallRecord, MemoryForge};
 pub use preview::PreviewForge;
 pub use spec::{ApiCommit, ApiFile, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
