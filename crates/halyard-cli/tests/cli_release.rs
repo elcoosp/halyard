@@ -211,12 +211,23 @@ fn release_live_creates_and_pushes_tags() -> Result<(), BoxError> {
         push.get("pushed").and_then(serde_json::Value::as_i64),
         Some(1)
     );
+    let forge_releases = value
+        .get("forge_releases")
+        .ok_or("the live document carries the forge half")?;
     assert_eq!(
-        value
-            .get("forge_releases")
+        forge_releases
+            .get("status")
             .and_then(serde_json::Value::as_str),
-        Some("deferred (M4.1b)"),
-        "the forge half is honestly deferred: {text}"
+        Some("skipped"),
+        "without credentials the forge half is an honest skip: {text}"
+    );
+    let reason = forge_releases
+        .get("reason")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        reason.contains("GITHUB_TOKEN"),
+        "the skip names the actionable fix: {reason}"
     );
     // Ground truth: the annotated tag exists locally and on the remote.
     let kind = fx.run_git(&["cat-file", "-t", "v0.1.1"])?;
