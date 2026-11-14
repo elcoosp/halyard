@@ -20,8 +20,103 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M4.1a forge seam slice (trait + reference adapter + taxonomy) | done | main | M4.1a `halyard-forge` crate (ADR-0011): the §11.4 `Forge` trait (object-safe, `&dyn`), the data vocabulary (`Pr`/`PrSpec`/`Release`/`ReleaseSpec`/`ApiCommit`/`ApiFile`/`BranchName`/`RateInfo`), the `E-FORGE-*` taxonomy with docs pages, the deterministic `MemoryForge` reference adapter (find-by-branch upserts, GET-by-tag-first releases, synthetic `fe`-prefixed commits, call log, failpoint harness), `commit_via_api` default honest decline, contract tests, `memory_forge` bench, `release_lifecycle` example, test-support re-exports, layer rule `forge → core` | M4.1b GitHub REST adapter (ETag/backoff/App-JWT, wiremock) open — nightly `forge-smoke` stays latent; PROGRESS row + README status were not updated when the slice landed (drift, repaired 2026-11-13) | 2026-11-13 (committed before the M4.2a/M4.3a session; row added retroactively) |
 | M4.2a state machine + M4.3a PR body slice | done | main (dirty; no commits) | M4.2a `halyard-forge::state` (`run_release_machine` over `&dyn Forge`: §11.1 tag phase with GET-by-tag-first idempotence + PROPAGATE gating, prepare phase find→upsert/`PrUnchanged` no-op/close; §11.5 call budgets counted from the adapter log; fail-closed input validation) + `Forge::close_pr` seam (default honest decline, §11.4 not-found-is-a-value convention) + `MemoryForge` open/closed PR modeling (closed PRs not re-found, upsert-after-close opens fresh) + 12 machine tests incl. the §15.2 failure-injection matrix (fail at every operation → re-run reaches the uninterrupted state, zero duplicates) + `state_machine` bench (5 pass shapes) + `release_machine` example; M4.3a `halyard-changelog::pr_body` (§11.3 body: plan table with deterministic Why map, Skipped line §16.3, changelog preview, override footer, embedded plan = canonical JSON → DEFLATE → base64 with recomputed `plan_hash`; `extract_embedded_plan` I8 verifier fails closed on missing/corrupt/hash-mismatched markers, `E-CHLOG-PRBODY` + docs page) + 10 tests + golden snapshot + `render_pr_body` example + forge example wired through the renderer (dev-dep) + layer rule widened (`changelog`: minijinja/serde_json/flate2/base64) | M4.1b GitHub REST adapter; M4.2b shell git-side tag/push effects (annotated tags, `--force-with-lease` CAS) and the CLI `pr`/`release` commands that consume the machine; corpus-wide pnpm differential xtask; M2.6 perf-budget close-out | 2026-11-13; see the session log below |
 | M4.2b step 1 + M4.3 `check` slice (pr --dry forecast + title lint) | done | main (dirty; no commits) | M4.2b step 1: `halyard-forge::preview::PreviewForge` (dry-run `Forge` adapter: probes see an empty forge, mutations are `preview://`-marked forecasts, §11.5 call log observable, `commit_via_api` declines per the seam default) + 9 contract tests incl. the machine composition (open forecast = find+upsert 2 calls, empty plan = 1 probe, tag phase PROPAGATE forecast), `pr_preview` bench (3 pass shapes), `pr_preview` example, CLI `pr --dry` (plan → §11.3 body → machine pass; effects + call-budget + body in human/json/gha; `E-CLI-PR` honest decline + docs page for live mode), `tests/cli_pr.rs` (6 tests incl. determinism + JSON stability); M4.3 `check`: `halyard-conventional::title_lint` (`TitleBumpRule` seam + `lint_title` — planner-exact as-written kind lookup, fixed §10.1 breaking→major rule, subject-line-only judgement, did-you-mean only for kinds outside the rule's known set), 12 engine tests + `title_lint` bench + `lint_title` example, CLI `check.rs` (`PlanTitleRule` over `PlanConfig::commit_types`, per-package §10.2 pre-major prediction), `halyard check --pr-title` / `--exit-code` (§15.4 exit 3), `E-CLI-TITLE` + docs page, `tests/cli_check.rs` (9 tests) | M4.1b GitHub REST adapter (the nightly `forge-smoke` job stays latent), the live `pr`/`release` shell effects (git-side tag/push), the tag-phase manifest-vs-tags reconciliation in `pr --dry` (declared not-forecast in the report), `github-release-notes` changelog style (needs forge context), M2.6 perf close-out (`--no-cache` still a forward-compat no-op — help text now states it precisely) | 2026-11-13; see the session log below |
+| M1 reconciliation slice (§11.1 tag phase) + M2.6 CLI cache wiring | done | feat/tag-phase-reconciliation (dirty; no commits) | M1: `halyard_core::release_state` (the §11.1 step-2 stateless manifest-vs-tags reconciliation: `reconcile_tags` → Tagged/Pending/Behind rows, `pending_releases` → the deduplicated tag-phase queue; template resolution shared with the planner (`effective_template`, config override → single-package default → discovery template), `release = false` skip set honored, version-less packages skipped, output sorted by package name, 11 integration + 2 inline tests) + `GitHistory::tags()` accessor (the enumerated §8.2 candidates no longer dropped) + CLI `pr --dry` wired to the real reconciliation (the tag phase is forecast, PROPAGATE visible, Behind rows reported never tagged; JSON carries `pending_releases` + `propagated`; `cli_pr.rs` re-pinned, 10 tests) + `release_state` criterion bench + `pending_releases` example; M2.6: CLI pipeline opens `$GIT_DIR/halyard/cache/v1/` and feeds `GitHistory::build_with_options` with the trie `layout_hash` + resolved `config_hash`, `--no-cache` is real, a corrupt/unopenable cache degrades to an uncached run with a warning (`cli_cache.rs`, 3 tests) + `cache` `roundtrip` bench + `cached_walk` example. Micro-debt: dead `--color` policy computation removed (flag documented as reserved for the §16.3 renderers), non-UTF-8 tag-name skip made explicit in `refs.rs`, the load-bearing empty-default in `tree_diff.rs::path_matches` documented. Docs drift fixed: CLI README (`--dry-run`/`--refresh-lockfile` were wrong, stale status table), root README status + pr --dry description, `Command` enum doc (pr/check exist), render.rs "tag phase: not forecast" line replaced by the real forecast | M4.1b GitHub REST adapter, the live `pr`/`release` shell effects, `github-release-notes` style, M2.6 perf-budget close-out beyond the wiring (dhat re-audit vs the budgets), the corpus-wide pnpm differential as an xtask subcommand | 2026-11-14; see the session log below |
 
 ## Session log
+
+### 2026-11-14 — M1 reconciliation slice (§11.1 tag phase) + M2.6 CLI cache wiring (branch `feat/tag-phase-reconciliation`, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `6252243` (the
+  M4.2b step 1 + M4.3 `check` tree). Baseline `cargo test --workspace
+  --all-features` re-run green on a fresh toolchain (stable 1.100.0).
+  Two declared gaps from the previous session's "next start point" list
+  were picked as the milestones: the tag-phase manifest-vs-tags
+  reconciliation (§11.1 step 2 — nowhere implemented, `pr --dry`
+  hardcoded an empty pending list) and the M2.6 cache wiring (`--no-cache`
+  a declared forward-compat no-op; `GitHistoryOptions.cache` never
+  populated by any in-repo caller).
+- **M1 implemented (no stubs), TDD with one full red→green cycle** (11
+  integration tests + the CLI pin set written first, run red against the
+  missing seam, then implemented):
+  - `halyard-core/src/release_state.rs` — the §11.1 step-2 stateless
+    reconciliation: `reconcile_tags` classifies every release-enabled
+    package (`Tagged` = a matching tag already carries the manifest
+    version, the re-run is a no-op I1; `Pending` = the tag phase owes
+    the release; `Behind` = a reverted merge, reported never tagged
+    downward), `pending_releases` is the deduplicated machine-input
+    queue (one forge release is keyed by its tag, §11.4). The template
+    resolution is the planner's own `effective_template` (config
+    override → single-package `v{version}` → discovery template), and
+    the `[[package]] release = false` skip set (`PlanConfig::
+    release_disabled`) excludes packages exactly as the plan does — the
+    tag phase and the plan cannot disagree (I3). Version ordering is the
+    same derived `semver::Version` ordering the §8.2 base resolution
+    sorts by (pinned by test, including the build-metadata case).
+  - `halyard-git`: `GitHistory::tags()` — the enumerated §8.2 tag
+    candidates are stored instead of dropped, so the shell reconciles
+    without re-scanning refs.
+  - CLI `pr --dry`: the machine input now carries the real pending
+    releases; the report shows the pending tags, the PROPAGATE gate
+    ("prepare phase deferred") and Behind rows; the JSON document
+    carries `pending_releases` + `propagated`. The stale "tag phase:
+    not forecast" render line is gone. `cli_pr.rs` re-pinned: the
+    prepare-phase fixtures now tag `v0.1.0` (manifest == latest tag ⇒
+    Tagged), the untagged fixture pins the initial-release tag phase
+    (§11.1: a fresh repo tags its manifest version), new tests pin the
+    post-merge PROPAGATE forecast (calls 1, no find probe) and the
+    Behind state (no create, prepare runs).
+  - Bench `crates/halyard-core/benches/release_state.rs` (10×5 / 40×5 /
+    200×5 / 40×50 package×tag shapes; 44 µs → 6 ms, negligible against
+    the §14.1 planning budgets) and example
+    `examples/pending_releases.rs`.
+- **M2.6 close-out implemented (no stubs), TDD red→green (3 CLI tests
+  first):** `context()` opens `$GIT_DIR/halyard/cache/v1/` (skipped
+  under `--no-cache`) and hands `GitHistory::build_with_options` the
+  trie `layout_hash` (roots + include/exclude filters, sorted per the
+  hash's normalization) and the resolved `config_hash` — a layout or
+  policy change invalidates cached attributions cleanly (§8.7). A cache
+  that cannot open (corrupt header, unwritable `$GIT_DIR`) degrades to
+  an uncached run with a stable-code warning — §8.7: the cache is an
+  optimization, never a correctness surface. Tests: warm-run file
+  creation + byte-identical cached/uncached plans (I3), `--no-cache`
+  leaves no cache file, corrupt cache warns with `E-CACHE-*` and plans
+  identically. Bench `crates/halyard-cache/benches/roundtrip.rs`
+  (200 records: 638 µs write / 390 µs read; 2000: 5.2 ms) and example
+  `crates/halyard-git/examples/cached_walk.rs` (cold populates → warm
+  identical digest).
+- **Micro-debt cleaned.** The dead `--color` policy computation removed
+  (the flag is parsed and documented as reserved for the §16.3
+  colour-aware renderers — its result was never consumed); the
+  non-UTF-8 tag-name skip in `refs.rs` made explicit (was a silent
+  empty-string default); the load-bearing empty-default in
+  `tree_diff.rs::path_matches` documented (unfiltered packages must
+  attribute non-UTF-8 paths — not a swallow).
+- **Docs drift fixed.** `halyard-cli/README.md` documented an
+  `apply --dry-run` flag (the real one is `--dry`), a nonexistent
+  `apply --refresh-lockfile` (native refresh is automatic on declined
+  lockfiles) and a stale command table (apply "not present yet"; pr/
+  check missing) — all corrected; the root README status line and the
+  `pr --dry` description updated; the `Command` enum doc no longer
+  claims `pr`/`check` are absent.
+- **Tests/bench/example totals.** 11 reconciliation integration tests +
+  2 inline + 10 re-pinned/new CLI pr tests + 3 CLI cache tests; benches
+  `release_state` + `roundtrip` registered and run; 2 new examples
+  (`pending_releases`, `cached_walk`). Full workspace sweep green
+  (67 test binaries), `cargo bench` quick runs recorded for both new
+  benches.
+- **Honest state at cut-off.** M4.1b (GitHub REST adapter), the live
+  `pr`/`release` shell effects (git-side tag/push), the
+  `github-release-notes` style, the dhat re-audit against the §14.1
+  budgets and the corpus-wide pnpm differential remain open. The tag
+  phase's git-side effects (annotated tag creation) remain the live
+  slice's work — the forecast reports what a live run would owe, it
+  does not create tags. Tree left dirty (no commits made).
+- **Next session start point.** (1) M4.1b REST adapter (VERIFY-tagged
+  research first, ADR per §0.3), (2) the live `release` shell over the
+  git-side tag/push effects consuming `pending_releases`, (3) the
+  corpus-wide pnpm differential as an xtask subcommand, (4) the M2.6
+  perf-budget close-out (dhat re-audit against §14.1 with the cache
+  warm).
 
 ### 2026-11-13 — M4.2b step 1 (`pr --dry` forecast) + M4.3 `check` title lint (branch `main`, tree left dirty, no commits)
 
