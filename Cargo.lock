@@ -1431,6 +1431,7 @@ dependencies = [
  "halyard-forge",
  "halyard-forge-github",
  "halyard-git",
+ "halyard-publish",
  "halyard-registry",
  "halyard-test-support",
  "insta",
@@ -1577,6 +1578,16 @@ dependencies = [
  "semver",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "halyard-publish"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "halyard-registry",
+ "semver",
 ]
 
 [[package]]
