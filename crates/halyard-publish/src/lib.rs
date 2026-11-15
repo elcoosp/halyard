@@ -44,12 +44,19 @@
 //! publish cycle, [`PublishError::Registry`] (`E-PUB-REGISTRY`) when no
 //! client is configured for a target's registry, [`PublishError::
 //! Effect`] (`E-PUB-EFFECT`) for tool failures (also the row-level
-//! shape). Registry probe failures ride their own `E-REG-*` codes — the
-//! row carries the probe's stable code, not a wrapper's.
+//! shape) and [`PublishError::Auth`] (`E-PUB-AUTH`, M5.3 step 1) for a
+//! present-but-empty publish token — the auth seam's fail-closed
+//! misconfiguration, refused before any spawn. Registry probe failures
+//! ride their own `E-REG-*` codes — the row carries the probe's stable
+//! code, not a wrapper's.
 //!
 //! Layer note: `publish → [core, registry]` (§7.2; the registry rides
 //! the forge transport). The engine owns no I/O: registries, the effect
-//! and the clock are injected seams.
+//! and the clock are injected seams — and the auth plumbing ([`mod@
+//! auth`]) resolves through the shell-owned [`PublishAuth`] seam (the
+//! production [`EnvPublishAuth`] captures the process environment once;
+//! ADR-0019), with [`scrub_secrets`] keeping resolved tokens out of
+//! surfaced tool output.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -64,6 +71,13 @@ use halyard_core::plan::Plan;
 use halyard_core::plan_hash;
 use halyard_registry::{
     Registry, RegistryError, RegistrySleeper, VisibilityPolicy, wait_until_visible,
+};
+
+pub mod auth;
+
+pub use auth::{
+    AuthOutcome, CredentialEnv, EnvPublishAuth, PublishAuth, auth_summary, scrub_secrets,
+    variables_for,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +127,19 @@ pub enum PublishError {
         /// failure) or the request itself is broken.
         retryable: bool,
     },
+    /// A publish token is present but empty (`E-PUB-AUTH`, M5.3 step
+    /// 1): with a `${VAR}` auth-file interpolation the empty value
+    /// becomes an empty bearer token and a confusing 401. The auth
+    /// seam's fail-closed misconfiguration — refused before any spawn,
+    /// naming the variable. Structural: a re-run cannot fix the
+    /// environment.
+    Auth {
+        /// The registry the credentials were resolved for (or `env`
+        /// when the capture-level scan found the misconfiguration).
+        registry: String,
+        /// The variable name and the fix.
+        message: String,
+    },
 }
 
 impl PublishError {
@@ -123,6 +150,7 @@ impl PublishError {
             Self::Order { .. } => "E-PUB-ORDER",
             Self::Registry { .. } => "E-PUB-REGISTRY",
             Self::Effect { .. } => "E-PUB-EFFECT",
+            Self::Auth { .. } => "E-PUB-AUTH",
         }
     }
 
@@ -133,7 +161,9 @@ impl PublishError {
     pub fn retryable(&self) -> bool {
         match self {
             Self::Effect { retryable, .. } => *retryable,
-            Self::Plan { .. } | Self::Order { .. } | Self::Registry { .. } => false,
+            Self::Plan { .. } | Self::Order { .. } | Self::Registry { .. } | Self::Auth { .. } => {
+                false
+            }
         }
     }
 }
@@ -149,6 +179,7 @@ impl std::fmt::Display for PublishError {
             Self::Effect {
                 ecosystem, message, ..
             } => write!(f, "[E-PUB-EFFECT] {ecosystem}: {message}"),
+            Self::Auth { registry, message } => write!(f, "[E-PUB-AUTH] {registry}: {message}"),
         }
     }
 }
