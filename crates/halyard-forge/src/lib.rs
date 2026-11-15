@@ -70,7 +70,10 @@ pub use governor::{
 };
 pub use memory::{CallRecord, MemoryForge};
 pub use preview::PreviewForge;
-pub use spec::{ApiCommit, ApiFile, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
+pub use spec::{
+    ApiCommit, ApiFile, BranchName, CommentSpec, Pr, PrComment, PrSpec, RateInfo, Release,
+    ReleaseSpec,
+};
 pub use state::{MachineEffect, MachineInput, MachineReport, run_release_machine};
 pub use transport::{HttpRequest, HttpResponse, HttpTransport, MemoryTransport};
 
@@ -161,6 +164,33 @@ pub trait Forge: Send + Sync {
     /// [`ForgeError::Unsupported`] by default; adapter-specific failures
     /// otherwise.
     fn commit_via_api(&self, spec: &ApiCommit) -> Result<halyard_core::reason::Oid, ForgeError> {
+        let _ = spec;
+        Err(ForgeError::unsupported(std::any::type_name::<Self>()))
+    }
+
+    /// Upserts the §11.6 check comment on PR `spec.pr_number`: the
+    /// marker-based idempotent write behind `check --pr-title
+    /// --comment` — the scan finds the comment the marker identifies
+    /// and rewrites it in place (same URL, no duplicates, I1), an empty
+    /// scan creates (`PrComment::created == true`, the GET-first
+    /// convention the other write methods follow). Not-found is *never*
+    /// an error; a rejected verdict is a comment too (§11.6: errors
+    /// teach), so the comment mode posts both verdict shapes.
+    ///
+    /// The trait default is the documented honest decline
+    /// ([`ForgeError::Unsupported`], `E-FORGE-UNSUPPORTED`), mirroring
+    /// [`Forge::close_pr`]'s and [`Forge::commit_via_api`]'s defaults
+    /// and the lockfile seam's default-decline convention (§7.3): forges
+    /// without a comment endpoint name themselves and the shell surfaces
+    /// the decline fail-closed instead of guessing.
+    ///
+    /// # Errors
+    ///
+    /// [`ForgeError::Request`] for an invalid [`CommentSpec`] (the
+    /// shared [`CommentSpec::validate`] contract — PR number, marker,
+    /// body-with-marker); [`ForgeError::Unsupported`] by default;
+    /// adapter-specific failures otherwise.
+    fn upsert_pr_comment(&self, spec: &CommentSpec) -> Result<PrComment, ForgeError> {
         let _ = spec;
         Err(ForgeError::unsupported(std::any::type_name::<Self>()))
     }
