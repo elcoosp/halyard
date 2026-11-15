@@ -30,6 +30,10 @@ use halyard_core::{DiscoveryWarning, EcosystemAdapter};
 
 pub mod edit;
 pub mod lockfile;
+// M5.2 step 2 (§13.4): the publish argv grammar (the shell spawns, the
+// adapter owns the tool grammar — the `refresh_command` convention).
+pub mod publish;
+pub use publish::cargo_publish_args;
 mod parse;
 
 use parse::{ManifestDraft, WorkspaceFacts};
