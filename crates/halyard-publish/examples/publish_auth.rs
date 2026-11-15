@@ -52,9 +52,9 @@ fn main() {
         );
         match PublishAuth::credentials(&auth, target) {
             // Display is provenance-only: `env:VAR_NAME`.
-            Ok(AuthOutcome::Token(credential)) => println!(
-                "  → inject {credential} (the value is scrubbed from tool output)"
-            ),
+            Ok(AuthOutcome::Token(credential)) => {
+                println!("  → inject {credential} (the value is scrubbed from tool output)");
+            }
             Ok(AuthOutcome::Absent) => {
                 println!("  → nothing injected (the tool's own credential store governs)");
             }
