@@ -34,7 +34,12 @@ pub mod lockfile;
 // adapter owns the tool grammar — the `refresh_command` convention).
 pub mod publish;
 pub use publish::{cargo_publish_args, is_default_registry};
+// M5.2 continued (ADR-0021): the `[registries.<name>]` config resolution — which
+// sparse index a non-default registry name resolves to (the routing
+// map's input; the probe and the spawned `cargo publish --registry
+// <name>` read the same configuration, so they cannot disagree).
 mod parse;
+pub mod registry_config;
 
 use parse::{ManifestDraft, WorkspaceFacts};
 
