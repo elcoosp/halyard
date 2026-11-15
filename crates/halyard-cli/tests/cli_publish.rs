@@ -68,6 +68,24 @@ fn halyard_env(
     path_prepend: Option<&std::path::Path>,
     shim_log: Option<&std::path::Path>,
 ) -> Result<(std::process::Output, String), BoxError> {
+    halyard_env_with(root, args, path_prepend, shim_log, &[])
+}
+
+fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(bool, String), BoxError> {
+    let (out, text) = halyard_env(root, args, None, None)?;
+    Ok((out.status.success(), text))
+}
+
+/// `halyard_env` plus extra environment pairs for the child (the auth
+/// tests set the documented token variables without touching the test
+/// process's own environment).
+fn halyard_env_with(
+    root: &std::path::Path,
+    args: &[&str],
+    path_prepend: Option<&std::path::Path>,
+    shim_log: Option<&std::path::Path>,
+    vars: &[(&str, &str)],
+) -> Result<(std::process::Output, String), BoxError> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_halyard"));
     command.arg("-C").arg(root).args(args).env("NO_COLOR", "1");
     if let (Some(shim_dir), Some(log)) = (path_prepend, shim_log) {
@@ -80,6 +98,9 @@ fn halyard_env(
         command.env("PATH", path);
         command.env("HALYARD_SHIM_LOG", log);
     }
+    for (key, value) in vars {
+        command.env(key, value);
+    }
     let out = command.output()?;
     let text = format!(
         "{}{}",
@@ -87,11 +108,6 @@ fn halyard_env(
         String::from_utf8_lossy(&out.stderr)
     );
     Ok((out, text))
-}
-
-fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(bool, String), BoxError> {
-    let (out, text) = halyard_env(root, args, None, None)?;
-    Ok((out.status.success(), text))
 }
 
 fn publish_enabled_config() -> &'static str {
@@ -233,5 +249,156 @@ fn publish_dry_gated_rows_follow_a_broken_tool() -> Result<(), BoxError> {
     );
     assert!(text.contains("E-PUB-EFFECT"), "row code surfaces: {text}");
     assert!(text.contains("upstream_failed"), "the gate shows: {text}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Publish auth (M5.3 step 1, ADR-0019): the resolved token reaches the
+// spawn only as an environment pair, a present-but-empty token fails
+// closed before any spawn (E-PUB-AUTH), and tool output is scrubbed —
+// a token a misconfigured tool echoes must never reach a report row.
+// ---------------------------------------------------------------------------
+
+/// The token value the auth fixtures share (a parent-env var the child
+/// also sees — inheritance makes injection and inheritance
+/// indistinguishable from outside; what these tests pin is the
+/// fail-closed and the scrubbing contracts, the seam's observable
+/// surface).
+const TOKEN: &str = "hunter2-secret-token-value";
+
+#[test]
+fn publish_failure_message_scrubs_the_resolved_token() -> Result<(), BoxError> {
+    let fx = build_workspace("scrub", publish_enabled_config())?;
+    let shim = write_cargo_shim("shim-scrub")?;
+    let log = fixture_dir("shim-log-scrub")?.join("argv.log");
+    // A failing tool that echoes the token it was handed (the
+    // misconfigured-tool leak the scrubbing exists for).
+    let script = shim.join("cargo");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\necho \"upload rejected: token {TOKEN} invalid\" >&2\nexit 101\n"),
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms)?;
+    }
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+        &[("CARGO_REGISTRY_TOKEN", TOKEN)],
+    )?;
+    assert!(
+        !out.status.success(),
+        "failed rows fail the command: {text}"
+    );
+    assert!(text.contains("E-PUB-EFFECT"), "row code surfaces: {text}");
+    assert!(
+        !text.contains(TOKEN),
+        "the token must never reach a report row: {text}"
+    );
+    assert!(
+        text.contains("[secret]"),
+        "the scrubbed marker replaces the value: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn publish_refuses_a_present_but_empty_token_before_any_spawn() -> Result<(), BoxError> {
+    let fx = build_workspace("empty-token", publish_enabled_config())?;
+    let shim = write_cargo_shim("shim-empty-token")?;
+    let log = fixture_dir("shim-log-empty-token")?.join("argv.log");
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+        &[("CARGO_REGISTRY_TOKEN", "")],
+    )?;
+    // The capture-level misconfiguration is refused with the stable
+    // code, naming the variable — before any tool spawn (the shim's
+    // argv log must never appear).
+    assert!(!out.status.success(), "an empty token must fail: {text}");
+    assert!(text.contains("E-PUB-AUTH"), "the stable code: {text}");
+    assert!(
+        text.contains("CARGO_REGISTRY_TOKEN"),
+        "the variable is named: {text}"
+    );
+    assert!(!log.exists(), "no spawn may happen after the refusal");
+    let _ = shim;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Auth provenance observability (M5.3 step 2): the dry forecast's JSON
+// carries which documented variable authenticates each registry —
+// provenance only, never values — byte-stable across runs (I3), and
+// `doctor` reports the same resolution before any run.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn publish_dry_json_carries_the_auth_provenance() -> Result<(), BoxError> {
+    let fx = build_workspace("auth-json", publish_enabled_config())?;
+    let shim = write_cargo_shim("shim-auth-json")?;
+    let log = fixture_dir("shim-log-auth-json")?.join("argv.log");
+    let args = ["publish", "--dry", "--format", "json"];
+    let (first, text1) = halyard_env_with(
+        fx.root(),
+        &args,
+        Some(&shim),
+        Some(&log),
+        &[("CARGO_REGISTRY_TOKEN", TOKEN)],
+    )?;
+    let (second, text2) = halyard_env_with(
+        fx.root(),
+        &args,
+        Some(&shim),
+        Some(&log),
+        &[("CARGO_REGISTRY_TOKEN", TOKEN)],
+    )?;
+    assert!(first.status.success() && second.status.success(), "{text1}");
+    // The provenance rides the JSON document, name only.
+    assert!(
+        text1.contains("\"auth\""),
+        "the auth block is present: {text1}"
+    );
+    assert!(
+        text1.contains("env:CARGO_REGISTRY_TOKEN"),
+        "the resolved variable is named: {text1}"
+    );
+    assert!(
+        !text1.contains(TOKEN),
+        "no value may ride the JSON: {text1}"
+    );
+    // I3: identical inputs ⇒ byte-identical JSON.
+    assert_eq!(text1, text2, "the auth block is deterministic");
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_the_publish_auth_row() -> Result<(), BoxError> {
+    let fx = build_workspace("doctor-auth", publish_enabled_config())?;
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["doctor", "--format", "json"],
+        None,
+        None,
+        &[("CARGO_REGISTRY_TOKEN", TOKEN)],
+    )?;
+    assert!(out.status.success(), "doctor failed: {text}");
+    assert!(text.contains("publish-auth"), "the check row: {text}");
+    assert!(
+        text.contains("CARGO_REGISTRY_TOKEN"),
+        "the documented variable is named: {text}"
+    );
+    assert!(
+        !text.contains(TOKEN),
+        "the token value never reaches doctor: {text}"
+    );
     Ok(())
 }
