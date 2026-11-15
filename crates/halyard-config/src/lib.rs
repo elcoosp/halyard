@@ -28,11 +28,14 @@ pub use resolve::{
     Layer, ResolvedConfig, TagStyleSetting, config_hash, env_layer, env_layer_from, resolve,
 };
 
-// M4.7 step 1 (`migrate`): the foreign release-tool migration seam and
-// its report data model — the command renders it and writes nothing.
+// M4.7 (`migrate`): the foreign release-tool migration seam, its report
+// data model and the §16.2 write step (the planner + the injected
+// `DraftSink` the shell wires).
 pub use crate::migrate::{
-    ChangesetsSource, ForeignFiles, MappingRow, MigrationReport, MigrationSource, PackageSurvey,
-    ReleasePleaseSource, ToolSurvey, UnmappedRow, default_sources, migrate,
+    AtomicDraftSink, ChangesetsSource, DRAFT_TARGET, DraftSink, DraftWriteOutcome, DraftWritePlan,
+    DraftWriteReport, ForeignFiles, MappingRow, MemoryDraftSink, MigrationReport, MigrationSource,
+    PackageSurvey, ReleasePleaseSource, ToolSurvey, UnmappedRow, default_sources, migrate,
+    plan_draft_write, run_draft_write,
 };
 
 // Re-exported for the CLI (M1.10) and adapter consumption.
