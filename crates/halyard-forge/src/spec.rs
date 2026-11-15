@@ -114,6 +114,73 @@ pub struct ApiCommit {
     pub files: Vec<ApiFile>,
 }
 
+/// The input of [`Forge::upsert_pr_comment`](crate::Forge::upsert_pr_comment):
+/// the §11.6 check comment halyard keeps on one PR, found by its marker.
+/// The marker is the idempotence key (I1): the upsert scans the PR's
+/// comments for it and rewrites the hit in place, or creates when the
+/// scan comes back empty — the same find-first convention `upsert_pr`
+/// (find-by-branch) and `create_release` (GET-by-tag-first) follow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommentSpec {
+    /// The PR the comment belongs to (the forge's PR number, 1-based).
+    pub pr_number: u64,
+    /// The idempotence marker — the stable HTML-comment line the upsert
+    /// scans for (`<!-- halyard:check v1 -->`). It must appear in `body`
+    /// (it is the find key; a marker the body does not carry makes the
+    /// comment unfindable, which the validation below refuses).
+    pub marker: String,
+    /// The full comment body (markdown, marker included).
+    pub body: String,
+}
+
+impl CommentSpec {
+    /// Fail-closed spec validation, shared by every adapter: `1`-based
+    /// PR number, a non-empty marker, a non-empty body that carries the
+    /// marker. `E-FORGE-REQUEST` names the violated rule — an invalid
+    /// spec never reaches a transport or a store.
+    ///
+    /// # Errors
+    ///
+    /// [`ForgeError::Request`] for each rule listed above.
+    pub fn validate(&self) -> Result<(), ForgeError> {
+        if self.pr_number == 0 {
+            return Err(ForgeError::request(
+                "comment PR number is 0 — forge PR numbers are 1-based; the caller resolved \
+                 no PR (a missing target is a value the caller reports, never a spec to guess)",
+            ));
+        }
+        if self.marker.is_empty() {
+            return Err(ForgeError::request(
+                "comment marker is empty — the marker is the find key the idempotent upsert \
+                 scans for; use the renderer's stable `<!-- halyard:check v1 -->` line",
+            ));
+        }
+        if self.body.is_empty() {
+            return Err(ForgeError::request(
+                "comment body is empty — there is nothing to post",
+            ));
+        }
+        if !self.body.contains(&self.marker) {
+            return Err(ForgeError::request(
+                "comment body does not contain its own marker — the upsert would never find \
+                 the comment again (I1); embed the marker line in the body",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A PR comment as the forge reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrComment {
+    /// Web URL of the comment (synthetic `mem://` in the reference
+    /// adapter, `preview://` in the dry-run adapter).
+    pub url: String,
+    /// `true` when this call created the comment; `false` when the
+    /// marker scan found the existing one and rewrote it in place (I1).
+    pub created: bool,
+}
+
 /// The forge's API budget snapshot (§11.4 `rate_limit`; feeds the
 /// end-of-run API usage summary, §11.5). No clock crosses the seam — a
 /// real adapter fills the fields from response headers.
