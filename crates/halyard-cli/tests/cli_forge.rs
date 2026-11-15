@@ -829,3 +829,230 @@ fn forge_smoke_carries_the_governor_row() -> Result<(), BoxError> {
     assert_eq!(forge.received().len(), 1, "one probe request");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §11.6 check-comment mode over the loopback forge (M4.5 step 1):
+// `check --pr-title --comment` finds the PR under review by its head
+// branch and marker-upserts the verdict comment. The assertions cover
+// both sides — the report the binary prints and the requests the fake
+// server actually received.
+// ---------------------------------------------------------------------------
+
+/// A comment-list body shaped like the REST response the adapter parses.
+fn comment_list(comments: &[serde_json::Value]) -> String {
+    serde_json::Value::Array(comments.to_vec()).to_string()
+}
+
+fn comment(id: u64, body: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "html_url": format!("https://github.com/octo/halyard-demo/pull/7#issuecomment-{id}"),
+        "body": body,
+    })
+}
+
+/// The check-comment pass over the loopback forge: the PR is found by
+/// head branch, the marker scan comes back empty, and the verdict is
+/// posted for real — the fake server saw the find probe, the scan and
+/// the create POST, and the report names the posted comment.
+#[test]
+fn check_comment_posts_the_verdict_over_loopback() -> Result<(), BoxError> {
+    let fx = build_workspace("check-comment-post")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/octo/halyard-demo.git",
+    ])?;
+    // The find exchange parses a PR *list* — the scripted PR rides an
+    // array (the wire shape the contract tests pin).
+    let pr = format!("[{}]", pr_body(7, "feature/topic"));
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, pr),
+        (200, "[]".to_owned()),
+        (
+            201,
+            r#"{"id":9,"html_url":"https://github.com/octo/halyard-demo/pull/7#issuecomment-9"}"#
+                .to_owned(),
+        ),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "--format",
+            "json",
+            "check",
+            "--pr-title",
+            "feat: extend the crate surface",
+            "--comment",
+        ],
+        &[
+            ("GITHUB_API_URL", &api),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("GITHUB_HEAD_REF", "feature/topic"),
+        ],
+    )?;
+    server
+        .join()
+        .map_err(|_| "the fake forge thread panicked")?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let comment = value
+        .get("comment")
+        .ok_or("the report carries the comment outcome")?;
+    assert_eq!(
+        comment.get("posted").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "{out}"
+    );
+    assert_eq!(
+        comment.get("created").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "the first run creates: {out}"
+    );
+    assert_eq!(
+        comment.get("url").and_then(serde_json::Value::as_str),
+        Some("https://github.com/octo/halyard-demo/pull/7#issuecomment-9"),
+        "{out}"
+    );
+    // The fake server saw the find probe, the marker scan and the
+    // create POST with the marker.
+    let received = forge.received();
+    assert_eq!(
+        received.len(),
+        3,
+        "one find GET + one scan GET + one create POST"
+    );
+    let post = received
+        .iter()
+        .find(|request| field(request, "method") == "POST")
+        .ok_or("the create POST reached the fake forge")?;
+    let body = field(post, "body");
+    assert!(
+        body.contains("<!-- halyard:check v1 -->"),
+        "the marker rides: {body}"
+    );
+    assert!(body.contains("feat: extend the crate surface"), "{body}");
+    Ok(())
+}
+
+/// The idempotent re-run: the marker scan finds the existing comment and
+/// the verdict is `PATCH`ed in place — no duplicate comment (I1).
+#[test]
+fn check_comment_rerun_rewrites_in_place_over_loopback() -> Result<(), BoxError> {
+    let fx = build_workspace("check-comment-rerun")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/octo/halyard-demo.git",
+    ])?;
+    let pr = format!("[{}]", pr_body(7, "feature/topic"));
+    let existing = comment(
+        9,
+        "<!-- halyard:check v1 -->\n\n## 🧪 halyard check\n\nstale verdict",
+    );
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, pr),
+        (200, comment_list(&[existing])),
+        (
+            200,
+            r#"{"id":9,"html_url":"https://github.com/octo/halyard-demo/pull/7#issuecomment-9"}"#
+                .to_owned(),
+        ),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "--format",
+            "json",
+            "check",
+            "--pr-title",
+            "feat: extend the crate surface",
+            "--comment",
+        ],
+        &[
+            ("GITHUB_API_URL", &api),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("GITHUB_HEAD_REF", "feature/topic"),
+        ],
+    )?;
+    server
+        .join()
+        .map_err(|_| "the fake forge thread panicked")?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let comment = value
+        .get("comment")
+        .ok_or("the report carries the outcome")?;
+    assert_eq!(
+        comment.get("created").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "the re-run rewrites in place: {out}"
+    );
+    let received = forge.received();
+    let patched = received
+        .iter()
+        .find(|request| field(request, "method") == "PATCH")
+        .ok_or("the PATCH reached the fake forge")?;
+    assert!(
+        field(patched, "path").contains("issues/comments/9"),
+        "the rewrite addresses the found comment: {}",
+        field(patched, "path")
+    );
+    Ok(())
+}
+
+/// No open PR on the head branch: nothing is posted, the report says so
+/// (the §11.4 not-found-is-a-value convention surfaced), and the run
+/// still exits 0 — the verdict itself is unchanged.
+#[test]
+fn check_comment_without_a_target_pr_reports_the_skip() -> Result<(), BoxError> {
+    let fx = build_workspace("check-comment-nopr")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/octo/halyard-demo.git",
+    ])?;
+    let (forge, api, server) = FakeForge::new(vec![(200, "[]".to_owned())])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "--format",
+            "json",
+            "check",
+            "--pr-title",
+            "feat: extend the crate surface",
+            "--comment",
+        ],
+        &[
+            ("GITHUB_API_URL", &api),
+            ("HALYARD_FORGE_TOKEN", "smoke-token"),
+            ("GITHUB_HEAD_REF", "feature/topic"),
+        ],
+    )?;
+    server
+        .join()
+        .map_err(|_| "the fake forge thread panicked")?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let comment = value
+        .get("comment")
+        .ok_or("the report carries the outcome")?;
+    assert_eq!(
+        comment.get("posted").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "{out}"
+    );
+    assert!(
+        comment
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .contains("feature/topic"),
+        "the skip names the branch it probed: {out}"
+    );
+    assert_eq!(forge.received().len(), 1, "one find probe, no comment POST");
+    Ok(())
+}
