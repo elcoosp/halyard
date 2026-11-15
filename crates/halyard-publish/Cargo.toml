@@ -22,6 +22,10 @@ name = "publish"
 harness = false
 
 [[bench]]
+name = "target_router"
+harness = false
+
+[[bench]]
 name = "auth"
 harness = false
 
