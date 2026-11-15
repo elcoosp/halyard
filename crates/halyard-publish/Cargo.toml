@@ -21,5 +21,9 @@ semver = { workspace = true }
 name = "publish"
 harness = false
 
+[[bench]]
+name = "auth"
+harness = false
+
 [lints]
 workspace = true
