@@ -561,7 +561,9 @@ fn dfs_cycle<'a>(
 
 /// The registry-routing seam: which [`Registry`] probes a target's
 /// registry name. The shell owns the map (live `crates.io`/`npm`
-/// clients over the blocking transport); tests inject scripted ones.
+/// clients over the blocking transport, plus one client per configured
+/// custom cargo registry — the `[registries.<name>]` resolution,
+/// ADR-0021); tests inject scripted ones.
 pub trait RegistryRouter: Send + Sync {
     /// The existence-probe client for `name` (`crates.io`, `npm`, …).
     ///
@@ -570,6 +572,107 @@ pub trait RegistryRouter: Send + Sync {
     /// [`PublishError::Registry`] when no client is configured — the
     /// run refuses before touching any registry or tool.
     fn registry(&self, name: &str) -> Result<&dyn Registry, PublishError>;
+
+    /// The existence-probe client for one specific target. The default
+    /// routes by registry name (every router the M5.2 engine shipped
+    /// keeps working unchanged); a router that carries per-target
+    /// overrides — [`TargetRouter`] for the npm-side
+    /// `publishConfig.registry` resolution (ADR-0021) — resolves the
+    /// override first and falls back to the name route.
+    ///
+    /// # Errors
+    ///
+    /// [`PublishError::Registry`] when neither the target's override
+    /// nor its registry name has a client.
+    fn registry_for(&self, target: &PublishTarget) -> Result<&dyn Registry, PublishError> {
+        self.registry(&target.registry)
+    }
+}
+
+/// The per-target [`RegistryRouter`] — the by-name map of
+/// [`MapRouter`] plus per-`(registry, package)` overrides (the npm-side
+/// `publishConfig.registry` resolution, ADR-0021: two npm packages of
+/// one workspace may publish to different registries, so the route is
+/// the *target*, not only the name). Clones share the maps (an `Arc`
+/// inner, the house fake convention).
+#[derive(Clone, Default)]
+pub struct TargetRouter {
+    by_registry: Arc<BTreeMap<String, Arc<dyn Registry>>>,
+    by_target: Arc<BTreeMap<(String, String), Arc<dyn Registry>>>,
+}
+
+impl std::fmt::Debug for TargetRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The clients are trait objects (no Debug); the routed names
+        // are the observable shape.
+        let names: Vec<&String> = self.by_registry.keys().collect();
+        let overrides: Vec<&(String, String)> = self.by_target.keys().collect();
+        f.debug_struct("TargetRouter")
+            .field("routes", &names)
+            .field("overrides", &overrides)
+            .finish()
+    }
+}
+
+impl TargetRouter {
+    /// An empty router (every target is unroutable until `with` or
+    /// `with_override`).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds (or replaces) the by-name client for `registry`; builder
+    /// style.
+    #[must_use]
+    pub fn with(mut self, registry: &str, client: Arc<dyn Registry>) -> Self {
+        let owned = Arc::try_unwrap(self.by_registry).unwrap_or_else(|shared| (*shared).clone());
+        let mut map = owned;
+        map.insert(registry.to_owned(), client);
+        self.by_registry = Arc::new(map);
+        self
+    }
+
+    /// Adds (or replaces) the override client for the exact
+    /// `(registry, package)` target; builder style.
+    #[must_use]
+    pub fn with_override(
+        mut self,
+        registry: &str,
+        package: &str,
+        client: Arc<dyn Registry>,
+    ) -> Self {
+        let owned = Arc::try_unwrap(self.by_target).unwrap_or_else(|shared| (*shared).clone());
+        let mut map = owned;
+        map.insert((registry.to_owned(), package.to_owned()), client);
+        self.by_target = Arc::new(map);
+        self
+    }
+}
+
+impl RegistryRouter for TargetRouter {
+    fn registry(&self, name: &str) -> Result<&dyn Registry, PublishError> {
+        self.by_registry.get(name).map_or_else(
+            || {
+                Err(PublishError::Registry {
+                    registry: name.to_owned(),
+                    message: "no registry client is configured for this name — the shell owns \
+                              the routing map; configure the registry or disable publishing \
+                              for its packages"
+                        .to_owned(),
+                })
+            },
+            |registry| Ok(registry.as_ref()),
+        )
+    }
+
+    fn registry_for(&self, target: &PublishTarget) -> Result<&dyn Registry, PublishError> {
+        let key = (target.registry.clone(), target.package.clone());
+        if let Some(override_client) = self.by_target.get(&key) {
+            return Ok(override_client.as_ref());
+        }
+        self.registry(&target.registry)
+    }
 }
 
 /// The scripted [`RegistryRouter`] — a name→client map (the routing
@@ -1108,7 +1211,11 @@ pub fn run_publication(
         .collect();
     let mut registries: BTreeMap<&str, &dyn Registry> = BTreeMap::new();
     for (name, target) in &by_name {
-        let registry = router.registry(&target.registry)?;
+        // Per-target routing (ADR-0021): a target's own override (the
+        // npm publishConfig resolution) wins over its registry name's
+        // client; validate-then-act — the whole run's routing is
+        // known-good before any call.
+        let registry = router.registry_for(target)?;
         registries.insert(*name, registry);
     }
 
