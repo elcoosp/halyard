@@ -26,7 +26,10 @@ opt-in probe; ADR-0017) — and the M5.2 publish engine (`halyard-publish`:
 verified-plan validation, topological layers, registry resume, the
 visibility wait and the injected `PublishEffect` seam; ADR-0018) wired
 into the `publish [--dry]` command (the tools' documented dry form, the
-real spawn live).** The architecture and multi-year master plan lives in
+real spawn live) — and the §11.6 check-comment mode (`check --pr-title
+--comment`: the verdict posted to the PR under review through the forge
+seam's marker-based comment upsert, rewrite-in-place idempotent; M4.5
+step 1, ADR-0020).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -221,6 +224,7 @@ cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
 cargo run -p halyard-changelog --example render_user_template
+cargo run -p halyard-changelog --example render_check_comment
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-publish --example publish_auth
 cargo run -p halyard-forge --example release_lifecycle
