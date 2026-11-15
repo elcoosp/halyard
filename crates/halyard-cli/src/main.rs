@@ -193,11 +193,20 @@ enum Command {
     /// (§11.6): the title is the bump source in squash-merge repos, so
     /// `check --pr-title` predicts — per pending package — the bump the
     /// merge would convey; `--exit-code` turns a pending release into
-    /// exit code 3 (§15.4).
+    /// exit code 3 (§15.4). `--comment` posts the verdict to the PR
+    /// under review (found by its head branch) through the forge seam's
+    /// marker-based comment upsert — the §11.6 "if merged, this will
+    /// release" comment, idempotent on re-runs; live-only (credentials
+    /// required, the decline names the fix).
     Check {
         /// The squash-merge PR title to lint (§11.6).
         #[arg(long, value_name = "TITLE")]
         pr_title: Option<String>,
+        /// Post the verdict as the PR's halyard check comment (§11.6,
+        /// M4.5 step 1): requires `--pr-title` (the verdict is the
+        /// comment) and live forge credentials.
+        #[arg(long)]
+        comment: bool,
         /// Exit 3 when a release is pending (§15.4 exit codes).
         #[arg(long)]
         exit_code: bool,
@@ -349,8 +358,9 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         }
         Command::Check {
             pr_title,
+            comment,
             exit_code,
-        } => cmd_check(cli, profiler, pr_title.as_deref(), *exit_code),
+        } => cmd_check(cli, profiler, pr_title.as_deref(), *comment, *exit_code),
         Command::Status => {
             cmd_status(cli, profiler)?;
             Ok(ExitCode::SUCCESS)
@@ -1882,129 +1892,317 @@ fn cmd_doctor(cli: &Cli, profiler: &mut Profiler, registries: bool) -> Result<()
 /// per pending package — the bump the merge would convey; `--exit-code`
 /// gates CI on a pending release (§15.4 exit code 3). A rejected title
 /// fails with the `E-CLI-TITLE` diagnosis (§11.6: errors teach).
+///
+/// The comment mode (`--comment`, M4.5 step 1) posts the verdict to the
+/// PR under review through the forge seam's marker-based upsert — the
+/// §11.6 "if merged, this will release" comment. The target is the open
+/// PR whose head branch matches the run's head branch
+/// (`GITHUB_HEAD_REF`, else the checked-out branch); a rejected title
+/// posts its diagnosis too, then still fails the command. Live-only:
+/// without credentials the decline is honest (`E-CLI-COMMENT`), never a
+/// pretended post.
 fn cmd_check(
     cli: &Cli,
     profiler: &mut Profiler,
     pr_title: Option<&str>,
+    comment: bool,
     exit_code: bool,
 ) -> Result<ExitCode, CliError> {
+    // The comment mode needs a verdict to post — refused fail-closed
+    // before any forge contact (the fix names the missing flag).
+    if comment && pr_title.is_none() {
+        return Err(CliError::new(
+            "E-CLI-COMMENT",
+            "`check --comment` posts the verdict of a linted title, but no title was given — \
+             pass `--pr-title <TITLE>` (the comment mode has nothing to say without one)",
+        ));
+    }
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let pending = !plan.releases.is_empty();
     let plan_config: PlanConfig = context.config.plan_config();
-    if let Some(title) = pr_title {
-        match check::lint(title, &plan_config) {
-            halyard_conventional::TitleVerdict::Accepted(lint) => {
-                // §11.6's precise diagnosis: an unmapped kind with a close
-                // known kind is a likely typo — fail loudly instead of
-                // silently releasing nothing. A genuinely unmapped kind
-                // (`chore:`, `docs:`) is a legitimate no-bump verdict.
-                if let Some(closest) = &lint.closest_known {
-                    return Err(CliError::new(
-                        "E-CLI-TITLE",
-                        format!(
-                            "PR title type {:?} is not a known release type — did you mean \
-                             {closest:?}? Known types: {}. Fix: reword the merge title; \
-                             unmapped types release nothing",
-                            lint.kind,
-                            known_types_csv(&plan_config),
-                        ),
-                    ));
-                }
-                let predictions = check::predict(&plan, &lint, &plan_config);
-                match cli.format {
-                    Format::Json => {
-                        let predicted: Vec<serde_json::Value> = predictions
-                            .iter()
-                            .map(|row| {
-                                serde_json::json!({
-                                    "package": row.package,
-                                    "from": row.from,
-                                    "bump": row.bump,
-                                    "remapped": row.remapped,
-                                })
-                            })
-                            .collect();
-                        print_pretty_json(&serde_json::json!({
-                            "title": title,
-                            "verdict": "accepted",
-                            "kind": lint.kind,
-                            "scope": lint.scope,
-                            "breaking": lint.breaking,
-                            "level": lint.level.as_str(),
-                            "predicted": predicted,
-                            "pending": pending,
-                        }))?;
-                    }
-                    Format::Gha => print!("{}", render::check_gha(title, &lint, &predictions)),
-                    Format::Human => {
-                        print!("{}", render::check_human(title, &lint, &predictions));
-                    }
-                }
-            }
-            halyard_conventional::TitleVerdict::NotConventional { reason } => {
-                return Err(CliError::new(
-                    "E-CLI-TITLE",
-                    format!(
-                        "PR title {title:?} is not a conventional commit: {reason}. \
-                         Fix: squash-merge repos derive the bump from the title \
-                         (§11.6); use `type(scope): description` (e.g. \
-                         `feat(parser): accept spans`)"
-                    ),
-                ));
-            }
-            halyard_conventional::TitleVerdict::FixupOrSquash => {
-                return Err(CliError::new(
-                    "E-CLI-TITLE",
-                    format!(
-                        "PR title {title:?} is a fixup!/squash! subject — autosquash \
-                         commits are never released (§8.5). Fix: reword the merge \
-                         title to a conventional commit"
-                    ),
-                ));
-            }
-        }
+    let Some(title) = pr_title else {
+        render_check_pending(cli, &plan, pending)?;
+        return Ok(pending_exit(exit_code, pending));
+    };
+    // The single classification (the exit wording and the posted
+    // comment share one source, check.rs), then one comment post before
+    // any output or exit — the post failure is the command's failure,
+    // never a pretended success.
+    let classification = check::classify_title(title, &plan_config);
+    let predictions = match &classification {
+        check::TitleClassification::Accepted(lint) => check::predict(&plan, lint, &plan_config),
+        check::TitleClassification::Rejected(_) => Vec::new(),
+    };
+    let comment_outcome = if comment {
+        Some(run_check_comment(&check::comment_input(
+            title,
+            &classification,
+            &predictions,
+        ))?)
     } else {
-        match cli.format {
-            Format::Json => {
-                let releases: Vec<serde_json::Value> = plan
-                    .releases
-                    .iter()
-                    .map(|release| {
-                        serde_json::json!({
-                            "package": release.package,
-                            "from": release.from,
-                            "to": release.to,
-                            "bump": release.bump,
-                        })
-                    })
-                    .collect();
-                print_pretty_json(
-                    &serde_json::json!({ "pending": pending, "releases": releases }),
-                )?;
-            }
-            Format::Gha => print!("{}", render::check_pending_gha(&plan)),
-            Format::Human => print!("{}", render::check_pending_human(&plan)),
+        None
+    };
+    match classification {
+        check::TitleClassification::Rejected(message) => {
+            return Err(CliError::new("E-CLI-TITLE", message));
+        }
+        check::TitleClassification::Accepted(lint) => {
+            render_check_accepted(
+                cli,
+                title,
+                &lint,
+                &predictions,
+                pending,
+                comment_outcome.as_ref(),
+            )?;
         }
     }
-    // §15.4 exit codes: 3 = a release is pending (the `check --exit-code`
-    // CI gate). The title-lint failure path above exits 1 via CliError.
-    Ok(if exit_code && pending {
+    Ok(pending_exit(exit_code, pending))
+}
+
+/// The pending-releases render (the no-title path).
+fn render_check_pending(
+    cli: &Cli,
+    plan: &halyard_core::Plan,
+    pending: bool,
+) -> Result<(), CliError> {
+    match cli.format {
+        Format::Json => {
+            let releases: Vec<serde_json::Value> = plan
+                .releases
+                .iter()
+                .map(|release| {
+                    serde_json::json!({
+                        "package": release.package,
+                        "from": release.from,
+                        "to": release.to,
+                        "bump": release.bump,
+                    })
+                })
+                .collect();
+            print_pretty_json(&serde_json::json!({ "pending": pending, "releases": releases }))?;
+        }
+        Format::Gha => print!("{}", render::check_pending_gha(plan)),
+        Format::Human => print!("{}", render::check_pending_human(plan)),
+    }
+    Ok(())
+}
+
+/// The accepted-verdict renders (json/human/gha); the `comment` block
+/// rides only when the comment mode ran (byte-stability otherwise).
+fn render_check_accepted(
+    cli: &Cli,
+    title: &str,
+    lint: &halyard_conventional::TitleLint,
+    predictions: &[check::Prediction],
+    pending: bool,
+    comment_outcome: Option<&CheckCommentOutcome>,
+) -> Result<(), CliError> {
+    match cli.format {
+        Format::Json => {
+            let predicted: Vec<serde_json::Value> = predictions
+                .iter()
+                .map(|row| {
+                    serde_json::json!({
+                        "package": row.package,
+                        "from": row.from,
+                        "bump": row.bump,
+                        "remapped": row.remapped,
+                    })
+                })
+                .collect();
+            let mut document = serde_json::json!({
+                "title": title,
+                "verdict": "accepted",
+                "kind": lint.kind,
+                "scope": lint.scope,
+                "breaking": lint.breaking,
+                "level": lint.level.as_str(),
+                "predicted": predicted,
+                "pending": pending,
+            });
+            if let Some(outcome) = comment_outcome {
+                if let serde_json::Value::Object(ref mut map) = document {
+                    map.insert("comment".to_owned(), comment_json(outcome));
+                } else {
+                    unreachable!("the check document is an object");
+                }
+            }
+            print_pretty_json(&document)?;
+        }
+        Format::Gha => {
+            print!("{}", render::check_gha(title, lint, predictions));
+            if let Some(outcome) = comment_outcome {
+                print!("{}", comment_line(outcome));
+            }
+        }
+        Format::Human => {
+            print!("{}", render::check_human(title, lint, predictions));
+            if let Some(outcome) = comment_outcome {
+                print!("{}", comment_line(outcome));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The §15.4 exit code: 3 = a release is pending (the `check
+/// --exit-code` CI gate); title-lint failures exit 1 via `CliError`.
+fn pending_exit(exit_code: bool, pending: bool) -> ExitCode {
+    if exit_code && pending {
         ExitCode::from(3)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// The §11.6 comment mode's outcome (M4.5 step 1): the posted comment or
+/// the honest skip.
+enum CheckCommentOutcome {
+    /// The comment was posted (`created`) on PR `pr` at `url`.
+    Posted {
+        /// The PR the comment lives on.
+        pr: u64,
+        /// The forge's comment URL.
+        url: String,
+        /// `true` on the fresh create, `false` on the in-place rewrite
+        /// (I1 — the marker re-run never duplicates).
+        created: bool,
+    },
+    /// No open PR matched the head branch: nothing posted, the skip is
+    /// the §11.4 not-found-is-a-value convention surfaced.
+    Skipped {
+        /// The head branch the probe used.
+        head_branch: String,
+    },
+}
+
+/// The §11.6 comment flow (M4.5 step 1): build the live forge (the
+/// fail-closed `E-CLI-COMMENT` decline on missing credentials or a
+/// foreign origin — the `pr` live gate's shape under the check mode's
+/// own code), ride the §11.5 governor (the upsert is a content call:
+/// paced, budgeted, retried), resolve the run's head branch, find the
+/// open PR whose head it is (the §11.4 find-by-head probe) and
+/// marker-upsert the rendered verdict. A forked PR's head (a foreign
+/// owner prefix) resolves the same honest skip — the adapter's
+/// `head=owner:branch` filter simply finds nothing. The adapter and the
+/// governor both live inside this function: the run is one-shot, so no
+/// borrow escapes.
+fn run_check_comment(
+    comment: &halyard_changelog::CheckComment,
+) -> Result<CheckCommentOutcome, CliError> {
+    let env = forge_credentials().map_err(|error| {
+        CliError::new(
+            "E-CLI-COMMENT",
+            format!(
+                "the check comment needs live forge credentials — {error}; configure the \
+                 GitHub App env or export GITHUB_TOKEN (or HALYARD_FORGE_TOKEN) and \
+                 re-run `halyard doctor` to verify"
+            ),
+        )
+    })?;
+    let inner: Box<dyn halyard_forge::Forge> = Box::new(live_forge(env));
+    let (clock, sleeper) = halyard_forge::governor::system_time();
+    let governor =
+        halyard_forge::Governor::new(inner.as_ref(), governor_policy_from_env()?, clock, sleeper);
+    let forge: &dyn halyard_forge::Forge = &governor;
+    let head = comment_head_branch()?;
+    let branch = halyard_forge::BranchName::new(&head)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let found = forge
+        .find_release_pr(&branch)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let Some(pr) = found else {
+        return Ok(CheckCommentOutcome::Skipped { head_branch: head });
+    };
+    let spec = halyard_forge::CommentSpec {
+        pr_number: pr.number,
+        marker: halyard_changelog::CHECK_MARKER.to_owned(),
+        body: halyard_changelog::render_check_comment(comment),
+    };
+    let posted = forge
+        .upsert_pr_comment(&spec)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok(CheckCommentOutcome::Posted {
+        pr: pr.number,
+        url: posted.url,
+        created: posted.created,
     })
 }
 
-/// The config's known release types, sorted, comma-separated (the
-/// `E-CLI-TITLE` diagnosis lists what the mapping accepts).
-fn known_types_csv(config: &PlanConfig) -> String {
-    config
-        .commit_types
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ")
+/// The JSON `comment` block (byte-stable: the key exists only when
+/// `--comment` ran).
+fn comment_json(outcome: &CheckCommentOutcome) -> serde_json::Value {
+    match outcome {
+        CheckCommentOutcome::Posted { pr, url, created } => serde_json::json!({
+            "posted": true,
+            "created": created,
+            "url": url,
+            "pr": pr,
+        }),
+        CheckCommentOutcome::Skipped { head_branch } => serde_json::json!({
+            "posted": false,
+            "reason": format!("no open PR on head branch {head_branch}"),
+        }),
+    }
+}
+
+/// The human/GHA tail line for the comment outcome.
+fn comment_line(outcome: &CheckCommentOutcome) -> String {
+    match outcome {
+        CheckCommentOutcome::Posted { url, created, .. } => {
+            let verb = if *created { "created" } else { "updated" };
+            format!("check-comment: {verb} {url}\n")
+        }
+        CheckCommentOutcome::Skipped { head_branch } => {
+            format!("check-comment: not posted — no open PR on head branch {head_branch}\n")
+        }
+    }
+}
+
+/// The run's head branch: `GITHUB_HEAD_REF` in Actions, else the
+/// checked-out branch (in-process `gix` — no subprocess, I6). Detached
+/// HEAD is an honest decline: the comment mode finds the PR by its head
+/// branch, and a detached checkout names none.
+fn comment_head_branch() -> Result<String, CliError> {
+    if let Some(branch) = std::env::var("GITHUB_HEAD_REF")
+        .ok()
+        .filter(|b| !b.is_empty())
+    {
+        return Ok(branch);
+    }
+    let repo = halyard_git::gix::open(std::path::Path::new(".")).map_err(|e| {
+        CliError::new(
+            "E-GIT-OPEN",
+            format!("cannot open the repository for the head-branch lookup: {e}"),
+        )
+    })?;
+    let head = repo.head().map_err(|e| {
+        CliError::new(
+            "E-GIT-HEAD",
+            format!("cannot resolve HEAD for the comment target: {e}"),
+        )
+    })?;
+    let Some(referent) = head.try_into_referent() else {
+        return Err(CliError::new(
+            "E-CLI-COMMENT",
+            "HEAD is detached — the comment mode finds the PR by its head branch; run in a \
+             PR workflow (GITHUB_HEAD_REF carries it) or check out a branch",
+        ));
+    };
+    // Branch names are UTF-8 in practice; a non-UTF-8 name cannot ride
+    // the argv/env paths anyway — the honest decline, never a guessed
+    // byte-to-string cast.
+    std::str::from_utf8(referent.name().shorten())
+        .map(str::to_owned)
+        .map_err(|_| {
+            CliError::new(
+                "E-CLI-COMMENT",
+                "the checked-out branch name is not valid UTF-8 — the comment mode cannot \
+                 address it; run in a PR workflow (GITHUB_HEAD_REF carries the branch)",
+            )
+        })
 }
 
 /// The shared pipeline context: discovery + resolved config + git history.
