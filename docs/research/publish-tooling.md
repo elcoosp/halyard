@@ -53,12 +53,48 @@ different tool with different packaging semantics. `npm publish` /
 `yarn npm publish` / `bun publish` variants are a documented Year-2
 extension (config-selectable), not a v1 guess.
 
+## The `--registry` flag mapping (M5.3 continued, VERIFIED 2026-11-15)
+
+Fetched `doc.rust-lang.org/cargo/commands/cargo-publish.html` (the
+Cargo Book's `cargo publish` page) and quoted verbatim:
+
+> **`--registry` *registry*** — "Name of the registry to publish to.
+> Registry names are defined in [Cargo config files]. If not specified,
+> and there is a [package.publish] field in Cargo.toml with a single
+> registry, then it will publish to that registry. Otherwise it will
+> use the default registry, which is defined by the [registry.default]
+> config key which defaults to crates-io."
+
+The mapping halyard ships: the plan's publish contract carries the
+configured registry name (`publish.cargo.registry`, default
+`crates.io`); the argv table emits `--registry <name>` **only when the
+name is not the default registry** — the two accepted default spellings
+(`crates.io` and Cargo's own dashed config spelling `crates-io`) ride
+the tool's own documented default (`registry.default` → `crates-io`)
+with no flag, exactly the no-guess rule: halyard never passes a flag
+for the state the tool already defaults to. Any other configured name
+reaches the spawn as `--registry <name>` verbatim (names are Cargo
+config keys — the token side of the same name resolves through
+`CARGO_REGISTRIES_<NAME>_TOKEN`, the auth seam's documented grammar,
+so argv and env can never disagree about which registry a run
+publishes to). The default-spelling rule mirrors
+`halyard_publish::auth`'s `is_crates_io` and is pinned by tests on both
+sides. The gate this does **not** open: the shell's routing map owns
+the two §13 registry clients (crates.io sparse index, npm packument) —
+a third-party cargo index has no resume-probe client, so a
+custom-registry run refuses `E-PUB-REGISTRY` **before any spawn** (dry
+included, by design). The end-to-end custom-registry publish waits on
+a third-party client joining the routing map; the argv grammar and the
+spawn wiring above are complete and unit-pinned meanwhile.
+
 ## Remaining VERIFY items (open, like ADR-0017's)
 
 - `cargo publish --dry-run` without `--offline` reaches the network for
   index/dep resolution in some setups — the dry argv pins `--offline`
   to stay hermetic; whether a *live* run needs
-  `--allowed-registry`-style scoping is an M5.3 auth question.
+  `--allowed-registry`-style scoping is an M5.3 auth question (the
+  `--registry` flag mapping itself is resolved — see the section
+  above).
 - pnpm `publishConfig.directory` interaction with monorepo roots
   (recorded, untested — the engine passes the package root as cwd).
 - npm/yarn/bun publish argv equivalence (Year-2 tool selection).
