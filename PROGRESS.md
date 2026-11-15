@@ -36,6 +36,82 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M5.3 step 1 publish-auth plumbing + step 2 observability slice (ADR-0019) | done | (tree left dirty; no commits) | M1 (M5.3 step 1): `halyard_publish::auth` — the `PublishAuth` seam (object-safe, `Send + Sync`, `credentials(&target) → Result<AuthOutcome, PublishError>` + the `secrets()` scrubbing contract), the `EnvPublishAuth` production capture (one deterministic env snapshot shared by resolution and scrubbing; the `CARGO_REGISTRIES_*_TOKEN` scan covers custom cargo registries), the VERIFIED grammar as data (`variables_for`: cargo `CARGO_REGISTRY_TOKEN` + the `registries.crates-io` fallback / `CARGO_REGISTRIES_<NAME>_TOKEN` uppercased dots-dashes→underscores; npm `NPM_TOKEN` → `NODE_AUTH_TOKEN`; unknown ecosystems honest-absent), absent-is-a-value (`AuthOutcome::Absent` — the tools' own credential stores govern), present-but-empty refused fail-closed `PublishError::Auth` (`E-PUB-AUTH` + page + index row, structural never-retryable), `scrub_secrets` (pure, `[secret]` marker) + `CredentialEnv`/`EnvPublishAuth` Debug redaction, `auth_summary` provenance helper (M2); the CLI effect consumes the seam (`SpawnPublishEffect::new(root, dry, auth)`: the resolved pair injected via `Command::env`, every surfaced stderr tail scrubbed of all resolved values, `E-PUB-AUTH` rows), the run-level capture refuses before planning (`cmd_publish`), 19 engine tests + 5 CLI tests (scrub-leak, empty-token refusal, provenance JSON + byte-stability, doctor row) — one full red→green cycle per half, both reds on record; bench `auth` (capture ≈2.3 ns, credentials×14 ≈1.4 µs, scrub-1KiB ≈ sub-µs) + example `publish_auth` (provenance-only output) + ADR-0019 + `docs/research/publish-auth-env.md` (VERIFIED quotes: Cargo Book config + registry-authentication, pnpm.io/npmrc incl. the project-`.npmrc` non-interpolation anti-exfiltration rule) + arch §13 as-built. M2 (M1 green end-to-end first): the renderers carry the per-registry `auth` provenance (json `auth` block + human/gha `publish-auth (M5.3):` tail, names only, byte-stable) and `doctor` gains the `publish-auth` check (the same capture the run performs; empty-token fails the check). Micro-debt/docs drift fixed (additive, not milestone substitutes): the mangled `E-CLI-PUBLISH` message (stray space runs mid-sentence) rewritten with correct wrapping; the spawn's stderr tail picks the last **non-empty** line (`next_back()` on blank-line-terminated stderr produced an empty diagnosis); the `publish-tooling.md` deferral note ("--registry mapping … deferred to M5.3's auth plumbing") is now satisfied by the seam (the token env maps the §13 registry name verbatim; a cargo `--registry` config-name mapping stays a no-guess open item); root README layout row + example list, CLI README publish row + publish-auth section | The M5.3 OIDC trusted publishing (its own VERIFY — the M0.6 note's `id-token`/hosted-runner facts need a live CI runtime), `github-release-notes` PR-comment mode, the M4.6 corpus checkout-time acceptance, the M5.1 nightly live checks, the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses, the cargo `--registry` flag mapping | 2026-11-15; session log below |
 
 | M4.5 step 1 check-comment mode (§11.6, ADR-0020) + M5.3 continued `--registry` argv mapping | done | (tree left dirty; no commits) | M1 (M4.5 step 1): the `Forge::upsert_pr_comment` seam capability (ADR-0020) — the marker-based idempotent comment upsert (`<!-- halyard:check v1 -->` scan → rewrite-in-place / create; the §11.3 marker convention at comment scale), the shared `CommentSpec::validate` fail-closed contract (1-based PR, non-empty marker, body carries its own marker — `E-FORGE-REQUEST` before any store touch or exchange), the honest-decline trait default, the `MemoryForge` reference implementation (+ `pr_comments` test view), the `PreviewForge` forecast, the governor forwarding (content call: paced, budgeted, retried), the GitHub REST exchange (ascending 100-per-page marker scan until a short page → `PATCH issues/comments/{id}` or `POST issues/{n}/comments`) + `halyard_changelog::check_comment` (the §11.6 renderer: both verdict shapes, marker-first deterministic markdown, `CheckComment`/`CheckVerdict`/`CheckPrediction` plain data) + the CLI `check --pr-title --comment` (head branch = `GITHUB_HEAD_REF` else in-process gix, PR found by head through the adapter's find exchange, forked-head/missing-PR honest skip in the report, both verdicts post — a rejected title posts its diagnosis then still fails `E-CLI-TITLE`; creds/origin resolved before the verdict paths exit, honest decline `E-CLI-COMMENT` naming the fix; the §11.5 governor rides the live call; the `comment` report block exists only when the flag ran — byte-stable JSON when it does not) + 10 seam tests (`tests/comment.rs`: create/rewrite I1, multi-marker, closed-PR comment, fail-closed matrix, failpoint, call log, preview forecast, decline witness, governor pacing+budget) + 7 adapter wire tests (`tests/comment.rs`: scan→POST, scan→PATCH, page walk, fail-closed spec, transport verbatim, 404 taxonomy, call log) + 7 renderer tests + 3 CLI gates + 3 CLI loopback passes (post / rewrite-in-place / skip) + bench `pr_comment` (render-6, create, rewrite) + example `render_check_comment` + `E-CLI-COMMENT` page + index row + ADR-0020 + arch §11.4/§11.6/§16.2 as-built + README rows. M2 (M1 green first): the cargo `--registry` argv mapping (M5.3 continued) — `cargo_publish_args(manifest, registry, dry)` emits `--registry <name>` for a non-default registry, the two default spellings (`crates.io`/`crates-io`) ride the tool's documented `registry.default` with no flag (`is_default_registry`, mirroring the auth seam's `is_crates_io` — both pinned), VERIFIED against the Cargo Book with the verbatim quote recorded (`docs/research/publish-tooling.md`), the effect passes `target.registry` through the grammar, the CLI test pins the M5.2 routing gate honestly (a third-party cargo index has no resume-probe client → `E-PUB-REGISTRY` before any spawn, dry included, zero side effects — the end-to-end custom-registry publish waits on a client joining the routing map, documented; the argv grammar is complete and unit-pinned) + 2 adapter argv tests + the publish_args integration matrix extended. Micro-debt/docs drift fixed (additive): the garbled `EnvPublishAuth::from_table` doc sentence rewritten; the research note's stale `--allowed-registry` open item annotated as resolved for the flag mapping; a pre-existing clippy failure at base repaired (the `publish_auth` example's unterminated last statement — `semicolon_if_nothing_returned`, surfaced by this session's gate re-run) | — | 2026-11-15; session log below |
+| M5.2 continued: custom-registry routing (cargo config) + per-target npm routing | done | (tree left dirty; no commits) | M1: `halyard_eco_cargo::registry_config` (ADR-0021) — the `[registries.<name>]` / `CARGO_REGISTRIES_<NAME>_INDEX` resolution (VERIFIED Cargo Book quotes in `docs/research/publish-tooling.md`): sparse-HTTP indexes join the routing map as `CratesIo::with_index_base` clients, git-index/malformed/unconfigured/set-but-empty declines are honest `E-PUB-REGISTRY` naming the fix; CLI `publish_router(root, targets)` resolves every non-default target registry name before any call; 17 contract tests + 3 CLI tests (dry forecast over a configured registry, git-index refusal, the live loopback e2e: probe miss → shim `--registry corp` argv → visibility confirmed through the custom index) + bench `registry_config` (resolve ≈3.4 µs) + example `resolve_registry`; E-PUB-REGISTRY page as-built + arch §13 as-built. M2 (M1 green first): `RegistryRouter::registry_for` (by-name default) + `TargetRouter` (per-`(registry, package)` overrides) + engine routing through `registry_for`; `halyard_eco_npm::publish_registry` (VERIFIED npm quotes: `publishConfig.registry` > `NPM_CONFIG_REGISTRY` > `.npmrc` `@scope:registry`/`registry`, set-but-empty refused, non-HTTP declined); CLI resolves each npm target's manifest+npmrc chain into per-target overrides; 14 npm contract tests + 4 engine routing tests + 3 CLI tests (npm dry forecast, the live loopback packument e2e with the default registry never contacted, non-HTTP refusal) + bench `target_router` (≈27–33 ns) + example `resolve_publish_registry` | OIDC trusted publishing, the corpus-wide pnpm differential, the M2.6 dhat re-audit, npmrc scoped-registry env vars, source replacement, the legacy `config` filename — all unchanged | 2026-11-15; session log below |
+
+
+### 2026-11-15 — M5.2 continued: the custom-registry routing (ADR-0021) + the per-target npm routing (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `4d82f45` (the
+  M4.5 check-comment slice). Baseline re-verified on a fresh toolchain
+  (stable 1.100.0, `RUSTFLAGS="-C debuginfo=0"` — the sandbox disk
+  ceiling lesson from the M5.3 log, applied from the first build):
+  the workspace compiled clean with `test --workspace --all-features
+  --locked --no-run`. The declared start points were (1) M5.3 OIDC
+  (needs a live CI runtime — still deferred), (2) the corpus-wide pnpm
+  differential (no pnpm binary in the sandbox), (3) the M2.6 dhat
+  re-audit, (4) the third-party cargo registry resume client over the
+  routing map. Picked (4) as M1 — the routing gap every session since
+  M5.3 pinned honestly (`E-PUB-REGISTRY` for any non-default registry
+  name, the argv grammar complete and unit-pinned since M4.5) — and
+  the npm-side per-package routing as M2, its mirror over the same
+  seam.
+- **M1 implemented (no stubs), one full red→green cycle** (the 17
+  contract tests written first — red on E0432 unresolved
+  `halyard_eco_cargo::registry_config`; the CLI dry test red on the
+  recorded `E-PUB-REGISTRY` refusal — then implemented):
+  - Design decisions (ADR-0021): the cargo configuration is the one
+    source of truth for where a registry lives (the probe and the
+    spawned `cargo publish --registry <name>` read the same file, so
+    they cannot disagree); only the `sparse+` HTTP form is probeable
+    (the resume probe is one GET of an NDJSON file — a git index is
+    an honest decline naming the protocol); a malformed config file
+    is refused, never read as "the entry is absent" (that would
+    half-honor a broken configuration and could route the probe at
+    the wrong registry); the resolution is eager, in the shell,
+    before any call (the `RegistryRouter` seam keeps its
+    `&dyn Registry` lifetime shape; interior mutability would buy
+    nothing over validate-then-act).
+  - The one real lesson pinned during the loopback e2e: the fake
+    index's bounded serve loop exited after its scripted request
+    count while the run was still between probes (connection refused
+    at the visibility stage) — the server became unbounded with an
+    observable served-count, the house fake-forge discipline (the
+    script tail must cover the run, never exit early).
+- **M2 implemented (M1 green end-to-end first), red→green** (the npm
+  contract + engine tests first — red on E0432 unresolved
+  `halyard_eco_npm::publish_registry` / `TargetRouter` and E0599 no
+  method `registry_for`; then implemented): the npm resolution is
+  per-package because two npm packages of one workspace may publish
+  to different registries; `registry_for` is a trait DEFAULT method
+  (the `close_pr`/`upsert_pr_comment` evolution convention) so every
+  shipped router keeps working unchanged. The engine test that
+  exposed the §13 semantics honestly: an uncoupled override registry
+  leaves the visibility wait unconfirmed → the dependent is skipped
+  `upstream_invisible:` — the test now couples the modelled upload
+  and pins both that gate and the per-client probe logs.
+- **Tests/bench/example totals.** +41 tests / +2 suites over base
+  (17 cargo-config contract + 6 CLI custom-registry + 14 npm
+  resolution + 4 engine routing — 103 suites, 833 tests,
+  0 failed on the final tree). Benches `registry_config` (resolve
+  sparse-among-4 ≈3.4 µs, git-index decline ≈3.5 µs, URL classify
+  ≈ sub-µs) and `target_router` (by-name ≈27 ns, override hit
+  ≈29 ns, miss-among-64 ≈33 ns) registered and run. Examples
+  `resolve_registry` + `resolve_publish_registry` run clean.
+  Full gate battery green on the final tree: fmt, clippy
+  `--workspace --all-targets --all-features --locked -- -D warnings`
+  (0 findings), the lint-hygiene grep (empty), `test --workspace
+  --all-features --locked`, `test --workspace --benches`, the
+  `-D warnings` doc sweep, and the cache crate's conflict-feature
+  lanes (`--features loom` release run per tests/loom.rs's header;
+  the `miri` pair stays the nightly toolchain lane).
+- **Honest state at cut-off.** The npmrc scoped-registry environment
+  variables, source replacement, the legacy `config` filename, OIDC
+  trusted publishing, the corpus pnpm differential and the M2.6 dhat
+  re-audit are unchanged. Tree left dirty (no commits made).
+- **Next session start point.** (1) M5.3 OIDC trusted publishing
+  (VERIFY on a live CI runtime), (2) the corpus-wide pnpm differential
+  as an xtask subcommand, (3) the M2.6 dhat re-audit with the cache
+  warm, (4) the publish `--resume` UX flag over the engine's I2 loop.
 
 ### 2026-11-15 — M4.5 step 1 check-comment mode (ADR-0020) + M5.3 continued `--registry` argv mapping (tree left dirty, no commits)
 
