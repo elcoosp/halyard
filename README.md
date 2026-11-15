@@ -165,7 +165,10 @@ crates/
   halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
                          packument `published()` + deterministic visibility wait (§13)
   halyard-publish        Publish engine (M5.2): plan validation (I8), topo layers, resume,
-                         visibility wait, injected PublishEffect (§13, ADR-0018)
+                         visibility wait, injected PublishEffect (§13, ADR-0018) +
+                         publish-auth plumbing (M5.3 step 1, ADR-0019): the PublishAuth
+                         seam, the VERIFIED env grammar, E-PUB-AUTH fail-closed, secret
+                         scrubbing
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
@@ -219,6 +222,7 @@ cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
 cargo run -p halyard-changelog --example render_user_template
 cargo run -p halyard-publish --example publish_plan
+cargo run -p halyard-publish --example publish_auth
 cargo run -p halyard-forge --example release_lifecycle
 cargo run -p halyard-forge --example release_machine
 cargo run -p halyard-forge --example pr_preview
