@@ -133,9 +133,9 @@ cannot speak the git protocol. The loopback CLI test proves the full
 the shimmed tool's `--registry` argv → visibility confirmed through
 the same index). The gaps this does **not** open: source replacement
 (`[source.<name>]` mirroring) is not a publish-target form and stays
-out of scope; the legacy `config` filename (deprecated upstream) is
-not read; an npm-side per-package override (`publishConfig.registry`)
-needs per-target routing and is the next slice.
+out of scope. *(The routing-completion slice, 2026-11-15, closed the
+legacy-`config` gap — see the section below — and the npm
+per-target override shipped with M5.2 continued.)*
 
 ## The npm per-target routing (M5.2 continued, ADR-0021) — VERIFIED 2026-11-15
 
@@ -185,6 +185,80 @@ full §13 sequence over a publishConfig-pinned workspace (resume-probe
 miss → the shimmed `pnpm publish` → visibility confirmed through the
 packument at the custom base — the default registry is never
 contacted).
+
+## The routing completion (ADR-0021's declared open items) — VERIFIED 2026-11-15
+
+The ADR-0021 map's two declared open items, both settled this slice.
+
+### The cargo legacy `config` filename
+
+VERIFIED against the Cargo Book "Configuration" page
+(doc.rust-lang.org/cargo/reference/config.html, Hierarchical structure,
+fetched 2026-11-15), verbatim:
+
+> Cargo also reads config files without the .toml extension, such as
+> .cargo/config. Support for the .toml extension was added in version
+> 1.39 and is the preferred form. If both files exist, Cargo will use
+> the file without the extension.
+
+Two facts matter and one earlier draft claim was wrong: the page
+nowhere says the legacy name is deprecated (it says the `.toml` form is
+"the preferred form"), and **the file without the extension wins** when
+both exist in one directory. An operator with the old layout therefore
+reads a registry config `cargo publish` honors and the resolver would
+have ignored — exactly the probe/tool disagreement the seam exists to
+prevent. `halyard_eco_cargo::registry_config::config_paths_for`
+enumerates, in ascending precedence: `$CARGO_HOME/config.toml`,
+`$CARGO_HOME/config`, `<project>/.cargo/config.toml`,
+`<project>/.cargo/config` — the legacy file is the later
+(higher-precedence) entry of its directory, and the resolver's
+per-key merge reproduces the documented rule (the legacy file wins on
+conflicting keys; a file without the key does not erase the other
+file's entries). Pinned by five tests in
+`crates/halyard-eco-cargo/tests/registry_config.rs`.
+
+### The npm scoped-registry environment variable
+
+The npm *config* docs do not document an env form for scoped registry
+keys (they point to the .npmrc page, which documents neither), so the
+grammar was settled by **probe** against npm 11.19.1 (the
+registry-probes method of ADR-0017). Seven probes, observed 2026-11-15:
+
+1. `npm_config_myorg_registry` does **not** map to the scoped key —
+   `npm config get @myorg:registry` prints `undefined` and npm warns
+   `Unknown env config "myorg-registry". This will stop working in the
+   next major version of npm.` (the underscore form becomes a separate
+   unknown key).
+2. `npm_config_@myorg:registry` **does** set the scoped key — the
+   variable name is the literal config-key suffix.
+3. `npm config list` shows the underscore form as `myorg-registry` (a
+   distinct key, warning attached).
+4. `NPM_CONFIG_@MYORG:REGISTRY` resolves identically — "Config values
+   are case-insensitive, so NPM_CONFIG_FOO=bar will work the same"
+   (the config docs' rule, quoted verbatim) — with no unknown-key
+   warning.
+5. The env variable beats the same key's .npmrc value (env ranks above
+   the npmrc files in the documented priority ladder).
+6. A plain `npm_config_registry` env value does **not** beat a
+   `@myorg:registry` key from an .npmrc file — the scoped key governs a
+   scoped package regardless of the source tier (npm resolves the
+   `@myorg:registry` key first for `@myorg/…` packages).
+7. Scoped and plain keys coexist independently (`npm config get
+   @myorg:registry` vs `npm config get registry` return their own
+   values).
+
+`halyard_eco_npm::publish_registry` implements exactly this grammar:
+`scoped_registry_env_variable(scope)` is the literal
+`npm_config_@<scope>:registry` name, the environment scan is
+case-insensitive (`scoped_env_name_matches`), and the resolution order
+is: `publishConfig.registry` → the scoped key (env → npmrc) → the
+plain key (`NPM_CONFIG_REGISTRY` → npmrc `registry`) → the documented
+default — with the set-but-empty refusal naming the variable. Pinned by
+seven tests in `crates/halyard-eco-npm/tests/publish_registry.rs`. The
+POSIX-shell caveat is recorded honestly: `@` and `:` are not valid
+shell identifier characters, so the variable is set through CI env
+maps (or `env -i`), never through `VAR=… cmd` — the probe used Python's
+environ.
 
 ## Remaining VERIFY items (open, like ADR-0017's)
 
