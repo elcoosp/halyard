@@ -74,7 +74,9 @@ use std::time::UNIX_EPOCH;
 use crate::Forge;
 use crate::error::ForgeError;
 use crate::memory::CallRecord;
-use crate::spec::{ApiCommit, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
+use crate::spec::{
+    ApiCommit, BranchName, CommentSpec, Pr, PrComment, PrSpec, RateInfo, Release, ReleaseSpec,
+};
 
 /// Milliseconds since the Unix epoch — the injected governor clock
 /// (ADR-0014: no system-time read inside the seam; tests script this).
@@ -390,6 +392,12 @@ impl Forge for Governor<'_> {
 
     fn commit_via_api(&self, spec: &ApiCommit) -> Result<halyard_core::reason::Oid, ForgeError> {
         self.forward("commit_via_api", true, || self.forge.commit_via_api(spec))
+    }
+
+    fn upsert_pr_comment(&self, spec: &CommentSpec) -> Result<PrComment, ForgeError> {
+        self.forward("upsert_pr_comment", true, || {
+            self.forge.upsert_pr_comment(spec)
+        })
     }
 
     fn rate_limit(&self) -> RateInfo {
