@@ -1,9 +1,14 @@
-//! Foreign release-tool migration (M4.7 step 1, §16.2 `migrate`): read a
+//! Foreign release-tool migration (M4.7, §16.2 `migrate`): read a
 //! foreign release tool's configuration, map what the `halyard.toml` v1
 //! surface can express, and report the semantic differences — the
-//! report ([`MigrationReport`]) is plain data, the command renders it
-//! and writes nothing (the §16.2 write step lands with its own slice;
-//! the draft config rides the report as a string).
+//! report ([`MigrationReport`]) is plain data, the command renders it.
+//! Step 1 surveys and validates a draft `halyard.toml` (it rides the
+//! report as a string, accepted by the strict loader before it is
+//! surfaced); step 2 writes it: the pure planner ([`plan_draft_write`])
+//! picks the draft from the report and the runner ([`run_draft_write`])
+//! lands it through the injected [`DraftSink`] — atomic, create-only,
+//! fail-closed on every guess (an existing target is never clobbered;
+//! two configured tools are a refusal, never a pick).
 //!
 //! The seam ([`MigrationSource`]) is the extension point the later
 //! migrate slices fill (knope/release-plz per §16.2): one source per
@@ -35,7 +40,8 @@
 //! (notably: the changesets git-tag grammar is *not* verified; the
 //! report says so instead of guessing).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write as _;
 
 use serde::{Deserialize, Serialize};
 
@@ -149,8 +155,9 @@ pub struct ToolSurvey {
     /// configured package (sorted by path).
     pub packages: Vec<PackageSurvey>,
     /// A draft `halyard.toml` carrying the mapped values — validated
-    /// through the strict loader before it is surfaced, and never
-    /// written to disk by this slice.
+    /// through the strict loader before it is surfaced. The §16.2 write
+    /// step ([`plan_draft_write`] + [`run_draft_write`]) carries this
+    /// string verbatim to [`DRAFT_TARGET`]; nothing else ever writes it.
     pub draft: Option<String>,
 }
 
@@ -1282,4 +1289,293 @@ fn render_draft(config: &HalyardConfig, path: &str) -> Result<String, ConfigErro
         message: format!("the draft config is not a valid halyard.toml v1: {error}"),
     })?;
     Ok(rendered)
+}
+
+// ---------------------------------------------------------------------------
+// The §16.2 write step (M4.7 step 2): the validated draft lands at
+// `halyard.toml` through the injected sink — the pure planner picks the
+// draft, the runner refuses an existing target and writes atomically.
+// ---------------------------------------------------------------------------
+
+/// The write target: the migration always lands `halyard.toml` at the
+/// repo root (the directory the CLI runs in) — the v1 loader's own
+/// conventional path.
+pub const DRAFT_TARGET: &str = "halyard.toml";
+
+/// The write-effect seam (M4.7 step 2, §16.2): where the validated
+/// draft lands. Object-safe and injected like the engine's other
+/// effect seams — the shell wires [`AtomicDraftSink`] (the real
+/// filesystem), tests wire [`MemoryDraftSink`] (the recording fake).
+pub trait DraftSink: std::fmt::Debug {
+    /// Whether the target path already exists. The overwrite gate reads
+    /// this before any write; the migration never clobbers a config.
+    fn exists(&self, path: &str) -> Result<bool, ConfigError>;
+
+    /// Creates `path` with `contents`, atomically (temp sibling →
+    /// fsync → rename) and create-only: an existing target is refused
+    /// with [`ConfigError::Migrate`], never overwritten. A refused or
+    /// failed write leaves no partial file behind.
+    fn write(&self, path: &str, contents: &str) -> Result<(), ConfigError>;
+}
+
+/// Temp-file counter (process-unique; combined with the pid), mirroring
+/// the edit engine's atomic protocol (§9.1).
+static DRAFT_TEMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The production sink: the real filesystem with the §9.1 atomic
+/// protocol — temp sibling in the target's directory, `fsync`, rename.
+/// The target's parent directory must already exist (the migration
+/// writes `halyard.toml` into the repo root, never mkdirs on the user's
+/// behalf); the exists gate is re-checked at write time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AtomicDraftSink;
+
+impl DraftSink for AtomicDraftSink {
+    fn exists(&self, path: &str) -> Result<bool, ConfigError> {
+        Ok(std::path::Path::new(path).exists())
+    }
+
+    fn write(&self, path: &str, contents: &str) -> Result<(), ConfigError> {
+        let path = std::path::Path::new(path);
+        let refuse = |message: String| ConfigError::Migrate {
+            path: path.display().to_string(),
+            message,
+        };
+        if path.exists() {
+            return Err(refuse(
+                "the target already exists — the migration never overwrites a configuration; \
+                 merge the draft into it by hand and remove the foreign config"
+                    .to_owned(),
+            ));
+        }
+        // A bare `halyard.toml` has an empty parent path — that *is*
+        // the current directory (the CLI `-C` chdir lands here).
+        let dir = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        if !dir.is_dir() {
+            return Err(refuse(
+                "the target's directory does not exist — the migration writes into the \
+                 repository root and never creates directories on the user's behalf"
+                    .to_owned(),
+            ));
+        }
+        let temp = dir.join(format!(
+            ".halyard-migrate-{}-{}.tmp",
+            std::process::id(),
+            DRAFT_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let write_result = (|| -> std::io::Result<()> {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)?;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp, path)
+        })();
+        if let Err(source) = write_result {
+            let _ = std::fs::remove_file(&temp);
+            return Err(refuse(format!(
+                "the atomic write failed (no partial file is left behind): {source}"
+            )));
+        }
+        // Best-effort directory durability (POSIX); a filesystem that
+        // refuses the dir fsync does not fail an already-renamed write.
+        #[cfg(unix)]
+        if let Ok(dir_file) = std::fs::File::open(dir) {
+            let _ = dir_file.sync_all();
+        }
+        Ok(())
+    }
+}
+
+/// The state a [`MemoryDraftSink`] records behind its lock.
+#[derive(Debug, Default)]
+struct MemorySinkState {
+    /// Every `(path, contents)` write, in order.
+    writes: Vec<(String, String)>,
+    /// The latest content per path (the observable end state).
+    latest: BTreeMap<String, String>,
+}
+
+/// The reference fake for the seam (the engine's convention: one
+/// deterministic fake beside the real effect): models pre-existing
+/// files, records every write in order, and observes the end state —
+/// `Debug`-printable so a failing test shows what landed.
+#[derive(Debug, Default)]
+pub struct MemoryDraftSink {
+    existing: BTreeSet<String>,
+    state: std::sync::Mutex<MemorySinkState>,
+}
+
+impl MemoryDraftSink {
+    /// An empty repo: no pre-existing files, nothing written.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Models one pre-existing file (the overwrite gate's subject).
+    pub fn with_existing(path: impl Into<String>) -> Self {
+        let mut sink = Self::new();
+        sink.existing.insert(path.into());
+        sink
+    }
+
+    /// The recorded writes, in order (`(path, contents)` pairs).
+    pub fn writes(&self) -> Vec<(String, String)> {
+        self.lock().writes.clone()
+    }
+
+    /// The latest content written to `path`, if any. A modeled
+    /// pre-existing file that no write touched reads as `None` (the
+    /// sink never fabricates its content).
+    pub fn content(&self, path: &str) -> Option<String> {
+        self.lock().latest.get(path).cloned()
+    }
+
+    /// Locks the state, recovering the data if a panic poisoned it
+    /// (no panic path exists inside the critical section).
+    fn lock(&self) -> std::sync::MutexGuard<'_, MemorySinkState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl DraftSink for MemoryDraftSink {
+    fn exists(&self, path: &str) -> Result<bool, ConfigError> {
+        Ok(self.existing.contains(path) || self.lock().latest.contains_key(path))
+    }
+
+    fn write(&self, path: &str, contents: &str) -> Result<(), ConfigError> {
+        if self.exists(path)? {
+            return Err(ConfigError::Migrate {
+                path: path.to_owned(),
+                message: "the target already exists — the memory sink mirrors the create-only \
+                          production contract"
+                    .to_owned(),
+            });
+        }
+        let mut state = self.lock();
+        state.writes.push((path.to_owned(), contents.to_owned()));
+        state.latest.insert(path.to_owned(), contents.to_owned());
+        Ok(())
+    }
+}
+
+/// The write plan (M4.7 step 2): which draft lands where — plain data,
+/// computed before any side effect (validate-then-act, §15.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftWritePlan {
+    /// The tool whose draft was selected.
+    pub tool: String,
+    /// The target path (always [`DRAFT_TARGET`]).
+    pub path: String,
+    /// The validated draft, verbatim from the report (what the human
+    /// reviewed is exactly what lands — no re-serialization drift).
+    pub contents: String,
+}
+
+/// The deterministic write decision over the report (M4.7 step 2):
+///
+/// * no configured tool, or a configured tool whose draft is empty
+///   (nothing mappable) → `None` — absence is a value, the caller
+///   reports an honest no-op;
+/// * exactly one configured tool with a non-empty draft → that draft,
+///   verbatim;
+/// * two or more → [`ConfigError::Migrate`] naming every candidate:
+///   each tool drafts a different `halyard.toml` and the migration
+///   never guesses which shape wins.
+pub fn plan_draft_write(report: &MigrationReport) -> Result<Option<DraftWritePlan>, ConfigError> {
+    let candidates: Vec<&ToolSurvey> = report
+        .tools
+        .iter()
+        .filter(|survey| {
+            survey.configured && survey.draft.as_deref().is_some_and(|d| !d.is_empty())
+        })
+        .collect();
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(DraftWritePlan {
+            tool: one.tool.clone(),
+            path: DRAFT_TARGET.to_owned(),
+            contents: one.draft.clone().unwrap_or_default(),
+        })),
+        many => {
+            let names: Vec<&str> = many.iter().map(|survey| survey.tool.as_str()).collect();
+            Err(ConfigError::Migrate {
+                path: DRAFT_TARGET.to_owned(),
+                message: format!(
+                    "multiple foreign tools are configured ({}) — each drafts a different \
+                     halyard.toml and the migration never guesses which shape wins; compare \
+                     the drafts in the report and remove or merge the foreign configs first",
+                    names.join(", ")
+                ),
+            })
+        }
+    }
+}
+
+/// What the write step did (plain data, I3). The default is the honest
+/// no-op: nothing configured, nothing written.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftWriteOutcome {
+    /// No foreign configuration was detected — absence is a value, the
+    /// write is an honest no-op.
+    #[default]
+    NothingConfigured,
+    /// The validated draft was written to [`DRAFT_TARGET`].
+    Written,
+}
+
+/// The write step's outcome report (M4.7 step 2): the command's JSON
+/// carries it as the `write` block when `--write` ran; nothing-configured
+/// is a reported outcome, not an error.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DraftWriteReport {
+    /// The tool whose draft landed (empty when nothing was written).
+    pub tool: String,
+    /// The path written (empty when nothing was written).
+    pub path: String,
+    /// The draft's byte length (0 when nothing was written).
+    pub bytes: usize,
+    /// What happened.
+    pub outcome: DraftWriteOutcome,
+}
+
+/// Runs the write plan over the sink: refuses an existing target
+/// (validate-then-act — the gate reads before any write) and writes
+/// atomically. `None` plans produce the honest
+/// [`DraftWriteOutcome::NothingConfigured`] without touching the sink.
+pub fn run_draft_write(
+    plan: Option<DraftWritePlan>,
+    sink: &dyn DraftSink,
+) -> Result<DraftWriteReport, ConfigError> {
+    let Some(plan) = plan else {
+        return Ok(DraftWriteReport {
+            outcome: DraftWriteOutcome::NothingConfigured,
+            ..DraftWriteReport::default()
+        });
+    };
+    if sink.exists(&plan.path)? {
+        return Err(ConfigError::Migrate {
+            path: plan.path.clone(),
+            message: format!(
+                "the target already exists — the migration never overwrites a configuration; \
+                 merge the {} draft into it by hand and remove the foreign config",
+                plan.tool
+            ),
+        });
+    }
+    sink.write(&plan.path, &plan.contents)?;
+    Ok(DraftWriteReport {
+        tool: plan.tool,
+        bytes: plan.contents.len(),
+        path: plan.path,
+        outcome: DraftWriteOutcome::Written,
+    })
 }
