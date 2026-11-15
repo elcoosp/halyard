@@ -60,6 +60,7 @@ pattern from M1 onward where useful).
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
+| `E-CLI-COMMENT` | [E-CLI-COMMENT.md](E-CLI-COMMENT.md) | CLI check-comment mode (M4.5 step 1, §11.6) |
 | `E-CLI-PR` | [E-CLI-PR.md](E-CLI-PR.md) | CLI live Release-PR decline (M4.2b `pr --dry`) |
 | `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | CLI live release decline (§11.1 tag-phase `release --dry`) |
 | `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4; token + App modes since M4.1c) |
