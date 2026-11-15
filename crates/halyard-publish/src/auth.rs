@@ -265,8 +265,8 @@ impl EnvPublishAuth {
     /// A provider over an injected table (tests, and shells whose
     /// credential source is not the process environment — a secret
     /// store resolved before the run). Values are validated lazily by
-    /// [`PublishAuth::credentials`], exactly as the [`EnvPublishAuth::capture`] production path validates eagerly
-    /// them eagerly.
+    /// [`PublishAuth::credentials`], exactly as the production
+    /// [`EnvPublishAuth::capture`] path validates them eagerly.
     #[must_use]
     pub fn from_table(table: BTreeMap<String, String>) -> Self {
         Self { table }
