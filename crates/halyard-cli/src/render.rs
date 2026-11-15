@@ -247,9 +247,14 @@ pub fn apply_report(
 /// Renders the plan as an aligned human table plus per-release reasons.
 /// The publish report, human/gha shape (M5.2 step 2, §13.7/§13.8): the
 /// rows in execution order (the engine guarantees the order), the
-/// tallies derived from the rows, and the not-targets the plan
-/// carried.
-pub fn publish_report(report: &halyard_publish::PublishReport, mode: &str) -> String {
+/// tallies derived from the rows, the not-targets the plan carried,
+/// and the auth provenance tail (M5.3 step 2 — which documented
+/// variable authenticates each registry, names only).
+pub fn publish_report(
+    report: &halyard_publish::PublishReport,
+    mode: &str,
+    auth: &std::collections::BTreeMap<String, String>,
+) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -285,21 +290,40 @@ pub fn publish_report(report: &halyard_publish::PublishReport, mode: &str) -> St
             row.layer, row.package, row.version, row.registry, what,
         );
     }
+    let _ = writeln!(out, "{}", publish_auth_line(auth));
     out
 }
 
+/// The publish-auth provenance as a one-line human/gha tail (M5.3 step
+/// 2, ADR-0019): `registry = env:VARIABLE` pairs, name-sorted; `none`
+/// means nothing will be injected (the tool's own credential store
+/// governs). Provenance only — a token value never reaches this line.
+pub fn publish_auth_line(auth: &std::collections::BTreeMap<String, String>) -> String {
+    if auth.is_empty() {
+        return "publish-auth (M5.3): no publish targets".to_owned();
+    }
+    let pairs: Vec<String> = auth
+        .iter()
+        .map(|(registry, provenance)| format!("{registry} = {provenance}"))
+        .collect();
+    format!("publish-auth (M5.3): {}", pairs.join(", "))
+}
+
 /// The publish report's machine shape (deterministic field order rides
-/// `serde_json`, §16.3 "stable JSON").
+/// `serde_json`, §16.3 "stable JSON"). The `auth` block (M5.3 step 2)
+/// carries the per-registry provenance — variable names only.
 pub fn publish_report_json(
     report: &halyard_publish::PublishReport,
     not_targets: &[halyard_publish::SkippedRelease],
     mode: &str,
+    auth: &std::collections::BTreeMap<String, String>,
 ) -> serde_json::Value {
     serde_json::json!({
         "mode": mode,
         "targets": report.rows.len(),
         "rows": report.rows.iter().map(publish_row_json).collect::<Vec<_>>(),
         "not_targets": not_targets.iter().map(publish_not_target_json).collect::<Vec<_>>(),
+        "auth": auth,
         "tallies": {
             "published": report.published,
             "already_published": report.already_published,
