@@ -22,7 +22,11 @@ the previous releases, documented full-fetch fallback; ADR-0016) and the
 M5.1 registry existence-probe crate (`halyard-registry`: the `Registry`
 seam over the forge transport — crates.io sparse index + npm packument
 `published()`, deterministic visibility wait, `doctor --registries`
-opt-in probe; ADR-0017).** The architecture and multi-year master plan lives in
+opt-in probe; ADR-0017) — and the M5.2 publish engine (`halyard-publish`:
+verified-plan validation, topological layers, registry resume, the
+visibility wait and the injected `PublishEffect` seam; ADR-0018) wired
+into the `publish [--dry]` command (the tools' documented dry form, the
+real spawn live).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -160,12 +164,14 @@ crates/
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
   halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
                          packument `published()` + deterministic visibility wait (§13)
+  halyard-publish        Publish engine (M5.2): plan validation (I8), topo layers, resume,
+                         visibility wait, injected PublishEffect (§13, ADR-0018)
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
                          discover-diff, git-diff, replay, bench-public, pgo
-  halyard-cli            the user shell (plan/apply/check/pr/release/explain/status/
-                         graph/doctor/schema/completions)
+  halyard-cli            the user shell (plan/apply/check/pr/release/publish/fetch/
+                         explain/status/graph/doctor/schema/completions)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
@@ -212,6 +218,7 @@ cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
 cargo run -p halyard-changelog --example render_user_template
+cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-forge --example release_lifecycle
 cargo run -p halyard-forge --example release_machine
 cargo run -p halyard-forge --example pr_preview
