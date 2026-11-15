@@ -79,13 +79,112 @@ config keys — the token side of the same name resolves through
 so argv and env can never disagree about which registry a run
 publishes to). The default-spelling rule mirrors
 `halyard_publish::auth`'s `is_crates_io` and is pinned by tests on both
-sides. The gate this does **not** open: the shell's routing map owns
-the two §13 registry clients (crates.io sparse index, npm packument) —
-a third-party cargo index has no resume-probe client, so a
-custom-registry run refuses `E-PUB-REGISTRY` **before any spawn** (dry
-included, by design). The end-to-end custom-registry publish waits on
-a third-party client joining the routing map; the argv grammar and the
-spawn wiring above are complete and unit-pinned meanwhile.
+sides.
+
+## The custom-registry routing (M5.2 continued, ADR-0021) — VERIFIED 2026-11-15
+
+The resume-probe side of the same name resolves through the cargo
+configuration — the file `cargo publish --registry <name>` itself
+reads, so the probe and the tool cannot disagree about where a registry
+lives. VERIFIED against the Cargo Book "Registries" page
+(doc.rust-lang.org/cargo/reference/registries.html, fetched
+2026-11-15), verbatim:
+
+> To use a registry other than crates.io, the name and index URL of
+> the registry must be added to a `.cargo/config.toml` file. The
+> registries table has a key for each registry, for example:
+
+```toml
+[registries]
+my-registry = { index = "https://my-intranet:8080/git/index" }
+```
+
+> The `index` key should be a URL to a git repository with the
+> registry's index or a Cargo sparse registry URL with the `sparse+`
+> prefix.
+
+and the environment override, verbatim:
+
+> As with most config values, the index may be specified with an
+> environment variable instead of a config file. For example, setting
+> the following environment variable will accomplish the same thing as
+> defining a config file:
+>
+> ```
+> CARGO_REGISTRIES_MY_REGISTRY_INDEX=https://my-intranet:8080/git/index
+> ```
+
+The `--registry` name resolution is on the same page: "Several of
+Cargo's commands such as `cargo publish` take a `--registry`
+command-line flag to indicate which registry to use" — the name being
+the key defined under `[registries]` (the env-variable rule converts
+dashes and dots to underscores, the same rule the auth seam's token
+fragment documents).
+`halyard_eco_cargo::registry_config` implements exactly this grammar:
+files in ascending precedence (`$CARGO_HOME/config.toml`, then
+`<project>/.cargo/config.toml`), the env override winning over both, a
+set-but-empty override refused (the `E-PUB-AUTH` empty-token rule at
+the index scale), a malformed file refused rather than read as absent,
+and only the `sparse+` HTTP form classified probeable — a git-protocol
+index is an honest `E-PUB-REGISTRY` decline naming the protocol and
+the fix, because the §13 resume probe is one GET of an NDJSON file and
+cannot speak the git protocol. The loopback CLI test proves the full
+§13 sequence over a configured custom registry (resume-probe miss →
+the shimmed tool's `--registry` argv → visibility confirmed through
+the same index). The gaps this does **not** open: source replacement
+(`[source.<name>]` mirroring) is not a publish-target form and stays
+out of scope; the legacy `config` filename (deprecated upstream) is
+not read; an npm-side per-package override (`publishConfig.registry`)
+needs per-target routing and is the next slice.
+
+## The npm per-target routing (M5.2 continued, ADR-0021) — VERIFIED 2026-11-15
+
+The npm side routes per *package*: two npm packages of one workspace
+may publish to different registries, and the spawned `pnpm publish`
+reads the package's own configuration. VERIFIED against the npm
+documentation (docs.npmjs.com, fetched 2026-11-15), verbatim:
+
+`publishConfig` (the package.json docs):
+
+> This is a set of config values that will be used at publish-time.
+
+> If you would like to ensure that a given package is only ever
+> published to a specific registry … then use the publishConfig
+> dictionary described below to override the registry config param at
+> publish-time
+
+The `registry` config key (the config docs):
+
+> The base URL of the npm registry.
+
+with the default `https://registry.npmjs.org/`, and the environment
+override rule, verbatim:
+
+> Any environment variables that start with `npm_config_` will be
+> interpreted as a configuration parameter.
+
+`halyard_eco_npm::publish_registry` implements exactly this grammar:
+`publishConfig.registry` (the per-package publish-time override)
+outranks `NPM_CONFIG_REGISTRY`, which outranks the `.npmrc` files (the
+per-project file wins over the per-user `$HOME/.npmrc`, passed in
+ascending precedence — the cargo-resolution convention); a scoped
+package's `@scope:registry` key beats the plain `registry` key; a
+set-but-empty value is refused (the house empty-value rule at the URL
+scale) and a non-HTTP value is an honest decline naming the source.
+One ordering is npm-undocumented and pinned by decision: env vs
+`publishConfig` — the documented "override the registry config param
+at publish-time" rule reads as publish-specific-over-general, so
+`publishConfig.registry` wins; recorded here as a decision, not a
+quote. The engine's routing seam grew the per-target shape this
+needs: `RegistryRouter::registry_for` (the by-name default, so every
+M5.2 router keeps working) and `TargetRouter` (per-`(registry,
+package)` overrides) — the CLI shell resolves every npm target's
+manifest + npmrc chain and joins each custom base as a
+`Npm::with_registry_base` override. The loopback CLI test proves the
+full §13 sequence over a publishConfig-pinned workspace (resume-probe
+miss → the shimmed `pnpm publish` → visibility confirmed through the
+packument at the custom base — the default registry is never
+contacted).
 
 ## Remaining VERIFY items (open, like ADR-0017's)
 
