@@ -1818,3 +1818,119 @@ pub fn release_live_gha(
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// migrate (M4.7 step 1, §16.2)
+// ---------------------------------------------------------------------------
+
+/// The migration report's machine shape: the engine's own
+/// [`halyard_config::MigrationReport`] serialization (the engine type is
+/// the single source of the field names; `BTreeMap`/sorted vectors keep
+/// it deterministic, I3).
+pub fn migrate_report_json(
+    report: &halyard_config::MigrationReport,
+) -> serde_json::Result<serde_json::Value> {
+    serde_json::to_value(report)
+}
+
+/// The migration report, human shape (M4.7 step 1): per tool the found
+/// files, the mapped rows with their notes, the semantic differences,
+/// the per-package survey and the draft `halyard.toml` — explicitly a
+/// draft: the command is report-only and never writes.
+pub fn migrate_report(report: &halyard_config::MigrationReport) -> String {
+    let configured = report.tools.iter().filter(|t| t.configured).count();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "migrate (M4.7 step 1): {} tool(s) surveyed, {} configured with foreign configs — \
+         the report is data; halyard never wrote anything",
+        report.tools.len(),
+        configured
+    );
+    for survey in &report.tools {
+        if !survey.configured {
+            let _ = writeln!(out, "{}: not detected", survey.tool);
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "{}: configured ({})",
+            survey.tool,
+            survey.files.join(", ")
+        );
+        for row in &survey.rows {
+            let _ = writeln!(
+                out,
+                "  mapped: {} → {} = {}",
+                row.foreign_key, row.halyard_key, row.value
+            );
+            if let Some(note) = &row.note {
+                let _ = writeln!(out, "    note: {note}");
+            }
+        }
+        for row in &survey.unmapped {
+            let _ = writeln!(out, "  unmapped: {} — {}", row.foreign_key, row.reason);
+        }
+        for package in &survey.packages {
+            let _ = writeln!(
+                out,
+                "  package: {} (component: {}, tag: {})",
+                package.path,
+                package.component.as_deref().unwrap_or("(path)"),
+                package.tag
+            );
+            for note in &package.notes {
+                let _ = writeln!(out, "    {note}");
+            }
+        }
+        if let Some(draft) = &survey.draft {
+            let _ = writeln!(out, "  draft halyard.toml (never written by this slice):");
+            for line in draft.lines() {
+                let _ = writeln!(out, "    {line}");
+            }
+        }
+    }
+    out
+}
+
+/// The migration report, GHA shape (M4.7 step 1): a job-summary table
+/// per configured tool plus `::warning` annotations for the semantic
+/// differences (the rows a migration review must read).
+pub fn migrate_report_gha(report: &halyard_config::MigrationReport) -> String {
+    let mut out = String::new();
+    for survey in &report.tools {
+        if !survey.configured {
+            let _ = writeln!(
+                out,
+                "::notice::halyard migrate: {} not detected",
+                survey.tool
+            );
+            continue;
+        }
+        let _ = writeln!(out, "## halyard migrate: {}\n", survey.tool);
+        let _ = writeln!(out, "| foreign key | halyard key | value |\n|---|---|---|");
+        for row in &survey.rows {
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} |",
+                row.foreign_key, row.halyard_key, row.value
+            );
+        }
+        let _ = writeln!(out);
+        for row in &survey.unmapped {
+            let _ = writeln!(
+                out,
+                "::warning::halyard migrate ({}): {} — {}",
+                survey.tool, row.foreign_key, row.reason
+            );
+        }
+        if let Some(draft) = &survey.draft {
+            let _ = writeln!(
+                out,
+                "\nDraft `halyard.toml` (the report carries it; nothing was written):\n"
+            );
+            let _ = writeln!(out, "```toml\n{draft}```");
+        }
+    }
+    out
+}
