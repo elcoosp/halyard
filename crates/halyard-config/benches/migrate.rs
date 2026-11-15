@@ -74,10 +74,64 @@ fn changesets_files() -> ForeignFiles {
     files
 }
 
+/// A realistic knope config: the multi-package shape with the
+/// documented keys the survey must report as unmapped.
+fn knope_files() -> ForeignFiles {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[packages."engine"]
+versioned_files = ["crates/engine/Cargo.toml"]
+changelog = "crates/engine/CHANGELOG.md"
+
+[packages."cli"]
+versioned_files = ["crates/cli/Cargo.toml"]
+scopes = ["cli"]
+
+[[workflows]]
+name = "release"
+
+[[workflows]]
+name = "verify"
+"#,
+    );
+    files
+}
+
+/// A realistic release-plz config: the `[workspace]` defaults plus two
+/// `[[package]]` overrides (one release-disabled, one grouped).
+fn release_plz_files() -> ForeignFiles {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        r#"
+[workspace]
+changelog_update = true
+git_release_enable = true
+publish_timeout = "20m"
+pr_branch_prefix = "release-plz-"
+release_always = false
+
+[[package]]
+name = "engine"
+git_tag_name = "engine-v{{ version }}"
+
+[[package]]
+name = "cli"
+release = false
+version_group = "bundle"
+"#,
+    );
+    files
+}
+
 fn bench_migrate_surveys(c: &mut Criterion) {
     let sources = default_sources();
     let rp = release_please_files();
     let cs = changesets_files();
+    let kn = knope_files();
+    let plz = release_plz_files();
     let mut group = c.benchmark_group("migrate");
     group.throughput(criterion::Throughput::Elements(1));
     group.bench_function("release_please_survey_4_packages", |b| {
@@ -107,13 +161,41 @@ fn bench_migrate_surveys(c: &mut Criterion) {
             );
         });
     });
-    group.bench_function("empty_tree_two_sources", |b| {
+    group.bench_function("knope_survey_2_packages", |b| {
+        b.iter(|| {
+            let report = migrate(&kn, &sources);
+            assert!(
+                matches!(
+                    &report,
+                    Ok(report) if report.tools.iter().any(|t| t.tool == "knope"
+                        && t.configured
+                        && t.packages.len() == 2)
+                ),
+                "knope surveys with both packages: {report:?}"
+            );
+        });
+    });
+    group.bench_function("release_plz_survey_2_packages", |b| {
+        b.iter(|| {
+            let report = migrate(&plz, &sources);
+            assert!(
+                matches!(
+                    &report,
+                    Ok(report) if report.tools.iter().any(|t| t.tool == "release-plz"
+                        && t.configured
+                        && t.packages.len() == 2)
+                ),
+                "release-plz surveys with both packages: {report:?}"
+            );
+        });
+    });
+    group.bench_function("empty_tree_four_sources", |b| {
         let empty = ForeignFiles::new();
         b.iter(|| {
             let report = migrate(&empty, &sources);
             assert_eq!(
                 report.as_ref().map(|r| r.tools.len()).ok(),
-                Some(2),
+                Some(4),
                 "absence surveys every source"
             );
         });
