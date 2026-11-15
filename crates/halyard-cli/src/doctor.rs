@@ -116,6 +116,14 @@ pub fn check(
     // `HALYARD_FORGE_*` value fails the check naming the variable.
     checks.push(governor_check());
 
+    // The publish-auth resolution (M5.3 step 2, ADR-0019): what the
+    // `publish` spawn will authenticate with, per default registry —
+    // provenance only (variable names, never values). Absence is
+    // honest (the tools' own credential stores govern); a
+    // present-but-empty variable fails the check with the seam's
+    // `E-PUB-AUTH` diagnosis before any run does.
+    checks.push(publish_auth_check());
+
     // History engine smoke check: the walk must succeed on this repo
     // (this is the doctor's cheapest "will plan() work" signal).
     let history = profiler.span("doctor-history", || {
@@ -271,6 +279,67 @@ fn governor_check() -> Check {
         }
         Err(error) => Check {
             name: "forge-governor".to_owned(),
+            ok: false,
+            detail: error.to_string(),
+        },
+    }
+}
+
+/// The publish-auth resolution check (M5.3 step 2, ADR-0019): the same
+/// capture the `publish` run performs, over the two default §13
+/// registries — which documented variable authenticates each one
+/// (`env:NAME`) or `none` (nothing injected; `cargo login` / the
+/// user-level auth file govern, §13.4's "the tools own credentials").
+/// A present-but-empty token variable is the seam's `E-PUB-AUTH`
+/// misconfiguration and fails the check; absence is `ok` (an honest
+/// value, never guessed).
+fn publish_auth_check() -> Check {
+    let auth = match halyard_publish::EnvPublishAuth::capture() {
+        Ok(auth) => auth,
+        Err(error) => {
+            return Check {
+                name: "publish-auth".to_owned(),
+                ok: false,
+                detail: error.to_string(),
+            };
+        }
+    };
+    let targets = [
+        halyard_publish::PublishTarget {
+            package: String::new(),
+            version: String::new(),
+            ecosystem: "cargo".to_owned(),
+            registry: "crates.io".to_owned(),
+            manifest_dir: String::new(),
+            manifest: String::new(),
+        },
+        halyard_publish::PublishTarget {
+            package: String::new(),
+            version: String::new(),
+            ecosystem: "npm".to_owned(),
+            registry: "npm".to_owned(),
+            manifest_dir: String::new(),
+            manifest: String::new(),
+        },
+    ];
+    match halyard_publish::auth_summary(&auth, &targets) {
+        Ok(summary) => {
+            let pairs: Vec<String> = summary
+                .iter()
+                .map(|(registry, provenance)| format!("{registry} = {provenance}"))
+                .collect();
+            Check {
+                name: "publish-auth".to_owned(),
+                ok: true,
+                detail: format!(
+                    "publish spawn credentials (values never logged; a set-but-empty variable \
+                     fails E-PUB-AUTH): {}",
+                    pairs.join(", ")
+                ),
+            }
+        }
+        Err(error) => Check {
+            name: "publish-auth".to_owned(),
             ok: false,
             detail: error.to_string(),
         },
