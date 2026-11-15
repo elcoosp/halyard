@@ -6,7 +6,8 @@
 
 ## What it means
 
-A foreign release-tool configuration (release-please, changesets) could
+A foreign release-tool configuration (release-please, changesets, knope,
+release-plz) could
 not be surveyed, or the migration write step refused: the file is
 syntactically invalid JSON, violates its own documented grammar (a
 missing `packages` map, a wrong value type), the migration draft failed
@@ -24,8 +25,10 @@ change what releases.
 - the file is valid JSON but violates the tool's documented grammar —
   e.g. a `release-please-config.json` without its required `packages`
   map (the release-please schema marks it required,
-  `additionalProperties: false` at the root), or a changesets
-  `access` value outside `public`/`restricted`;
+  `additionalProperties: false` at the root), a changesets `access`
+  value outside `public`/`restricted`, a knope config carrying both
+  package shapes, or a release-plz `[[package]]` entry without its
+  required `name`;
 - the file exists but cannot be read (permissions) — the shell refuses
   a file it cannot survey rather than migrating around it;
 - **`--write`, target exists** — `halyard.toml` is already there; the
