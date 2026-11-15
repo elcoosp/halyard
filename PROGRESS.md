@@ -31,6 +31,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M5.5 call-governor slice (§11.5 pacing/retry/budget) | done | feat/forge-call-governor (dirty; no commits) | M1: `halyard_forge::governor` (ADR-0015) — the `Governor` `Forge` decorator (wraps any `&dyn Forge`, `Forge::calls` keeps delegating so the machine's §11.5 accounting is untouched): `GovernorPolicy` (spacing/budget/retries/backoff base+cap; `default()` passive, `shell_default()` the §11.5 production shape), content-call pacing start-to-start (probes + `rate_limit()` unpaced), `Retry-After` honored exactly, transport backoff deterministic `base × 2^attempt` capped (no jitter — the I3 deviation ADR-0015 documents), per-run budget as a forwarded-attempts ledger (failures + retries count) refusing fail-closed *before* the call with the new `ForgeError::Budget` (`E-FORGE-BUDGET` page + index row; non-retryable errors never wait; exhausted retries return the last error verbatim), injected `GovernorClock`/`GovernorSleeper` + `system_time()` production pair, deterministic `events()` log; 12 contract tests (`tests/governor.rs`, red→green on record) + bench `governor` (passthrough ≈894 ns, pacing decision ×16 ≈4.6 µs, budget block ≈598 ns) + example `governed_release` + E-FORGE-RATE-LIMIT as-built + arch §11.5 as-built. M2 (M1 green first): `governor_policy_from_env` (`HALYARD_FORGE_MIN_CALL_SPACING_MS`/`_MAX_CALLS`/`_MAX_RETRIES` over `shell_default()`, invalid → fail-closed `E-FORGE-REQUEST` naming the variable), the three live forge sites wrapped (`pr` live, the release forge half, `forge-smoke`), `render::GovernorSummary` (`line()`/`json()`) riding the live pr JSON document + human/gha tails (dry JSON schema byte-stable), `ForgeReleases::Ran` gains the governor summary, `doctor` gains the `forge-governor` check (resolved policy; invalid env fails the check); 4 loopback e2e tests in `cli_forge.rs` (summary row + budget block fail-closed with zero refused HTTP + env grammar naming the variable + smoke governor row; red→green on record) | Publish (M5), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the `github-release-notes` PR-comment mode — all unchanged. Pre-existing reds repaired at base first: the two `cli_pr` warm-cache determinism pins now ride `--no-cache` (the cli_stats convention the M4.1c session left unfinished at HEAD) | 2026-11-14; session log below |
 
 | §8.8 smart-minimal-fetch slice (M4.6 step 1) + M5.1 registry existence probes | done | feat/fetch-and-registry-probes (dirty; no commits) | M1 (M4.6 step 1): `halyard_git::fetch` (ADR-0016) — the pure planner (`latest_tags_for`, `deepen_boundaries_for` through the now-public `halyard_core::planner::effective_template` so fetch/plan/tag-phase cannot disagree, `plan_fetch`, `fetch_attempts`) + the live `TagFetcher`/`GixTagFetcher` effect (probe → select → classify → one minimal fetch, full-fetch fallback of the same refs, I1-idempotent, divergent release tags fail-closed `E-GIT-TAG-CONFLICT`); three recipe points settled empirically + pinned by tests (shallow machinery only on shallow repos — `--shallow-exclude` fails complete clones; the boundary is each package's previous release tag; `--deepen` loops deferred, the full fetch is the terminal fallback); `GitError::Fetch` (`E-GIT-FETCH` page + index); CLI `halyard fetch` (discovery+config only — a shallow clone must be fetchable; human/json/gha, exit 1 on failed rows) + 17 engine tests (`tests/fetch.rs`, red→green) + 4 CLI tests (`cli_fetch.rs`, red→green) + bench `fetch_plan` (selection 40×202 ≈ 596 µs, boundaries ≈ 594 µs, attempts 40 ≈ 12 µs) + example `fetch_plan` + ADR-0016 + arch §8.8/§16.2 as-built + README/CLI-README rows. M2 (M1 green first, M5.1 step 1): the `halyard-registry` crate (ADR-0017) — the `Registry` seam over the forge transport (no HTTP client; `UreqTransport` injected at runtime, `MemoryTransport` in tests; layer rule `registry → forge`, 17 crates ✓), `CratesIo` sparse-index + `Npm` packument `published()` with fail-closed status semantics (`404` ⇒ not published — verified live; uninterpretable ⇒ `E-REG-PROTOCOL`; names never reach the wire invalid ⇒ `E-REG-NAME`), `wait_until_visible` with the deterministic doubling-capped backoff + injected `RegistrySleeper`; URL grammar VERIFIED live (Cargo Book + npm registry docs + direct HTTP probes) and recorded in `docs/research/registry-existence-probes.md`; 12 contract tests (red→green) + bench `probe` (sparse parse ≈ 2.9 µs, packument ≈ 28.6 µs) + example `probe_registries` + `doctor --registries` opt-in probe (immutable-version probes; I5 respected) + `E-REG-*` pages ×3 + index rows | The M4.6 corpus checkout-time acceptance (corpus lane), the M5.1 nightly live checks (opt-in lane), the `--deepen` loops, the M5.2 publisher (declared consumer), publish/M5.2+, the corpus-wide pnpm differential, the M2.6 dhat re-audit. Micro-debt cleaned (additive): cache write-back failures remapped `E-GIT-OBJECT` → the new `GitError::Cache` (`E-GIT-CACHE` page — a durability failure is not an object-read error), the dead always-`None` `TagCandidate::version` field removed, the README daily-commands list completed (8 example rows drifted) | 2026-11-14; session log below |
+| M5.2 publish engine + CLI `publish` slice (§13, ADR-0018) | done | (tree left dirty; no commits) | M1: the `halyard-publish` crate (the §7.1-reserved `halyard-publish/` slot) — `plan_publication` (the §13 step-1 pure planner: recomputed `plan_hash` gate I8, the releases × workspace join with fail-closed `E-PUB-PLAN` contradictions, name-sorted layers over the workspace graph's non-dev edges, `E-PUB-ORDER` with the rendered cycle path, dev-only cycles legal, `not_targets` observability), `run_publication` (the §13 steps-2/3 resume loop: routing resolved before any call (`E-PUB-REGISTRY`, zero side effects), the resume probe (`AlreadyPublished` = the I1 no-op), the injected `PublishEffect` tool seam, the §13 step-3 visibility wait, the §13.7 outcome model as rows (`Published{visibility_confirmed}` / `AlreadyPublished` / `Skipped{upstream_failed\|invisible\|skipped}` / `Failed{code,message,retryable}`), deterministic name-sorted report (I3) with derived tallies, bounded within-layer parallelism (`PublishPolicy::max_parallel`, scoped std threads, `Send + Sync` on the injected seams — `Registry`/`RegistrySleeper` widened in `halyard-registry`, a no-op for every shipped impl)), the reference fakes (`MemoryRegistry` with modelled index lag, `MemoryPublishEffect` with per-package failure scripts + `successes()` zero-duplicates witness, `MapRouter`), 30 tests (incl. the §15.2 failure-injected-at-every-step convergence matrix), bench `publish` (layering-40 ≈ 200 µs, engine-pass-40 ≈ 84 µs), example `publish_plan` (interrupted run → I2 resume → zero duplicates), ADR-0018 + `E-PUB-PLAN/ORDER/REGISTRY/EFFECT` pages ×4 + index rows + layer rule + arch §13 as-built. M2 (M1 green first): the CLI `publish [--dry \| live]` command — the adapter crates' argv tables (`cargo_publish_args`/`pnpm_publish_args`, VERIFIED against the Cargo Book and pnpm.io live, `docs/research/publish-tooling.md`), the engine's `PublishMode::{Live,Dry}` + `Forecast` outcome (the dry forecast runs the tools' dry form and never probes — I5), the shell's `SpawnPublishEffect` (argv arrays, processes rooted at the package root, `--manifest-path` resolved against the repo root — the cwd lesson the CLI tests caught), live registry routing over the blocking transport, json/human/gha renderers with row-level spawn provenance (`manifest`/`manifest_dir`), §15.4 exit 4 on partial publish, `E-CLI-PUBLISH` (live + `--offline` fails closed) + 5 CLI tests (shim-recorded argv, byte-stable JSON, routing fail-closed, disabled-config no-op, gated rows over a broken tool). Micro-debt/docs drift fixed (additive): the rustdoc gate was red at base — three pre-existing broken intra-doc links (`halyard-git/src/refs.rs` → `TagTemplate::extract_version`, `halyard-registry` → a nonexistent `crate::governor`, `halyard-forge/src/transport.rs` → `MemoryForge` out of scope) — de-linked/re-worded, full `-D warnings` doc sweep green; the xtask `every_current_member_has_a_rule` test list was stale (missing `halyard-forge-github`/`halyard-registry`) — extended with all current members | The M5.3 OIDC/auth plumbing, the `publish --resume` flag (the engine already resumes; the flag is UX), the M4.6 corpus checkout-time acceptance, the M5.1 nightly live checks, the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses | 2026-11-14; session log below |
 
 ### 2026-11-14 — §8.8 smart-minimal-fetch (M4.6 step 1, ADR-0016) + M5.1 registry existence probes (ADR-0017) (branch `feat/fetch-and-registry-probes`, tree left dirty, no commits)
 
@@ -1114,3 +1115,116 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   budget, (2) the corpus-wide pnpm differential as an xtask
   subcommand, (3) the M2.6 dhat re-audit with the cache warm, (4)
   `forge-smoke`'s pacing governor report in the nightly job summary.
+
+### 2026-11-14 — M5.2 publish engine + CLI `publish` (ADR-0018, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `d465be3` (the
+  fetch/registry slice tree + the ship-ceremony gitignore commit).
+  Baseline gates re-run green on a fresh toolchain (stable 1.100.0):
+  `test --workspace --all-features --locked` (86 suites, 658 tests,
+  0 failed), fmt, clippy `-D warnings`. The declared start points were
+  (1) the M5.2 publisher over the `Registry` seam, (2) the corpus-wide
+  pnpm differential (needs pnpm — absent from the sandbox), (3) the
+  M2.6 dhat re-audit, (4) the `github-release-notes` PR-comment mode.
+  Picked (1) as M1 — the declared consumer of the M5.1 seam, the
+  §7.1-reserved crate slot, the §15.4-reserved `E-PUB-*` family — and
+  the §16.2 `publish` command as M2. Docs drift found at base: the
+  rustdoc gate was **red** (three broken intra-doc links: `refs.rs` →
+  `TagTemplate::extract_version` unimported, `halyard-registry` → a
+  nonexistent `crate::governor`, `halyard-forge/src/transport.rs` →
+  `MemoryForge` out of scope); the xtask member-rule test list was two
+  crates stale.
+- **M1 implemented (no stubs), one full red→green cycle** (the 27-test
+  contract matrix written first, red on the unresolved
+  `halyard_publish` API — E0432 on record — then implemented; two
+  expectations corrected during the cycle where the designed gating
+  precedence differs from the first draft: a gated dependent never
+  reaches its own probe/effect, so the registry-probe-failure row
+  gates its dependents exactly like a tool failure):
+  - `crates/halyard-publish` — `plan_publication` (I8 hash gate, the
+    releases × workspace join, `E-PUB-PLAN` on any contradiction incl.
+    duplicate release names and targets missing from `plan.order`,
+    Kahn layering name-ascending over non-dev edges of the
+    target-induced subgraph, `E-PUB-ORDER` with a rendered DFS cycle
+    path, dev-only cycles legal, `not_targets` with reasons) and
+    `run_publication` (routing resolved before any call; the resume
+    probe → effect → §13 step-3 visibility wait; §13.7 outcomes as
+    rows; the failed/invisible/skipped upstream gate with sorted,
+    comma-joined reasons; derived tallies; bounded within-layer
+    parallelism on scoped std threads with the report name-sorted
+    regardless of thread completion order). `Registry`/`RegistrySleeper`
+    gained `Send + Sync` supertraits (a widening, not a change — every
+    shipped impl already satisfied them; recorded in ADR-0018 §5).
+  - Reference fakes ship with the seam (`MemoryRegistry` staging +
+    modelled index lag, `MemoryPublishEffect` per-package failure
+    scripts + `successes()`, `MapRouter`) — the `MemoryForge`/
+    `MemoryTransport` convention, so the CLI tests and M5.3 script the
+    same behavior without a new test-support rule.
+  - 30 tests + bench `publish` (layering-40 ≈ 200 µs, engine-pass-40 ≈
+    84 µs) + example `publish_plan` + ADR-0018 + `E-PUB-*` pages ×4 +
+    errors-index rows + the `publish → [core, registry]` layer rule
+    (check-layers 18 crates ✓) + the arch §13 as-built note.
+- **M2 implemented (M1 green end-to-end first), red→green** (the CLI
+  tests + argv-table tests written first, red on the missing command
+  and fns, then implemented):
+  - argv tables VERIFIED live per §0.4 (`docs/research/publish-tooling.md`,
+    both tool docs fetched, quotes recorded): `cargo publish --dry-run
+    --manifest-path <m> --offline` (the book's own hermetic example) /
+    `cargo publish --manifest-path <m>` live; `pnpm publish --dry-run
+    --no-git-checks` dry / `pnpm publish` live (no directory flag is
+    documented — the process runs at the package root; `pnpm publish`
+    is the §13.4 letter, a pnpm-less npm repo fails honestly rather
+    than switching tools).
+  - The engine gained `PublishMode::{Live,Dry}` + `PublishOutcome::
+    Forecast` + `PublishReport.forecast`: the dry forecast validates
+    routing, runs the tools' dry form and never probes (I5 — the same
+    reasoning that leaves `fetch` without a `--dry`).
+  - CLI `publish [--dry]`: plan → publication → engine run over the
+    `SpawnPublishEffect` (argv arrays; processes rooted at the package
+    root; `--manifest-path` resolved against the repo root — the CLI
+    tests caught the double-relative path on the first green run, a
+    real bug fixed in the effect, not the tests) and the live router
+    (the two §13 clients over the blocking transport). json/human/gha
+    renders with per-row spawn provenance; §15.4 exit 4 on a partial
+    publish; `E-CLI-PUBLISH` (+ page + index row) refuses a live run
+    under `--offline` instead of silently downgrading to a forecast.
+  - 5 CLI tests: shim-recorded argv (the packaged tool never runs),
+    byte-stable JSON (I3), routing fail-closed with zero calls, the
+    publish-disabled no-op, gated rows over a broken tool.
+- **Micro-debt/docs drift fixed (additive, not milestone
+  substitutes).** The three broken rustdoc links at base (the doc gate
+  had never been run green with them in place) — de-linked per the
+  house repair convention; the xtask `every_current_member_has_a_rule`
+  list extended to all 17 members (`halyard-forge-github`,
+  `halyard-registry` were missing); root README status/layout/daily-
+  command rows for the publish engine + example; CLI README `publish`
+  row + section + the corrected writing-commands paragraph (three
+  writing surfaces now: `apply` filesystem, `release` git refs,
+  `publish` registries); arch §16.2 wired-commands note (publish
+  moved from the absent list to the wired list) and the `Command` enum
+  doc.
+- **Tests/bench/example totals.** 30 engine tests + 2 argv-table test
+  files (6 tests) + 5 CLI tests + 1 policy unit test; benches
+  `publish_plan_layering_40` + `publish_engine_pass_40` registered and
+  run; example `publish_plan` run clean. Full gate battery re-run
+  green on the final tree: fmt, clippy `--workspace --all-targets
+  --all-features -- -D warnings` (0 findings), the lint-hygiene grep
+  (empty), `test --workspace --all-features --locked` (97 suites, 733
+  tests, 0 failed), `test --workspace --benches`, the `-D warnings`
+  doc sweep, `check-layers` (18 crates), `schema-check` (both schemas).
+- **Honest state at cut-off.** The live publish spawn is exercised
+  through argv-table unit tests + the PATH-shim CLI tests; a real
+  `cargo publish`/`pnpm publish` e2e against real registries belongs
+  to the M5.3/nightly lanes (the engine's resume makes any real run
+  safe to re-run). `publish --resume` is deliberately not a flag: the
+  engine always resumes (I2) — the §16.2 `--resume` spelling can join
+  with the M5.3 auth work. OIDC trusted publishing, provenance and
+  secret scrubbing stay M5.3+ (their own VERIFY research). The
+  corpus-wide pnpm differential and the M2.6 dhat re-audit remain open
+  (sandbox lacks pnpm; the two p50 perf-budget misses stay as
+  recorded). Tree left dirty (no commits made).
+- **Next session start point.** (1) M5.3: OIDC/token auth plumbing +
+  secret scrubbing over the `PublishEffect` (VERIFY research first),
+  (2) the corpus-wide pnpm differential as an xtask subcommand,
+  (3) the M2.6 dhat re-audit with the cache warm, (4) the
+  `github-release-notes` PR-comment mode.
