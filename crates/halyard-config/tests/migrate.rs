@@ -536,3 +536,556 @@ fn foreign_files_lookup_is_exact_and_paths_are_sorted() {
     let paths: Vec<String> = files.paths().cloned().collect();
     assert_eq!(paths, vec!["a.json".to_owned(), "z.json".to_owned()]);
 }
+
+// ---------------------------------------------------------------------------
+// knope (the §16.2 extension: the VERIFIED grammar lives in
+// docs/research/migrate-config-grammars.md — the config pages quote the
+// `[package]`/`[packages]` shapes, the Release step page quotes the tag
+// rules)
+// ---------------------------------------------------------------------------
+
+/// The report's knope survey.
+fn kn(report: &halyard_config::MigrationReport) -> &ToolSurvey {
+    match report.tools.iter().find(|t| t.tool == "knope") {
+        Some(survey) => survey,
+        None => unreachable!("knope survey present"),
+    }
+}
+
+/// The report's release-plz survey.
+fn plz(report: &halyard_config::MigrationReport) -> &ToolSurvey {
+    match report.tools.iter().find(|t| t.tool == "release-plz") {
+        Some(survey) => survey,
+        None => unreachable!("release-plz survey present"),
+    }
+}
+
+#[test]
+fn default_registry_surveys_all_four_foreign_tools() {
+    let sources = default_sources();
+    let mut names: Vec<&str> = sources.iter().map(|s| s.tool()).collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec!["changesets", "knope", "release-please", "release-plz"],
+        "the registry carries the four §16.2 tools (sorted here for the pin)"
+    );
+}
+
+#[test]
+fn knope_absent_surveys_not_configured() {
+    let report = migrate(&ForeignFiles::new(), &default_sources()).expect("empty tree surveys");
+    let survey = kn(&report);
+    assert!(!survey.configured, "absence is a value, not an error");
+    assert!(survey.rows.is_empty() && survey.packages.is_empty());
+    assert!(
+        survey.draft.is_none(),
+        "an absent tool drafts nothing (the default survey shape)"
+    );
+}
+
+#[test]
+fn knope_single_package_maps_the_documented_v_tag() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[package]
+versioned_files = ["Cargo.toml"]
+changelog = "CHANGELOG.md"
+
+[[workflows]]
+name = "release"
+"#,
+    );
+    let report = migrate(&files, &default_sources()).expect("knope config surveys");
+    let survey = kn(&report);
+    assert!(survey.configured);
+    assert_eq!(survey.files, vec!["knope.toml".to_owned()]);
+    let tag = survey
+        .rows
+        .iter()
+        .find(|r| r.halyard_key == "repo.tag_style")
+        .unwrap_or_else(|| unreachable!("the single-package tag rule maps"));
+    assert_eq!(tag.value, "v{version}");
+    assert!(
+        tag.note
+            .as_deref()
+            .is_some_and(|note| note.contains("v{version}")),
+        "the note names the documented tag shape: {tag:?}"
+    );
+    // The draft carries the mapped tag style (and was validated through
+    // the strict loader by render_draft's own contract).
+    let draft = survey.draft.as_deref().unwrap_or_default();
+    assert!(
+        draft.contains("tag_style = \"v{version}\""),
+        "the draft pins the tag style: {draft}"
+    );
+    // The versioned files ride the package survey's notes (halyard
+    // rewrites manifests per ecosystem; the foreign list is provenance).
+    assert_eq!(survey.packages.len(), 1);
+    let package = survey
+        .packages
+        .first()
+        .unwrap_or_else(|| unreachable!("one package"));
+    assert!(
+        package.notes.iter().any(|note| note.contains("Cargo.toml")),
+        "versioned_files surface as provenance notes: {:?}",
+        package.notes
+    );
+}
+
+#[test]
+fn knope_packages_map_the_slash_tag_shape() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[packages."left"]
+versioned_files = ["Cargo.toml"]
+changelog = "left/CHANGELOG.md"
+
+[packages."right"]
+versioned_files = ["right/package.json"]
+"#,
+    );
+    let report = migrate(&files, &default_sources()).expect("knope packages survey");
+    let survey = kn(&report);
+    assert!(survey.configured);
+    let tag = survey
+        .rows
+        .iter()
+        .find(|r| r.halyard_key == "repo.tag_style")
+        .unwrap_or_else(|| unreachable!("the unified multi-package tag maps"));
+    assert_eq!(tag.value, "{name}/v{version}");
+    // Every configured package gets a survey row with the same resolved
+    // template (the documented multi-package rule is uniform).
+    assert_eq!(survey.packages.len(), 2);
+    for package in &survey.packages {
+        assert_eq!(package.tag, "{name}/v{version}");
+        assert_eq!(
+            package.component.as_deref(),
+            Some(package.path.as_str()),
+            "the knope package name is the component"
+        );
+    }
+}
+
+#[test]
+fn knope_workflows_and_versioned_files_report_their_differences() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[package]
+versioned_files = ["Cargo.toml"]
+scopes = ["engine"]
+extra_changelog_sections = ["docs"]
+assets = [{ path = "dist/halyard", name = "halyard" }]
+
+[[workflows]]
+name = "release"
+
+[[workflows]]
+name = "verify"
+"#,
+    );
+    let report = migrate(&files, &default_sources()).expect("knope config surveys");
+    let survey = kn(&report);
+    for key in [
+        "versioned_files",
+        "scopes",
+        "extra_changelog_sections",
+        "assets",
+    ] {
+        assert!(
+            survey
+                .unmapped
+                .iter()
+                .any(|u| u.foreign_key == key && !u.reason.is_empty()),
+            "`{key}` reports its semantic difference: {:?}",
+            survey.unmapped
+        );
+    }
+    let workflows = survey
+        .unmapped
+        .iter()
+        .find(|u| u.foreign_key == "workflows")
+        .unwrap_or_else(|| unreachable!("workflows report"));
+    assert!(
+        workflows.reason.contains("release") && workflows.reason.contains("verify"),
+        "the workflow names ride the reason: {workflows:?}"
+    );
+}
+
+#[test]
+fn knope_unparseable_config_fails_closed() {
+    let mut files = ForeignFiles::new();
+    files.insert("knope.toml", "[package\nversioned_files = [");
+    let error = migrate(&files, &default_sources()).expect_err("a broken config refuses");
+    match &error {
+        ConfigError::Migrate { path, message } => {
+            assert_eq!(path, "knope.toml");
+            assert_ne!(message, "");
+        }
+        other => unreachable!("E-CFG-MIGRATE, got {other:?}"),
+    }
+}
+
+#[test]
+fn knope_both_package_shapes_fail_closed() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[package]
+versioned_files = ["Cargo.toml"]
+
+[packages."other"]
+versioned_files = ["other/Cargo.toml"]
+"#,
+    );
+    let error = migrate(&files, &default_sources()).expect_err("the two shapes are exclusive");
+    assert!(
+        matches!(&error, ConfigError::Migrate { path, .. } if path == "knope.toml"),
+        "E-CFG-MIGRATE naming the file: {error:?}"
+    );
+}
+
+#[test]
+fn knope_packageless_workflow_config_has_no_tag_row() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        r#"
+[[workflows]]
+name = "release"
+"#,
+    );
+    let report = migrate(&files, &default_sources()).expect("knope config surveys");
+    let survey = kn(&report);
+    assert!(survey.configured);
+    assert!(
+        !survey
+            .rows
+            .iter()
+            .any(|r| r.halyard_key == "repo.tag_style"),
+        "no package section means no verified tag shape — no mapping, no guess"
+    );
+    assert!(
+        survey
+            .unmapped
+            .iter()
+            .any(|u| u.foreign_key.contains("package")),
+        "the advisory names the package gap: {:?}",
+        survey.unmapped
+    );
+}
+
+// ---------------------------------------------------------------------------
+// release-plz (the §16.2 extension: the VERIFIED grammar lives in
+// docs/research/migrate-config-grammars.md — the config page quotes the
+// file search order, the `[workspace]` defaults and the Tera templates)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn release_plz_absent_surveys_not_configured() {
+    let report = migrate(&ForeignFiles::new(), &default_sources()).expect("empty tree surveys");
+    let survey = plz(&report);
+    assert!(!survey.configured, "absence is a value, not an error");
+    assert!(survey.rows.is_empty() && survey.packages.is_empty());
+    assert!(
+        survey.draft.is_none(),
+        "an absent tool drafts nothing (the default survey shape)"
+    );
+}
+
+#[test]
+fn release_plz_reads_the_documented_search_order_first_match_only() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[workspace]\n");
+    files.insert(".release-plz.toml", "[workspace]\n");
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    assert_eq!(
+        survey.files,
+        vec!["release-plz.toml".to_owned()],
+        "the first existing path in the documented order wins; the shadowed file is not read"
+    );
+
+    let mut only_dot_config = ForeignFiles::new();
+    only_dot_config.insert(".config/release-plz.toml", "[workspace]\n");
+    let report = migrate(&only_dot_config, &default_sources()).expect("dot-config surveys");
+    assert_eq!(
+        plz(&report).files,
+        vec![".config/release-plz.toml".to_owned()],
+        "the third documented search path is honored"
+    );
+}
+
+#[test]
+fn release_plz_default_tag_maps_the_workspace_default_template() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[workspace]\n");
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    let tag = survey
+        .rows
+        .iter()
+        .find(|r| r.halyard_key == "repo.tag_style")
+        .unwrap_or_else(|| unreachable!("the documented workspace default maps"));
+    assert_eq!(tag.value, "{name}-v{version}");
+    assert_eq!(tag.foreign_key, "git_tag_name (workspace default)");
+    assert!(
+        survey
+            .draft
+            .as_deref()
+            .is_some_and(|d| d.contains("{name}-v{version}")),
+        "the draft carries the mapped template: {:?}",
+        survey.draft
+    );
+}
+
+#[test]
+fn release_plz_configured_tag_templates_translate_to_the_a3_grammar() {
+    for (tera, expected) in [
+        ("\"v{{ version }}\"", "v{version}"),
+        ("\"{{ package }}-v{{ version }}\"", "{name}-v{version}"),
+        ("\"{{ package }}/{{ version }}\"", "{name}/{version}"),
+    ] {
+        let mut files = ForeignFiles::new();
+        files.insert(
+            "release-plz.toml",
+            format!("[workspace]\ngit_tag_name = {tera}\n"),
+        );
+        let report = migrate(&files, &default_sources())
+            .unwrap_or_else(|error| unreachable!("config surveys: {error}"));
+        let survey = plz(&report);
+        let tag = survey
+            .rows
+            .iter()
+            .find(|r| r.halyard_key == "repo.tag_style")
+            .unwrap_or_else(|| unreachable!("{tera} translates"));
+        assert_eq!(tag.value, expected, "{tera} → {expected}");
+        assert_eq!(tag.foreign_key, "git_tag_name");
+    }
+}
+
+#[test]
+fn release_plz_foreign_tera_variables_are_unmapped_not_translated() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\ngit_tag_name = \"{{ package }}-{{ unknown_var }}\"\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    assert!(
+        !survey
+            .rows
+            .iter()
+            .any(|r| r.halyard_key == "repo.tag_style"),
+        "a template the v1 grammar cannot express is never half-translated"
+    );
+    assert!(
+        survey
+            .unmapped
+            .iter()
+            .any(|u| u.foreign_key == "git_tag_name"),
+        "the untranslatable template reports: {:?}",
+        survey.unmapped
+    );
+}
+
+#[test]
+fn release_plz_tag_enable_false_refuses_the_tag_mapping() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\ngit_tag_enable = false\ngit_tag_name = \"v{{ version }}\"\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    assert!(
+        !survey
+            .rows
+            .iter()
+            .any(|r| r.halyard_key == "repo.tag_style"),
+        "a tool that creates no tags cannot pin a tag style"
+    );
+    assert!(
+        survey
+            .unmapped
+            .iter()
+            .any(|u| u.foreign_key == "git_tag_enable"),
+        "the disabled tagging reports: {:?}",
+        survey.unmapped
+    );
+}
+
+#[test]
+fn release_plz_release_false_becomes_the_package_override() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\n\n[[package]]\nname = \"a\"\nrelease = false\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    let release = survey
+        .rows
+        .iter()
+        .find(|r| r.halyard_key == "[[package]].release")
+        .unwrap_or_else(|| unreachable!("release = false maps"));
+    assert!(
+        release.value.contains('a'),
+        "the override names the package"
+    );
+    assert!(
+        survey.packages.iter().any(|p| p.path == "a" && !p.release),
+        "the package survey carries the foreign release decision: {:?}",
+        survey.packages
+    );
+    let draft = survey.draft.as_deref().unwrap_or_default();
+    assert!(
+        draft.contains("[[package]]") && draft.contains("release = false"),
+        "the draft carries the override: {draft}"
+    );
+    // The publish master switch is never set by a migration (I7).
+    assert!(
+        !draft.contains("publish"),
+        "publishing stays opt-in: {draft}"
+    );
+}
+
+#[test]
+fn release_plz_changelog_defaults_to_keep_a_changelog() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[workspace]\n");
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    let style = survey
+        .rows
+        .iter()
+        .find(|r| r.halyard_key == "changelog.style")
+        .unwrap_or_else(|| unreachable!("the documented changelog default maps"));
+    assert_eq!(style.value, "keep-a-changelog");
+
+    let mut off = ForeignFiles::new();
+    off.insert(
+        "release-plz.toml",
+        "[workspace]\nchangelog_update = false\n",
+    );
+    let report = migrate(&off, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    assert!(
+        !survey
+            .rows
+            .iter()
+            .any(|r| r.halyard_key == "changelog.style"),
+        "changelog updates disabled means no style pin"
+    );
+}
+
+#[test]
+fn release_plz_publish_stays_unmapped_and_opt_in() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[workspace]\npublish = true\n");
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    let publish = survey
+        .unmapped
+        .iter()
+        .find(|u| u.foreign_key == "publish")
+        .unwrap_or_else(|| unreachable!("publish reports its difference"));
+    assert!(
+        publish.reason.contains("opt-in"),
+        "the reason names the halyard convention: {publish:?}"
+    );
+}
+
+#[test]
+fn release_plz_per_package_tag_disagreement_is_reported_never_guessed() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\n\n[[package]]\nname = \"a\"\ngit_tag_name = \"a-v{{ version }}\"\n\n\
+         [[package]]\nname = \"b\"\ngit_tag_name = \"v{{ version }}\"\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    assert!(
+        !survey
+            .rows
+            .iter()
+            .any(|r| r.halyard_key == "repo.tag_style"),
+        "a per-package disagreement cannot pin one repo-wide tag_style"
+    );
+    assert!(
+        survey
+            .unmapped
+            .iter()
+            .any(|u| u.foreign_key.contains("git_tag_name")),
+        "the disagreement reports: {:?}",
+        survey.unmapped
+    );
+    assert_eq!(survey.packages.len(), 2, "both packages survey");
+}
+
+#[test]
+fn release_plz_unparseable_config_fails_closed() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[workspace\nbroken = ");
+    let error = migrate(&files, &default_sources()).expect_err("a broken config refuses");
+    assert!(
+        matches!(&error, ConfigError::Migrate { path, .. } if path == "release-plz.toml"),
+        "E-CFG-MIGRATE naming the file: {error:?}"
+    );
+}
+
+#[test]
+fn release_plz_package_entry_without_a_name_fails_closed() {
+    let mut files = ForeignFiles::new();
+    files.insert("release-plz.toml", "[[package]]\nrelease = false\n");
+    let error = migrate(&files, &default_sources()).expect_err("the schema marks name required");
+    assert!(
+        matches!(&error, ConfigError::Migrate { path, .. } if path == "release-plz.toml"),
+        "E-CFG-MIGRATE naming the file: {error:?}"
+    );
+}
+
+#[test]
+fn release_plz_version_group_is_a_review_row_not_a_policy_pin() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\n\n[[package]]\nname = \"a\"\nversion_group = \"group1\"\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("release-plz config surveys");
+    let survey = plz(&report);
+    let group = survey
+        .unmapped
+        .iter()
+        .find(|u| u.foreign_key == "version_group")
+        .unwrap_or_else(|| unreachable!("version_group reports"));
+    assert!(
+        group.reason.contains("linked"),
+        "the reason points at halyard's linked policy: {group:?}"
+    );
+}
+
+#[test]
+fn release_plz_and_knope_surveys_are_deterministic() {
+    let mut files = ForeignFiles::new();
+    files.insert(
+        "knope.toml",
+        "[package]\nversioned_files = [\"Cargo.toml\"]\n",
+    );
+    files.insert(
+        "release-plz.toml",
+        "[workspace]\n\n[[package]]\nname = \"a\"\nrelease = false\n",
+    );
+    let report = migrate(&files, &default_sources()).expect("the configs survey");
+    let again = migrate(&files, &default_sources()).expect("the configs survey again");
+    assert_eq!(report, again, "I3: the survey is deterministic");
+}
