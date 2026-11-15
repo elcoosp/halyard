@@ -48,7 +48,7 @@ fn migrate_reports_a_release_please_workspace() -> Result<(), BoxError> {
         .get("tools")
         .and_then(|t| t.as_array())
         .ok_or("the report carries a tools array")?;
-    assert_eq!(tools.len(), 2, "every registered source surveys");
+    assert_eq!(tools.len(), 4, "every registered source surveys");
     let rp = tools
         .iter()
         .find(|t| t.get("tool").and_then(|v| v.as_str()) == Some("release-please"))
@@ -101,6 +101,52 @@ fn migrate_without_any_foreign_config_is_an_honest_report() -> Result<(), BoxErr
     assert!(
         text.contains("not detected"),
         "each registered tool reports not-detected: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn migrate_surveys_the_knope_and_release_plz_configs() -> Result<(), BoxError> {
+    let dir = fixture_dir("knope-release-plz")?;
+    std::fs::write(
+        dir.join("knope.toml"),
+        "[packages.\"left\"]\nversioned_files = [\"left/Cargo.toml\"]\n",
+    )?;
+    std::fs::write(
+        dir.join("release-plz.toml"),
+        "[workspace]\n\n[[package]]\nname = \"left\"\nrelease = false\n",
+    )?;
+    let (ok, text) = halyard(&dir, &["migrate", "--format", "json"])?;
+    assert!(
+        ok,
+        "both §16.2 extensions survey like the older tools: {text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(text.trim())
+        .map_err(|e| format!("stdout is one JSON document: {e}\n{text}"))?;
+    let tools = value
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .ok_or("the report carries a tools array")?;
+    let knope = tools
+        .iter()
+        .find(|t| t.get("tool").and_then(|v| v.as_str()) == Some("knope"))
+        .ok_or("the knope survey is present")?;
+    assert_eq!(
+        knope.get("configured"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert!(
+        knope.to_string().contains("{name}/v{version}"),
+        "the documented multi-package tag shape rides the report: {knope}"
+    );
+    let plz = tools
+        .iter()
+        .find(|t| t.get("tool").and_then(|v| v.as_str()) == Some("release-plz"))
+        .ok_or("the release-plz survey is present")?;
+    assert_eq!(plz.get("configured"), Some(&serde_json::Value::Bool(true)));
+    assert!(
+        plz.to_string().contains("keep-a-changelog"),
+        "the documented changelog default rides the report: {plz}"
     );
     Ok(())
 }
@@ -201,7 +247,9 @@ fn migrate_write_never_clobbers_an_existing_config() -> Result<(), BoxError> {
     assert!(!ok, "an existing halyard.toml is never overwritten");
     let value: serde_json::Value = serde_json::from_str(text.trim())
         .map_err(|e| format!("the refusal is one JSON document: {e}\n{text}"))?;
-    let error = value.get("error").ok_or("the refusal carries an error object")?;
+    let error = value
+        .get("error")
+        .ok_or("the refusal carries an error object")?;
     assert_eq!(
         error.get("code").and_then(|c| c.as_str()),
         Some("E-CFG-MIGRATE"),
@@ -257,7 +305,9 @@ fn migrate_write_refuses_to_guess_between_two_tools() -> Result<(), BoxError> {
     assert!(!ok, "two drafts never resolve by guessing");
     let value: serde_json::Value = serde_json::from_str(text.trim())
         .map_err(|e| format!("the refusal is one JSON document: {e}\n{text}"))?;
-    let error = value.get("error").ok_or("the refusal carries an error object")?;
+    let error = value
+        .get("error")
+        .ok_or("the refusal carries an error object")?;
     assert_eq!(
         error.get("code").and_then(|c| c.as_str()),
         Some("E-CFG-MIGRATE")
