@@ -33,10 +33,12 @@ join the routing map, npm `publishConfig.registry` routes per package)
 — and the §11.6 check-comment mode (`check --pr-title --comment`: the
 verdict posted to the PR under review through the forge seam's
 marker-based comment upsert, rewrite-in-place idempotent; M4.5 step 1,
-ADR-0020) — and the M4.7 step 1 migration report (`halyard migrate`:
+ADR-0020) — and the M4.7 migration report + write step (`halyard migrate`:
 release-please/changesets configs surveyed into mapped rows, semantic
-differences and a validated draft `halyard.toml`; report-only,
-ADR-0022).** The architecture and multi-year master plan lives in
+differences and a validated draft `halyard.toml`; `migrate --write`
+lands the reviewed draft atomically, create-only — an existing config is
+never clobbered and two configured tools are a refusal, not a guess;
+ADR-0022 + ADR-0023).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -218,6 +220,7 @@ cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
 cargo run -p halyard-config --example resolve_layers
 cargo run -p halyard-config --example migrate_report
+cargo run -p halyard-config --example migrate_write
 cargo run -p halyard-discover --example discover_workspace
 cargo run -p halyard-eco-cargo --example parse_manifest
 cargo run -p halyard-eco-cargo --example patch_lockfile
