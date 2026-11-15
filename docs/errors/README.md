@@ -72,6 +72,11 @@ pattern from M1 onward where useful).
 | `E-REG-NAME` | [E-REG-NAME.md](E-REG-NAME.md) | registry probe invalid package name (M5.1, §13) |
 | `E-REG-IO` | [E-REG-IO.md](E-REG-IO.md) | registry probe transport failure (M5.1, §13) |
 | `E-REG-PROTOCOL` | [E-REG-PROTOCOL.md](E-REG-PROTOCOL.md) | registry probe uninterpretable response (M5.1, §13) |
+| `E-PUB-PLAN` | [E-PUB-PLAN.md](E-PUB-PLAN.md) | publish plan validation refused (M5.2, §13/I8) |
+| `E-PUB-ORDER` | [E-PUB-ORDER.md](E-PUB-ORDER.md) | publish target dependency cycle (M5.2, §13 step 1) |
+| `E-PUB-REGISTRY` | [E-PUB-REGISTRY.md](E-PUB-REGISTRY.md) | publish registry routing gap (M5.2, §13 step 2) |
+| `E-PUB-EFFECT` | [E-PUB-EFFECT.md](E-PUB-EFFECT.md) | publish tool failure row (M5.2, §13.7) |
+| `E-CLI-PUBLISH` | [E-CLI-PUBLISH.md](E-CLI-PUBLISH.md) | `publish` live mode contradicts `--offline` (M5.2) |
 
 ## Extension policy
 
