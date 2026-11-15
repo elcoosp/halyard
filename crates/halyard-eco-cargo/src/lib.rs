@@ -33,7 +33,7 @@ pub mod lockfile;
 // M5.2 step 2 (§13.4): the publish argv grammar (the shell spawns, the
 // adapter owns the tool grammar — the `refresh_command` convention).
 pub mod publish;
-pub use publish::cargo_publish_args;
+pub use publish::{cargo_publish_args, is_default_registry};
 mod parse;
 
 use parse::{ManifestDraft, WorkspaceFacts};
