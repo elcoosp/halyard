@@ -33,12 +33,13 @@ join the routing map, npm `publishConfig.registry` routes per package)
 — and the §11.6 check-comment mode (`check --pr-title --comment`: the
 verdict posted to the PR under review through the forge seam's
 marker-based comment upsert, rewrite-in-place idempotent; M4.5 step 1,
-ADR-0020) — and the M4.7 migration report + write step (`halyard migrate`:
-release-please/changesets configs surveyed into mapped rows, semantic
-differences and a validated draft `halyard.toml`; `migrate --write`
-lands the reviewed draft atomically, create-only — an existing config is
-never clobbered and two configured tools are a refusal, not a guess;
-ADR-0022 + ADR-0023).** The architecture and multi-year master plan lives in
+ADR-0020) — and the M4.7 migration report + write step (`halyard migrate`: the
+release-please/changesets/knope/release-plz configs surveyed into
+mapped rows, semantic differences and a validated draft `halyard.toml`;
+`migrate --write` lands the reviewed draft atomically, create-only — an
+existing config is never clobbered and two configured tools are a
+refusal, not a guess; ADR-0022 + ADR-0023 + ADR-0024).** The
+architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
