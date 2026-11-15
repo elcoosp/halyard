@@ -26,6 +26,12 @@ schema-gen = ["dep:schemars"]
 [dev-dependencies]
 insta = { workspace = true }
 tempfile = { workspace = true }
+# M4.7 step 1 (`migrate`): the survey bench rides the workspace criterion.
+criterion = { workspace = true }
+
+[[bench]]
+name = "migrate"
+harness = false
 
 [lints]
 workspace = true
