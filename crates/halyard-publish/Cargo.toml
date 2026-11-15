@@ -1,0 +1,25 @@
+[package]
+name = "halyard-publish"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Topological publish engine (M5.2, §13): layers over the workspace graph, registry resume probes, the §13 step-3 visibility wait and the `PublishEffect` seam — the orchestration half of publish; the spawn effect joins with the CLI shell"
+
+[dependencies]
+halyard-core = { workspace = true }
+halyard-registry = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+# Test/bench fixtures only: the engine speaks wire-format version strings;
+# the fixtures parse valid ones for the workspace `Package.version` field.
+semver = { workspace = true }
+
+[[bench]]
+name = "publish"
+harness = false
+
+[lints]
+workspace = true
