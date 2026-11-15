@@ -171,7 +171,9 @@ crates/
                          visibility wait, injected PublishEffect (§13, ADR-0018) +
                          publish-auth plumbing (M5.3 step 1, ADR-0019): the PublishAuth
                          seam, the VERIFIED env grammar, E-PUB-AUTH fail-closed, secret
-                         scrubbing
+                         scrubbing + custom-registry routing (M5.2 continued, ADR-0021):
+                         configured `[registries.<name>]` sparse indexes join the probe map,
+                         npm `publishConfig.registry` routes per package (`TargetRouter`)
   halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
@@ -210,7 +212,9 @@ cargo run -p halyard-config --example resolve_layers
 cargo run -p halyard-discover --example discover_workspace
 cargo run -p halyard-eco-cargo --example parse_manifest
 cargo run -p halyard-eco-cargo --example patch_lockfile
+cargo run -p halyard-eco-cargo --example resolve_registry
 cargo run -p halyard-eco-npm --example scan_package_json
+cargo run -p halyard-eco-npm --example resolve_publish_registry
 cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
 cargo run -p halyard-git --example walk_history
 cargo run -p halyard-git --example cached_walk
