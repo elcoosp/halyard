@@ -35,6 +35,82 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M5.3 step 1 publish-auth plumbing + step 2 observability slice (ADR-0019) | done | (tree left dirty; no commits) | M1 (M5.3 step 1): `halyard_publish::auth` — the `PublishAuth` seam (object-safe, `Send + Sync`, `credentials(&target) → Result<AuthOutcome, PublishError>` + the `secrets()` scrubbing contract), the `EnvPublishAuth` production capture (one deterministic env snapshot shared by resolution and scrubbing; the `CARGO_REGISTRIES_*_TOKEN` scan covers custom cargo registries), the VERIFIED grammar as data (`variables_for`: cargo `CARGO_REGISTRY_TOKEN` + the `registries.crates-io` fallback / `CARGO_REGISTRIES_<NAME>_TOKEN` uppercased dots-dashes→underscores; npm `NPM_TOKEN` → `NODE_AUTH_TOKEN`; unknown ecosystems honest-absent), absent-is-a-value (`AuthOutcome::Absent` — the tools' own credential stores govern), present-but-empty refused fail-closed `PublishError::Auth` (`E-PUB-AUTH` + page + index row, structural never-retryable), `scrub_secrets` (pure, `[secret]` marker) + `CredentialEnv`/`EnvPublishAuth` Debug redaction, `auth_summary` provenance helper (M2); the CLI effect consumes the seam (`SpawnPublishEffect::new(root, dry, auth)`: the resolved pair injected via `Command::env`, every surfaced stderr tail scrubbed of all resolved values, `E-PUB-AUTH` rows), the run-level capture refuses before planning (`cmd_publish`), 19 engine tests + 5 CLI tests (scrub-leak, empty-token refusal, provenance JSON + byte-stability, doctor row) — one full red→green cycle per half, both reds on record; bench `auth` (capture ≈2.3 ns, credentials×14 ≈1.4 µs, scrub-1KiB ≈ sub-µs) + example `publish_auth` (provenance-only output) + ADR-0019 + `docs/research/publish-auth-env.md` (VERIFIED quotes: Cargo Book config + registry-authentication, pnpm.io/npmrc incl. the project-`.npmrc` non-interpolation anti-exfiltration rule) + arch §13 as-built. M2 (M1 green end-to-end first): the renderers carry the per-registry `auth` provenance (json `auth` block + human/gha `publish-auth (M5.3):` tail, names only, byte-stable) and `doctor` gains the `publish-auth` check (the same capture the run performs; empty-token fails the check). Micro-debt/docs drift fixed (additive, not milestone substitutes): the mangled `E-CLI-PUBLISH` message (stray space runs mid-sentence) rewritten with correct wrapping; the spawn's stderr tail picks the last **non-empty** line (`next_back()` on blank-line-terminated stderr produced an empty diagnosis); the `publish-tooling.md` deferral note ("--registry mapping … deferred to M5.3's auth plumbing") is now satisfied by the seam (the token env maps the §13 registry name verbatim; a cargo `--registry` config-name mapping stays a no-guess open item); root README layout row + example list, CLI README publish row + publish-auth section | The M5.3 OIDC trusted publishing (its own VERIFY — the M0.6 note's `id-token`/hosted-runner facts need a live CI runtime), `github-release-notes` PR-comment mode, the M4.6 corpus checkout-time acceptance, the M5.1 nightly live checks, the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses, the cargo `--registry` flag mapping | 2026-11-15; session log below |
 
+| M4.5 step 1 check-comment mode (§11.6, ADR-0020) + M5.3 continued `--registry` argv mapping | done | (tree left dirty; no commits) | M1 (M4.5 step 1): the `Forge::upsert_pr_comment` seam capability (ADR-0020) — the marker-based idempotent comment upsert (`<!-- halyard:check v1 -->` scan → rewrite-in-place / create; the §11.3 marker convention at comment scale), the shared `CommentSpec::validate` fail-closed contract (1-based PR, non-empty marker, body carries its own marker — `E-FORGE-REQUEST` before any store touch or exchange), the honest-decline trait default, the `MemoryForge` reference implementation (+ `pr_comments` test view), the `PreviewForge` forecast, the governor forwarding (content call: paced, budgeted, retried), the GitHub REST exchange (ascending 100-per-page marker scan until a short page → `PATCH issues/comments/{id}` or `POST issues/{n}/comments`) + `halyard_changelog::check_comment` (the §11.6 renderer: both verdict shapes, marker-first deterministic markdown, `CheckComment`/`CheckVerdict`/`CheckPrediction` plain data) + the CLI `check --pr-title --comment` (head branch = `GITHUB_HEAD_REF` else in-process gix, PR found by head through the adapter's find exchange, forked-head/missing-PR honest skip in the report, both verdicts post — a rejected title posts its diagnosis then still fails `E-CLI-TITLE`; creds/origin resolved before the verdict paths exit, honest decline `E-CLI-COMMENT` naming the fix; the §11.5 governor rides the live call; the `comment` report block exists only when the flag ran — byte-stable JSON when it does not) + 10 seam tests (`tests/comment.rs`: create/rewrite I1, multi-marker, closed-PR comment, fail-closed matrix, failpoint, call log, preview forecast, decline witness, governor pacing+budget) + 7 adapter wire tests (`tests/comment.rs`: scan→POST, scan→PATCH, page walk, fail-closed spec, transport verbatim, 404 taxonomy, call log) + 7 renderer tests + 3 CLI gates + 3 CLI loopback passes (post / rewrite-in-place / skip) + bench `pr_comment` (render-6, create, rewrite) + example `render_check_comment` + `E-CLI-COMMENT` page + index row + ADR-0020 + arch §11.4/§11.6/§16.2 as-built + README rows. M2 (M1 green first): the cargo `--registry` argv mapping (M5.3 continued) — `cargo_publish_args(manifest, registry, dry)` emits `--registry <name>` for a non-default registry, the two default spellings (`crates.io`/`crates-io`) ride the tool's documented `registry.default` with no flag (`is_default_registry`, mirroring the auth seam's `is_crates_io` — both pinned), VERIFIED against the Cargo Book with the verbatim quote recorded (`docs/research/publish-tooling.md`), the effect passes `target.registry` through the grammar, the CLI test pins the M5.2 routing gate honestly (a third-party cargo index has no resume-probe client → `E-PUB-REGISTRY` before any spawn, dry included, zero side effects — the end-to-end custom-registry publish waits on a client joining the routing map, documented; the argv grammar is complete and unit-pinned) + 2 adapter argv tests + the publish_args integration matrix extended. Micro-debt/docs drift fixed (additive): the garbled `EnvPublishAuth::from_table` doc sentence rewritten; the research note's stale `--allowed-registry` open item annotated as resolved for the flag mapping; a pre-existing clippy failure at base repaired (the `publish_auth` example's unterminated last statement — `semicolon_if_nothing_returned`, surfaced by this session's gate re-run) | — | 2026-11-15; session log below |
+
+### 2026-11-15 — M4.5 step 1 check-comment mode (ADR-0020) + M5.3 continued `--registry` argv mapping (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `93d7043` (the M5.3
+  publish-auth slice). Baseline re-verified on a fresh toolchain
+  (stable, `RUSTFLAGS="-C debuginfo=0"` — the target dir hit the disk
+  ceiling twice before the flag was applied consistently; a linker
+  bus-error is resource, not code, as recorded in the M5.3 log):
+  `test --workspace --all-features --locked` green at base. The
+  declared start points were (1) M5.3 continued (OIDC + the
+  `--registry` flag mapping), (2) the corpus-wide pnpm differential
+  (no pnpm in the sandbox), (3) the M2.6 dhat re-audit, (4) the
+  `github-release-notes` PR-comment mode. Picked (4) — §11.6's
+  "optional PR comment", deferred in every session log since M5.5 —
+  as M1, and the `--registry` flag mapping (the other half of item 1
+  that is offline-verifiable; OIDC needs a live CI runtime, still
+  deferred) as M2.
+- **M1 implemented (no stubs), one full red→green cycle** (the seam
+  contract, adapter wire contract and renderer tests written first —
+  red on E0432 unresolved `halyard_forge::CommentSpec` /
+  `halyard_changelog::check_comment` + E0599 no method
+  `upsert_pr_comment` on record — then the CLI gates, then
+  implemented):
+  - Design decisions (ADR-0020): the marker is the idempotence key
+    (no state file — the find-first convention one level up); the
+    renderer is markdown-only and lives in `halyard-changelog` beside
+    the §11.3 body renderer (§7.2: the forge dependency stays on the
+    consumer side); both verdict shapes post (a rejected title teaches
+    in the comment, then still fails `E-CLI-TITLE`); the comment mode
+    is live-only with the honest `E-CLI-COMMENT` decline (no `--dry` —
+    a comment forecast would probe the network or lie about its
+    target); the target is the PR found by head branch, reusing the
+    adapter's find exchange.
+  - One real lesson pinned during the loopback tests: the find
+    exchange parses a PR **list**; the first scripted bodies were
+    objects, the parse failure rode the governor's documented
+    transport retry into a second GET, and the fake forge then waited
+    forever on its script tail (`server.join()` hang). The scripts
+    were corrected to the list shape — the transport-retry contract
+    itself stays untouched and now has a witnessed exercise.
+- **M2 implemented (M1 green end-to-end first), red→green** (the argv
+  signature change failed E0061 at its two call sites on record):
+  `cargo_publish_args(manifest, registry, dry)` + `is_default_registry`
+  (the no-guess rule: the two default spellings emit no flag — the
+  tool's documented `registry.default` governs), VERIFIED per §0.4
+  (Cargo Book fetched, verbatim quote in the research note), the
+  effect passes `target.registry` through, and the CLI test pins the
+  routing gate honestly — a third-party cargo index has no
+  resume-probe client, so the run refuses `E-PUB-REGISTRY` **before
+  any spawn** (dry included, zero side effects). The end-to-end
+  custom-registry publish waits on a client joining the routing map;
+  the argv grammar is complete and unit-pinned, never a stub.
+- **Tests/bench/example totals.** +35 tests / +3 suites over base
+  (101 suites, 792 tests, 0 failed on the final tree): 10 seam + 7
+  adapter + 7 renderer + 3 CLI gates + 3 CLI loopback + 5 adapter argv
+  (integration) + inline matrix extensions. Bench `pr_comment`
+  registered and run (render-6, marker-upsert create and rewrite
+  shapes); example `render_check_comment` runs clean. Full gate
+  battery green on the final tree: fmt, clippy
+  `--workspace --all-targets --all-features -- -D warnings` (0
+  findings), the lint-hygiene grep (empty), `test --workspace
+  --all-features --locked` (101 suites, 792 tests), `test --workspace
+  --benches`, the `-D warnings` doc sweep, `check-layers`,
+  `schema-check`.
+- **Honest state at cut-off.** Fork-aware comment targeting (M11 bot
+  mode), OIDC trusted publishing (needs a live CI runtime), the
+  third-party registry resume client, the corpus pnpm differential,
+  the M2.6 dhat re-audit and the two p50 perf-budget misses are
+  unchanged. Tree left dirty (no commits made).
+- **Next session start point.** (1) M5.3 OIDC trusted publishing
+  (VERIFY on a live CI runtime), (2) the corpus-wide pnpm differential
+  as an xtask subcommand, (3) the M2.6 dhat re-audit with the cache
+  warm, (4) the third-party cargo registry resume client over the
+  routing map.
+
 ### 2026-11-15 — M5.3 publish-auth plumbing (ADR-0019) + provenance observability (tree left dirty, no commits)
 
 - **Inventory at session start.** The base commit `651e8e9` re-verified green
