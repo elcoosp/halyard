@@ -26,10 +26,17 @@ opt-in probe; ADR-0017) — and the M5.2 publish engine (`halyard-publish`:
 verified-plan validation, topological layers, registry resume, the
 visibility wait and the injected `PublishEffect` seam; ADR-0018) wired
 into the `publish [--dry]` command (the tools' documented dry form, the
-real spawn live) — and the §11.6 check-comment mode (`check --pr-title
---comment`: the verdict posted to the PR under review through the forge
-seam's marker-based comment upsert, rewrite-in-place idempotent; M4.5
-step 1, ADR-0020).** The architecture and multi-year master plan lives in
+real spawn live) — the publish-auth plumbing with secret scrubbing
+(M5.3 step 1, ADR-0019) and the custom-registry routing (M5.2
+continued, ADR-0021: configured `[registries.<name>]` sparse indexes
+join the routing map, npm `publishConfig.registry` routes per package)
+— and the §11.6 check-comment mode (`check --pr-title --comment`: the
+verdict posted to the PR under review through the forge seam's
+marker-based comment upsert, rewrite-in-place idempotent; M4.5 step 1,
+ADR-0020) — and the M4.7 step 1 migration report (`halyard migrate`:
+release-please/changesets configs surveyed into mapped rows, semantic
+differences and a validated draft `halyard.toml`; report-only,
+ADR-0022).** The architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -152,7 +159,8 @@ tracked in [`PROGRESS.md`](PROGRESS.md).
 ```
 crates/
   halyard-core           pure core types + plan contract + plan hash (no I/O)
-  halyard-config         halyard.toml model + loader + layered resolution
+  halyard-config         halyard.toml model + loader + layered resolution +
+                         foreign-config migration report (M4.7)
   halyard-conventional   conventional-commit parser (winnow, zero-copy scan)
   halyard-version        bump algebra + 0.x policy + requirement rewriter
   halyard-edit           EditSet byte patches + atomic apply + plan apply
@@ -179,7 +187,7 @@ crates/
                          size-gate, corpus, gen-repo, bench-competitors,
                          discover-diff, git-diff, replay, bench-public, pgo
   halyard-cli            the user shell (plan/apply/check/pr/release/publish/fetch/
-                         explain/status/graph/doctor/schema/completions)
+                         migrate/explain/status/graph/doctor/schema/completions)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
@@ -209,6 +217,7 @@ cargo run -p halyard-conventional --example lint_title
 cargo run -p halyard-version --example bump_algebra
 cargo run -p halyard-edit --example apply_patch
 cargo run -p halyard-config --example resolve_layers
+cargo run -p halyard-config --example migrate_report
 cargo run -p halyard-discover --example discover_workspace
 cargo run -p halyard-eco-cargo --example parse_manifest
 cargo run -p halyard-eco-cargo --example patch_lockfile
@@ -223,7 +232,9 @@ cargo run -p halyard-git --example tag_forecast
 cargo run -p halyard-git --example tag_push
 cargo run -p halyard-git --example tag_target
 cargo run -p halyard-git --example fetch_plan
+cargo run -p halyard-registry --example probe_registries
 cargo run -p halyard-cache --example dump
+cargo run -p halyard-cli --example release_pipeline
 cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
