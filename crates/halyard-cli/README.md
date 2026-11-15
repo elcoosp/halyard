@@ -79,7 +79,7 @@ halyard check --exit-code
 | `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter — through the §11.5 governor (M5.5) — when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
 | `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`; M5.5 adds the governor row) |
 | `fetch` | available (§8.8, M4.6 step 1, ADR-0016): probes `origin`'s tags, selects each package's latest release tag through the planner's template rule, fetches those tags plus the base branch in one minimal `git fetch` (blob-less; shallow clones deepen bounded by the previous releases; a failing minimal fetch retries once as the full fetch of the same refs); idempotent (I1) — tags already local at the probed target are not requested; a remote without a configured URL is an honest no-op; no `--dry` by design (the remote listing is the one input an offline forecast cannot have) |
-| `publish [--dry]` | available (M5.2 step 2, ADR-0018): the §13 engine validates the plan (recomputed hash, I8), layers the targets dependencies-first, resumes through the registry existence probes (already-published versions are no-ops, I1), waits for index visibility before dependents publish, and spawns `cargo publish` / `pnpm publish` per target through the adapter crates' verified argv tables (§13.4); `--dry` forecasts offline — the tools run their documented dry form, the registry is never probed (I5); failures are rows and the re-run continues from the first failure (§13.7); a partial publish exits 4 (§15.4); live mode under `--offline` fails closed (`E-CLI-PUBLISH`) |
+| `publish [--dry]` | available (M5.2 step 2, ADR-0018): the §13 engine validates the plan (recomputed hash, I8), layers the targets dependencies-first, resumes through the registry existence probes (already-published versions are no-ops, I1), waits for index visibility before dependents publish, and spawns `cargo publish` / `pnpm publish` per target through the adapter crates' verified argv tables (§13.4); `--dry` forecasts offline — the tools run their documented dry form, the registry is never probed (I5); failures are rows and the re-run continues from the first failure (§13.7); a partial publish exits 4 (§15.4); live mode under `--offline` fails closed (`E-CLI-PUBLISH`); the spawn injects the resolved publish credentials through the `PublishAuth` seam and scrubs every resolved token from surfaced tool output (M5.3 step 1, ADR-0019 — `E-PUB-AUTH` refuses a set-but-empty variable before any spawn); the JSON carries the per-registry `auth` provenance (variable names only) |
 | `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 ## Forge credentials (M4.1c, ADR-0014)
@@ -129,6 +129,28 @@ export HALYARD_FORGE_MAX_RETRIES=3              # retries per operation after th
 halyard doctor      # reports the resolved governor policy
 halyard pr --format json | jq '.governor'   # the run's summary: policy, spend, events
 ```
+
+## Publish auth (M5.3 step 1, ADR-0019)
+
+The `publish` spawn resolves credentials through the VERIFIED tools' own
+env grammar — halyard never writes auth files (pnpm's project-`.npmrc`
+anti-exfiltration rule is exactly why):
+
+```bash
+export CARGO_REGISTRY_TOKEN=…          # crates.io (Cargo Book; singular form)
+export CARGO_REGISTRIES_<NAME>_TOKEN=… # other cargo registries (NAME uppercased,
+                                       # dots/dashes → underscores)
+export NPM_TOKEN=…                     # npm (the user-level auth-file ${NPM_TOKEN}
+export NODE_AUTH_TOKEN=…               #   interpolation; setup-node's convention)
+
+halyard doctor     # the publish-auth row: which variable authenticates each registry
+halyard publish --dry --format json | jq '.auth'   # the same provenance in the forecast
+```
+
+Absent variables are honest (`none` — the tools' own credential stores,
+`cargo login` / the user-level auth file, govern); a **set-but-empty**
+variable fails closed (`E-PUB-AUTH`) before any spawn, and every token
+resolved is scrubbed from tool output before it reaches a report row.
 
 ## Publishing (M5.2, §13, ADR-0018)
 
