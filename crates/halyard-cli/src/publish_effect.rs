@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use halyard_forge_github::UreqTransport;
 use halyard_publish::{
-    AuthOutcome, MapRouter, PublishAuth, PublishEffect, PublishError, PublishTarget, scrub_secrets,
+    AuthOutcome, PublishAuth, PublishEffect, PublishError, PublishTarget, TargetRouter,
+    scrub_secrets,
 };
 use halyard_registry::{CratesIo, Npm, RegistrySleeper};
 
@@ -160,14 +161,118 @@ fn package_root(repo_root: &Path, target: &PublishTarget) -> std::path::PathBuf 
 
 /// The live registry routing: the two §13 clients over the blocking
 /// transport (the workspace's only HTTP client crate; the engine routes
-/// before any call, so an unused client costs nothing).
-#[must_use]
-pub fn publish_router() -> MapRouter {
+/// before any call, so an unused client costs nothing), **plus** one
+/// client per configured custom cargo registry and one override per
+/// npm package that names its own registry (ADR-0021):
+///
+/// * every non-default target registry *name* resolves through the
+///   cargo configuration (`[registries.<name>]` / its env override —
+///   the same configuration `cargo publish --registry <name>` reads, so
+///   the probe and the tool cannot disagree about where a registry
+///   lives). A sparse-HTTP index joins the map as a `CratesIo` client
+///   over the resolved base.
+/// * every npm target's package resolves its publish registry through
+///   the npm configuration the spawned `pnpm publish` reads
+///   (`publishConfig.registry`, `NPM_CONFIG_REGISTRY`, the `.npmrc`
+///   `registry`/`@scope:registry` keys) — a custom base joins the map
+///   as a per-target override ([`TargetRouter`]: two npm packages of
+///   one workspace may publish to different registries), the default
+///   rides the by-name route.
+///
+/// An unresolvable or non-HTTP name refuses the run closed with the
+/// honest `E-PUB-REGISTRY` decline — zero probes, zero spawns
+/// (validate-then-act, §15.3).
+///
+/// # Errors
+///
+/// [`PublishError::Registry`] when a target's registry resolves to
+/// nothing probeable (an unconfigured cargo name, a git-protocol
+/// index, a malformed cargo config, a non-HTTP npm base) — the message
+/// names the registry/package and the fix.
+pub fn publish_router(
+    repo_root: &Path,
+    targets: &[PublishTarget],
+) -> Result<TargetRouter, PublishError> {
     let transport: Arc<dyn halyard_forge::transport::HttpTransport> =
         Arc::new(UreqTransport::new());
-    MapRouter::new()
+    let mut router = TargetRouter::new()
         .with("crates.io", Arc::new(CratesIo::new(Arc::clone(&transport))))
-        .with("npm", Arc::new(Npm::new(transport)))
+        .with("npm", Arc::new(Npm::new(Arc::clone(&transport))));
+    // Distinct target registry names, sorted (I3): the resolution reads
+    // local files only, so the iteration order cannot change outcomes —
+    // but a deterministic decline order keeps the refusal message
+    // byte-stable across runs.
+    let mut names: Vec<&str> = targets
+        .iter()
+        .map(|target| target.registry.as_str())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    let config_paths = halyard_eco_cargo::registry_config::cargo_config_paths(repo_root);
+    for name in names {
+        if halyard_eco_cargo::is_default_registry(name) || name == "npm" {
+            continue;
+        }
+        match halyard_eco_cargo::registry_config::registry_index(name, &config_paths) {
+            halyard_eco_cargo::registry_config::RegistryIndexLookup::Sparse(base) => {
+                let client = CratesIo::with_index_base(Arc::clone(&transport), &base);
+                router = router.with(name, Arc::new(client));
+            }
+            halyard_eco_cargo::registry_config::RegistryIndexLookup::Unsupported(message) => {
+                return Err(PublishError::Registry {
+                    registry: name.to_owned(),
+                    message,
+                });
+            }
+            halyard_eco_cargo::registry_config::RegistryIndexLookup::Unknown => {
+                let fragment = halyard_eco_cargo::registry_config::registry_env_fragment(name);
+                return Err(PublishError::Registry {
+                    registry: name.to_owned(),
+                    message: format!(
+                        "no `[registries.{name}]` index in the cargo configuration \
+                         (.cargo/config.toml or {fragment}_INDEX) — configure the registry's \
+                         sparse+ index URL, or disable publishing for its packages"
+                    ),
+                });
+            }
+        }
+    }
+    // The npm side routes per package (ADR-0021): the manifest's
+    // publishConfig and the .npmrc hierarchy name the registry the
+    // spawned `pnpm publish` targets, so the probe resolves the same
+    // way (targets sorted by name — the plan's own order).
+    let mut npm_targets: Vec<&PublishTarget> = targets
+        .iter()
+        .filter(|target| target.ecosystem == "npm")
+        .collect();
+    npm_targets.sort_unstable_by(|a, b| a.package.cmp(&b.package));
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let empty = std::path::PathBuf::new();
+    for target in npm_targets {
+        let lookup = halyard_eco_npm::publish_registry::publish_registry_base(
+            repo_root,
+            home.as_deref().unwrap_or(&empty),
+            &target.package,
+            &target.manifest,
+        );
+        match lookup {
+            halyard_eco_npm::publish_registry::PublishRegistryBase::Default => {}
+            halyard_eco_npm::publish_registry::PublishRegistryBase::Custom(base) => {
+                let client = Npm::with_registry_base(Arc::clone(&transport), &base);
+                router = router.with_override(&target.registry, &target.package, Arc::new(client));
+            }
+            halyard_eco_npm::publish_registry::PublishRegistryBase::Unsupported(message) => {
+                return Err(PublishError::Registry {
+                    registry: target.registry.clone(),
+                    message: format!(
+                        "{message} (package {}, manifest {})",
+                        target.package, target.manifest
+                    ),
+                });
+            }
+        }
+    }
+    Ok(router)
 }
 
 /// The production sleeper pair for the §13 step-3 visibility wait (the
