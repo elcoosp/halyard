@@ -43,6 +43,80 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M4.7 step 2 `--write` slice + ADR-0021 routing-completion slice | done | (tree left dirty; no commits) | M1 (M4.7 step 2, ADR-0023): the §16.2 write step — `halyard_config::migrate` gains the `DraftSink` seam (object-safe, `exists` + create-only atomic `write`), the production `AtomicDraftSink` (temp sibling → fsync → rename, refuses a missing parent dir instead of mkdir-ing), the reference fake `MemoryDraftSink` (models pre-existing files, records writes in order), the pure `plan_draft_write` (zero configured tools → `None` — absence is a value; one → its draft **verbatim** from the report; two or more → `E-CFG-MIGRATE` naming every candidate, never a guess) + `run_draft_write` (the exists gate reads before any write; plain-data `DraftWriteReport` with snake-case `DraftWriteOutcome`); CLI `migrate --write` (JSON gains a `write` block **only when the flag ran** — the frozen report-only shape stays byte-stable; the human header names what landed; a `::notice` in gha; refusals surface `E-CFG-MIGRATE`, nothing-configured is an honest no-op); 12 engine tests (`tests/migrate_write.rs`) + 6 CLI gates (`cli_migrate.rs`) — one red→green cycle (red on E0432 unresolved write-seam imports + the unknown `--write` flag); bench group `migrate_write` (plan + memory-sink run); example `migrate_write` (lands the draft in a temp dir, re-loads it through the strict loader, demonstrates the create-only refusal); ADR-0023 + E-CFG-MIGRATE as-built (three new causes) + index row + arch §16.2 as-built + root/CLI README rows. M2 (ADR-0021's declared routing completions): the cargo legacy `config` filename (VERIFIED Cargo Book quote — "If both files exist, Cargo will use the file without the extension"; the module doc's earlier "deprecated upstream, out of scope" claim was WRONG — drift fixed) via the pure `config_paths_for` enumeration (`config.toml` first, legacy `config` last per directory — the merge core already implements per-key precedence); the npmrc scoped-registry env variables (the npm docs document NO env form — settled by probe against npm 11.19.1, seven probes recorded: the literal `npm_config_@<scope>:registry` name is the scoped key's env form, case-insensitive; the underscore intermediate form is NOT the scoped key — npm reads it as an unknown `myscope-registry` key and warns; the scoped key governs a scoped package regardless of the source tier) via `scoped_registry_env_variable`/`scoped_env_name_matches`/`scan_scoped_registry_env` + the 5th `env_scoped_registry` parameter on `resolve_publish_registry` (precedence: publishConfig → scoped key env→npmrc → plain key env→npmrc → default); 5 cargo tests + 7 npm tests — one red→green cycle (red on E0425/E0061); research note section (verbatim quotes + the seven probes) + ADR-0021 as-built + module docs + CLI README publish row. Doc-drift fixes (additive): the `Command` enum doc listed `migrate` among the absent commands (wired since M4.7) — corrected; the human migrate renderer header + `ToolSurvey::draft` doc moved from "never written" to as-built; `publish-tooling.md`'s "legacy config not read" gap note replaced by the completion record | The knope/release-plz migration sources, the M4.7 corpus-lane acceptance, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; see the session log below |
 
+| M4.7 continued: knope + release-plz migration sources slice (ADR-0024) | done | (tree left dirty; no commits) | M1: the §16.2 row's remaining two `MigrationSource` impls over the ADR-0022 seam — `KnopeSource` (`knope.toml`: the documented `[package]`/`[packages."<name>"]` shapes, the Release step's tag rules `v{version}` / `{name}/v{version}` composed into one appendix-A.3 template per shape, `versioned_files` as provenance notes, workflows/scopes/extra_changelog_sections/assets/github/jira/variables as unmapped rows with reasons, both package shapes together a fail-closed `E-CFG-MIGRATE`, packageless configs an honest advisory row) and `ReleasePlzSource` (`release-plz.toml` / `.release-plz.toml` / `.config/release-plz.toml` in the documented top-down search order, first-match-only; the Tera `git_tag_name` translated onto the appendix-A.3 grammar by placeholder substitution with any other Tera variable an honest unmapped row — never half-translated; the documented workspace default mapped with the `auto`-equivalence note; per-package `release = false` → the exact `[[package]].release` override; `changelog.style = "keep-a-changelog"` pinned from the documented default; `publish` always unmapped with the I7 opt-in reason; `version_group` a review row; per-package tag disagreements reported, never guessed; `[[package]]` without `name` fail-closed) — both wired into `default_sources()` (the registry is four), no renderer changes (the report is data), the write path untouched (empty drafts are not candidates, the ADR-0023 rule); 21 engine tests + 1 new CLI gate + the `tools.len()` pin moved 2→4 (one red→green cycle, red on `unreachable!("knope survey present")` + the pin); bench groups `knope_survey_2_packages` (≈6.5 µs) + `release_plz_survey_2_packages` (≈9.5 µs) + the empty-tree pin moved to four sources; example `migrate_report` extended with a release-plz survey; the two grammars VERIFIED (knope config/packages/Release-step pages, release-plz config reference — verbatim quotes in `docs/research/migrate-config-grammars.md`) + ADR-0024 + E-CFG-MIGRATE page/index + module doc as-built + README/arch/CLI-README rows | M2 (the corpus-lane acceptance, 20 real-world foreign configs) deferred with the inventory recorded — never half-shipped; the changesets tag-grammar VERIFY, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; session log below |
+
+
+### 2026-11-15 — M4.7 continued: the knope + release-plz migration sources (ADR-0024) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `4a701c0` (the
+  M4.7 step-2 slice): baseline re-verified on a fresh toolchain
+  (stable 1.100.0, `RUSTFLAGS="-C debuginfo=0"` — the disk-ceiling
+  lesson applied from the first build): `test --workspace
+  --all-features --locked --no-run` green at base. The declared start
+  points were (1) the knope/release-plz `MigrationSource` impls, (2)
+  the M4.7 corpus-lane acceptance, (3) the M2.6 dhat re-audit, (4) M5.3
+  OIDC on a live CI runtime. Picked (1) as M1 — the §16.2 row's
+  remaining two tools, offline-verifiable, the ADR-0022 seam's declared
+  consumers — and (2) as M2; the M1 slice consumed the session budget,
+  so M2 is DEFERRED with the inventory recorded, never half-wired.
+- **M1 implemented (no stubs), one full red→green cycle** (the 21
+  engine tests written first — red on `unreachable!("knope survey
+  present")` and the two-tool registry pin; the CLI gate red on the
+  `tools.len()` pin — then implemented):
+  - Design decisions (ADR-0024): the foreign tag grammars translate,
+    they are not re-derived — knope's Release step documents *rules*
+    (`v{version}` single, `{package_name}/v{version}` multi), which
+    compose into exactly one appendix-A.3 template per shape;
+    release-plz documents *Tera templates*, so the translation is
+    placeholder substitution over the two documented placeholders, and
+    any other Tera variable or block survives as an unmapped row — the
+    survey never half-translates. release-plz's `git_tag_name` default
+    depends on the repo shape the survey cannot observe, so the
+    documented *workspace* default maps with the note naming the rule
+    halyard's own `auto` applies. `publish` is always an unmapped row
+    carrying the I7 opt-in reason (a migration never sets
+    `publish.enabled`); per-package `release = false` is the one key
+    that maps exactly. knope's two package shapes are exclusive — both
+    at once is `E-CFG-MIGRATE`, not a pick.
+  - The two grammars were VERIFIED per §0.4 before any mapping (the
+    knope config/packages/Release-step pages, the release-plz
+    configuration reference; verbatim quotes in
+    `docs/research/migrate-config-grammars.md`).
+  - The write path needed no changes: empty drafts are not write
+    candidates (the ADR-0023 rule), so a knope/release-plz survey with
+    nothing mappable is not a `--write` candidate.
+  - No renderer changes: the report is data, the CLI JSON/human/GHA
+    renderers carried the new sources as-is (the new CLI gate covers
+    both through the JSON path).
+- **Tests/bench/example totals.** +22 tests / +1 gate over base (21
+  engine `tests/migrate.rs` + 1 CLI gate; the `tools.len()` and
+  empty-tree pins moved 2→4). Bench groups `knope_survey_2_packages`
+  (≈6.5 µs) and `release_plz_survey_2_packages` (≈9.5 µs) registered
+  and run beside the existing survey groups. Example `migrate_report`
+  extended with a release-plz survey (tag translation, the release
+  override, the review rows, the validated draft).
+- **Gates on the final tree.** fmt green; clippy
+  `--workspace --all-targets --all-features --locked -- -D warnings`
+  0 findings (thirteen real findings surfaced en route and were fixed
+  in code, not suppressed: two `too_many_lines` (the surveys extracted
+  into documented helpers), `option_option` (the per-package tag state
+  became `resolved_tag` + a provenance flag), `assigning_clones`,
+  `ref_option`, `doc_markdown`, a manual `Option::map`, two
+  `single_match_else`, an over-long example `main` (extracted into a
+  `print_survey` helper), and test-side `assert_is_empty`,
+  `single_char_pattern` and `needless_borrows`); the
+  lint-hygiene grep empty; the full `test --workspace --all-features
+  --locked` green; `--benches` compiled and run; the cache
+  conflict-feature lane (`--features loom` release) green.
+- **Honest state at cut-off.** The corpus-lane acceptance (20
+  real-world foreign configs — the M4.7 full milestone), the changesets
+  tag-grammar VERIFY, M5.3 OIDC, the corpus-wide pnpm differential, the
+  M2.6 dhat re-audit and the two p50 perf-budget misses are unchanged.
+  Tree left dirty (no commits).
+- **Next session start point.** (1) the M4.7 corpus-lane acceptance
+  (the knope/release-plz sources' live-config lane), (2) the M2.6 dhat
+  re-audit with the cache warm, (3) M5.3 OIDC on a live CI runtime,
+  (4) the corpus-wide pnpm differential as an xtask subcommand.
 
 ### 2026-11-15 — M4.7 step 2: the §16.2 `migrate --write` (ADR-0023) + the ADR-0021 routing completions (tree left dirty, no commits)
 
