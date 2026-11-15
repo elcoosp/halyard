@@ -1,7 +1,8 @@
 //! The transport seam (M4.1b, ADR-0013): the plain-data HTTP vocabulary
 //! the REST adapters speak — [`HttpRequest`]/[`HttpResponse`], the
 //! [`HttpTransport`] effect seam and the scripted [`MemoryTransport`]
-//! reference fake (the transport analogue of [`MemoryForge`]).
+//! reference fake (the transport analogue of the forge crate's
+//! `MemoryForge`).
 //!
 //! The seam stays dependency-free and layer-rule-clean: an HTTP
 //! *status* is a **value** (the adapter interprets it per endpoint, §11.4
