@@ -1,5 +1,6 @@
 //! Config errors — stable codes `E-CFG-UNKNOWN-KEY`, `E-CFG-TAG-STYLE`,
-//! `E-CFG-TOML`, `E-CFG-ENV` (§15.4; pages under `docs/errors/`).
+//! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE` (§15.4; pages under
+//! `docs/errors/`).
 
 /// An error while loading or resolving `halyard.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +39,16 @@ pub enum ConfigError {
         /// What was wrong.
         message: String,
     },
+    /// A foreign release-tool configuration (M4.7 `migrate`) could not
+    /// be parsed or does not fit its documented grammar. Fail-closed: a
+    /// half-understood foreign config is never mapped.
+    Migrate {
+        /// The foreign file's repo-relative path, as discovered.
+        path: String,
+        /// What is wrong (parse error or grammar violation) and what to
+        /// do instead.
+        message: String,
+    },
 }
 
 impl ConfigError {
@@ -49,6 +60,8 @@ impl ConfigError {
     pub const READ_CODE: &'static str = "E-CFG-TOML";
     /// Stable code for [`ConfigError::Env`].
     pub const ENV_CODE: &'static str = "E-CFG-ENV";
+    /// Stable code for [`ConfigError::Migrate`].
+    pub const MIGRATE_CODE: &'static str = "E-CFG-MIGRATE";
 
     /// Stable error code for this variant.
     pub fn code(&self) -> &'static str {
@@ -57,6 +70,7 @@ impl ConfigError {
             Self::TagStyle { .. } => Self::TAG_STYLE_CODE,
             Self::Read { .. } => Self::READ_CODE,
             Self::Env { .. } => Self::ENV_CODE,
+            Self::Migrate { .. } => Self::MIGRATE_CODE,
         }
     }
 }
@@ -95,6 +109,12 @@ impl std::fmt::Display for ConfigError {
             Self::Env { var, message } => {
                 write!(f, "[{}] invalid value for {var}: {message}", Self::ENV_CODE)
             }
+            Self::Migrate { path, message } => write!(
+                f,
+                "[{}] cannot migrate {path}: {message} — fix or remove the foreign \
+                 configuration; the migration never guesses",
+                Self::MIGRATE_CODE
+            ),
         }
     }
 }
