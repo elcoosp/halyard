@@ -28,9 +28,13 @@ use std::fmt::Write as _;
 use halyard_core::plan::{Plan, PlanRelease};
 use minijinja::{Environment, context};
 
+pub mod check_comment;
 pub mod pr_body;
 pub mod release_notes;
 
+pub use check_comment::{
+    CHECK_MARKER, CheckComment, CheckPrediction, CheckVerdict, render_check_comment,
+};
 pub use pr_body::{extract_embedded_plan, render_release_body};
 pub use release_notes::{
     NotesContext, compare_url, extract_version_section, render_release_notes,
