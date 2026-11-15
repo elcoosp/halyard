@@ -116,6 +116,148 @@ pub(crate) fn lint(title: &str, config: &PlanConfig) -> TitleVerdict {
     lint_title(title, &PlanTitleRule::new(config))
 }
 
+/// The title-rejection shapes the `E-CLI-TITLE` diagnosis and the §11.6
+/// check comment share — single-sourced wording, so the job log and the
+/// posted comment can never disagree about why a title was refused.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TitleRejection {
+    /// The title is not a conventional commit at all (`reason` is the
+    /// engine's grammar refusal).
+    NotConventional {
+        /// The engine's grammar refusal text.
+        reason: String,
+    },
+    /// The title is a `fixup!`/`squash!` autosquash subject (§8.5 —
+    /// never released).
+    FixupOrSquash,
+    /// The title's type is not a known release type and a known type is
+    /// within edit distance 2 (a likely typo — merging it would convey
+    /// no bump).
+    UnknownKind {
+        /// The type as written.
+        kind: String,
+        /// The closest known type (the did-you-mean).
+        closest: String,
+    },
+}
+
+/// The `E-CLI-TITLE` diagnosis text for `rejection` (the error message
+/// and the §11.6 comment's rejected-verdict reason — one source).
+pub(crate) fn rejection_message(
+    title: &str,
+    rejection: &TitleRejection,
+    config: &PlanConfig,
+) -> String {
+    match rejection {
+        TitleRejection::NotConventional { reason } => format!(
+            "PR title {title:?} is not a conventional commit: {reason}. Fix: squash-merge \
+             repos derive the bump from the title (§11.6); use `type(scope): description` \
+             (e.g. `feat(parser): accept spans`)"
+        ),
+        TitleRejection::FixupOrSquash => format!(
+            "PR title {title:?} is a fixup!/squash! subject — autosquash commits are never \
+             released (§8.5). Fix: reword the merge title to a conventional commit"
+        ),
+        TitleRejection::UnknownKind { kind, closest } => format!(
+            "PR title type {kind:?} is not a known release type — did you mean {closest:?}? \
+             Known types: {}. Fix: reword the merge title; unmapped types release nothing",
+            known_types_csv(config)
+        ),
+    }
+}
+
+/// The config's known release types, sorted, comma-separated (the
+/// `E-CLI-TITLE` diagnosis lists what the mapping accepts).
+pub(crate) fn known_types_csv(config: &PlanConfig) -> String {
+    config
+        .commit_types
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The lint's outcome after the typo gate: the accepted lint (the
+/// prediction input) or the rejection with its single-sourced
+/// `E-CLI-TITLE` message — the shape both the exit path and the §11.6
+/// comment consume.
+#[derive(Debug)]
+pub(crate) enum TitleClassification {
+    /// The title passed the lint and the typo gate.
+    Accepted(halyard_conventional::TitleLint),
+    /// The title was rejected; the message is the diagnosis (the error
+    /// text and the posted comment's reason — one source).
+    Rejected(String),
+}
+
+/// Classifies one title: lint → typo gate → rejection wording (the
+/// single-sourced `rejection_message`), so the command's exit path and
+/// its posted comment can never disagree.
+pub(crate) fn classify_title(title: &str, config: &PlanConfig) -> TitleClassification {
+    match lint(title, config) {
+        halyard_conventional::TitleVerdict::Accepted(lint) => {
+            // §11.6's precise diagnosis: an unmapped kind with a close
+            // known kind is a likely typo — fail loudly instead of
+            // silently releasing nothing. A genuinely unmapped kind
+            // (`chore:`, `docs:`) is a legitimate no-bump verdict.
+            if let Some(closest) = &lint.closest_known {
+                TitleClassification::Rejected(rejection_message(
+                    title,
+                    &TitleRejection::UnknownKind {
+                        kind: lint.kind.clone(),
+                        closest: closest.clone(),
+                    },
+                    config,
+                ))
+            } else {
+                TitleClassification::Accepted(lint)
+            }
+        }
+        halyard_conventional::TitleVerdict::NotConventional { reason } => {
+            TitleClassification::Rejected(rejection_message(
+                title,
+                &TitleRejection::NotConventional { reason },
+                config,
+            ))
+        }
+        halyard_conventional::TitleVerdict::FixupOrSquash => TitleClassification::Rejected(
+            rejection_message(title, &TitleRejection::FixupOrSquash, config),
+        ),
+    }
+}
+
+/// The §11.6 comment's inputs for `classification` (the renderer's
+/// plain-data contract — the mapping stays beside the wording that
+/// feeds it).
+pub(crate) fn comment_input(
+    title: &str,
+    classification: &TitleClassification,
+    predictions: &[Prediction],
+) -> halyard_changelog::CheckComment {
+    let verdict = match classification {
+        TitleClassification::Accepted(lint) => halyard_changelog::CheckVerdict::Accepted {
+            kind: lint.kind.clone(),
+            breaking: lint.breaking,
+        },
+        TitleClassification::Rejected(reason) => halyard_changelog::CheckVerdict::Rejected {
+            reason: reason.clone(),
+        },
+    };
+    halyard_changelog::CheckComment {
+        title: title.to_owned(),
+        verdict,
+        predictions: predictions
+            .iter()
+            .map(|row| halyard_changelog::CheckPrediction {
+                package: row.package.clone(),
+                from: row.from.clone(),
+                bump: row.bump,
+                remapped: row.remapped,
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Prediction, bump_of, lint, predict};
