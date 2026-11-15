@@ -231,8 +231,14 @@ fn the_write_report_serializes_with_snake_case_outcomes() -> Result<(), BoxError
         outcome: DraftWriteOutcome::Written,
     };
     let value = serde_json::to_value(&write)?;
-    assert_eq!(value.get("outcome").and_then(|o| o.as_str()), Some("written"));
-    assert_eq!(value.get("path").and_then(|p| p.as_str()), Some(DRAFT_TARGET));
+    assert_eq!(
+        value.get("outcome").and_then(|o| o.as_str()),
+        Some("written")
+    );
+    assert_eq!(
+        value.get("path").and_then(|p| p.as_str()),
+        Some(DRAFT_TARGET)
+    );
     let nothing = run_draft_write(None, &MemoryDraftSink::new())?;
     let nothing_value = serde_json::to_value(&nothing)?;
     assert_eq!(
