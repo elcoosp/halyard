@@ -8,7 +8,40 @@
 
 use std::error::Error;
 
-use halyard_config::{ForeignFiles, default_sources, migrate};
+use halyard_config::{ForeignFiles, ToolSurvey, default_sources, migrate};
+
+/// Prints one survey's mapped rows, semantic differences, package rows
+/// and draft (the human renderer's shape, minus the tool header).
+fn print_survey(survey: &ToolSurvey) {
+    for row in &survey.rows {
+        println!(
+            "mapped:     {} → {} = {}",
+            row.foreign_key, row.halyard_key, row.value
+        );
+        if let Some(note) = &row.note {
+            println!("            note: {note}");
+        }
+    }
+    for row in &survey.unmapped {
+        println!("unmapped:   {} — {}", row.foreign_key, row.reason);
+    }
+    for package in &survey.packages {
+        println!(
+            "package:    {} (component: {}, tag: {})",
+            package.path,
+            package.component.as_deref().unwrap_or("(path)"),
+            package.tag
+        );
+        for note in &package.notes {
+            println!("            {note}");
+        }
+    }
+    println!("draft (never written by this demo):");
+    println!(
+        "{}",
+        survey.draft.as_deref().unwrap_or("(nothing to draft)")
+    );
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     // A repo migrating off release-please: the manifest config (the
@@ -42,36 +75,43 @@ fn main() -> Result<(), Box<dyn Error>> {
         survey.tool, survey.configured
     );
     println!("files:      {}", survey.files.join(", "));
-    for row in &survey.rows {
-        println!(
-            "mapped:     {} → {} = {}",
-            row.foreign_key, row.halyard_key, row.value
-        );
-        if let Some(note) = &row.note {
-            println!("            note: {note}");
-        }
-    }
-    for row in &survey.unmapped {
-        println!("unmapped:   {} — {}", row.foreign_key, row.reason);
-    }
-    for package in &survey.packages {
-        println!(
-            "package:    {} (component: {}, tag: {})",
-            package.path,
-            package.component.as_deref().unwrap_or("(path)"),
-            package.tag
-        );
-        for note in &package.notes {
-            println!("            {note}");
-        }
-    }
-    println!("draft (never written by this slice):");
-    println!(
-        "{}",
-        survey.draft.as_deref().unwrap_or("(nothing to draft)")
-    );
+    print_survey(survey);
 
-    // Absence is a value: no changesets files ⇒ configured: false.
+    // A repo migrating off release-plz: the Tera tag template
+    // translates onto the appendix-A.3 grammar, the documented
+    // changelog default pins the style, and a release-disabled package
+    // becomes a halyard override. A repo migrating off knope rides the
+    // same registry: its multi-package tag rule (`{package_name}/v{version}`)
+    // maps onto `repo.tag_style` directly. (The VERIFIED grammars —
+    // see docs/research/migrate-config-grammars.md.)
+    let mut plz_files = ForeignFiles::new();
+    plz_files.insert(
+        "release-plz.toml",
+        r#"
+[workspace]
+git_tag_name = "{{ package }}-v{{ version }}"
+publish_timeout = "20m"
+
+[[package]]
+name = "engine"
+
+[[package]]
+name = "cli"
+release = false
+version_group = "bundle"
+"#,
+    );
+    let report = migrate(&plz_files, &default_sources())?;
+    let plz = report
+        .tools
+        .iter()
+        .find(|t| t.tool == "release-plz")
+        .ok_or("release-plz surveys every ForeignFiles input")?;
+    println!("tool:       {} (configured: {})", plz.tool, plz.configured);
+    print_survey(plz);
+
+    // Absence is a value: no foreign files ⇒ every source reports
+    // not-detected, no error, no rows.
     let report = migrate(&ForeignFiles::new(), &default_sources())?;
     for survey in &report.tools {
         println!(
