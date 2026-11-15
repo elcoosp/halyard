@@ -33,6 +33,10 @@ pub mod edit;
 pub mod json_span;
 pub mod lockfile;
 pub mod pnpm_yaml;
+// M5.2 step 2 (§13.4): the publish argv grammar (the shell spawns, the
+// adapter owns the tool grammar — the `refresh_command` convention).
+pub mod publish;
+pub use publish::pnpm_publish_args;
 
 /// The npm-family adapter (§7.3 discovery + manifest-edit subset).
 #[derive(Clone, Copy, Debug, Default)]
