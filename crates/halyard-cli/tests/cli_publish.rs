@@ -402,3 +402,41 @@ fn doctor_reports_the_publish_auth_row() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+/// A configured non-default cargo registry fail-closes at the shell's
+/// routing map (M5.2's by-design routing gate: the map owns the two §13
+/// clients — crates.io and npm — and third-party cargo indexes have no
+/// resume-probe client, so the run refuses with `E-PUB-REGISTRY` naming
+/// the registry **before any spawn**, dry mode included — a forecast
+/// must never show a spawn the live run would refuse). The `--registry`
+/// argv mapping this milestone ships is pinned at the grammar's owner
+/// (the adapter crate's argv tests) and wired through the effect; the
+/// end-to-end custom-registry publish waits on a third-party registry
+/// client joining the routing map (the documented open item).
+#[test]
+fn publish_refuses_a_custom_registry_before_any_spawn() -> Result<(), BoxError> {
+    let config = "[publish]\nenabled = true\n\n[publish.cargo]\nregistry = \"corp.repo\"\n";
+    let fx = build_workspace("registry", config)?;
+    let shim = write_cargo_shim("shim-registry")?;
+    let log = fixture_dir("shim-log-registry")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        !out.status.success(),
+        "an unroutable registry is refused, not half-run: {text}"
+    );
+    assert!(text.contains("E-PUB-REGISTRY"), "the stable code: {text}");
+    assert!(
+        text.contains("corp.repo"),
+        "the refusal names the registry: {text}"
+    );
+    assert!(
+        !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
+        "zero side effects — the tool never spawned: {text}"
+    );
+    Ok(())
+}
