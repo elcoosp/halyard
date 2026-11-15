@@ -38,7 +38,8 @@ use halyard_core::reason::Oid;
 use halyard_forge::error::ForgeError;
 use halyard_forge::transport::{HttpRequest, HttpTransport};
 use halyard_forge::{
-    ApiCommit, ApiFile, BranchName, CallRecord, Forge, Pr, PrSpec, RateInfo, Release, ReleaseSpec,
+    ApiCommit, ApiFile, BranchName, CallRecord, CommentSpec, Forge, Pr, PrComment, PrSpec,
+    RateInfo, Release, ReleaseSpec,
 };
 
 use crate::app_auth::{
@@ -672,6 +673,89 @@ impl<T: HttpTransport> Forge for GitHubRestForge<T> {
             ForgeError::transport(format!(
                 "the API commit returned a non-object sha: {new_commit:.200}"
             ))
+        })
+    }
+
+    fn upsert_pr_comment(&self, spec: &CommentSpec) -> Result<PrComment, ForgeError> {
+        // The scan's page size (the GitHub comment list caps at 100).
+        const PAGE: usize = 100;
+        let mut state = self.state();
+        // The shared fail-closed spec contract: PR number, marker,
+        // body-with-marker — an invalid spec never reaches the wire.
+        spec.validate()?;
+        // The marker scan (§11.6, I1): a deterministic ascending walk —
+        // pages of 100 until a short page ends the walk (the GitHub
+        // comment list is ascending by id, so the scan is complete; a
+        // found marker rewrites in place, an exhausted walk creates).
+        let mut page = 1_u32;
+        loop {
+            let path = format!(
+                "{}/issues/{}/comments?per_page={PAGE}&page={page}",
+                self.endpoint.repo_prefix(),
+                spec.pr_number
+            );
+            let headers = self.headers(&mut state)?;
+            let request = HttpRequest {
+                method: "GET",
+                url: self.endpoint.url(&path),
+                headers,
+                body: None,
+            };
+            let response = self.call(&mut state, "GET", request)?;
+            if !(200..300).contains(&response.status) {
+                return Err(Self::map_status(&response, "the check-comment scan"));
+            }
+            let comments = wire::parse_comment_list(&response.body)?;
+            if let Some(found) = wire::comment_with_marker(&comments, &spec.marker) {
+                // `comment_with_marker` only returns id-bearing
+                // comments — the PATCH address exists by construction.
+                let id = found
+                    .id
+                    .unwrap_or_else(|| unreachable!("the marker scan yields id-bearing comments"));
+                let headers = self.headers(&mut state)?;
+                let request = HttpRequest {
+                    method: "PATCH",
+                    url: self.endpoint.url(&format!(
+                        "{}/issues/comments/{id}",
+                        self.endpoint.repo_prefix()
+                    )),
+                    headers,
+                    body: Some(wire::comment_body(&spec.body)),
+                };
+                let response = self.call(&mut state, "PATCH", request)?;
+                if !(200..300).contains(&response.status) {
+                    return Err(Self::map_status(&response, "the check-comment rewrite"));
+                }
+                let updated = wire::parse_comment(&response.body)?;
+                return Ok(PrComment {
+                    url: updated.html_url.unwrap_or_default(),
+                    created: false,
+                });
+            }
+            if comments.len() < PAGE {
+                break;
+            }
+            page = page.saturating_add(1);
+        }
+        let headers = self.headers(&mut state)?;
+        let request = HttpRequest {
+            method: "POST",
+            url: self.endpoint.url(&format!(
+                "{}/issues/{}/comments",
+                self.endpoint.repo_prefix(),
+                spec.pr_number
+            )),
+            headers,
+            body: Some(wire::comment_body(&spec.body)),
+        };
+        let response = self.call(&mut state, "POST", request)?;
+        if !(200..300).contains(&response.status) {
+            return Err(Self::map_status(&response, "the check-comment creation"));
+        }
+        let created = wire::parse_comment(&response.body)?;
+        Ok(PrComment {
+            url: created.html_url.unwrap_or_default(),
+            created: true,
         })
     }
 
