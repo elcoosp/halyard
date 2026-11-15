@@ -1736,7 +1736,9 @@ fn release_pr_title(plan: &halyard_core::Plan) -> String {
 /// `halyard-publish` engine — plan → publication → run, with the
 /// per-ecosystem spawn effect (the adapter crates' argv tables) and the
 /// live registry routing (the two §13 clients over the blocking
-/// transport). `--dry` is the §13.8 forecast: the tools run their
+/// transport, plus the configured custom cargo registries resolved
+/// from the cargo configuration, ADR-0021). `--dry` is the §13.8
+/// forecast: the tools run their
 /// documented dry form, the registry is never probed (I5), and the
 /// report carries `Forecast` rows. Live failures are rows (§13.7); the
 /// command exits 4 on a partial publish (§15.4), 1 when nothing
@@ -1773,7 +1775,12 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
         1,
     )
     .in_mode(mode);
-    let router = publish_effect::publish_router();
+    // The routing resolution (ADR-0021) reads the cargo configuration
+    // before any call: configured custom registries join the map, an
+    // unresolvable name refuses the run closed — zero probes, zero
+    // spawns (validate-then-act, §15.3).
+    let router = publish_effect::publish_router(std::path::Path::new("."), &publication.targets)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let auth = std::sync::Arc::new(auth);
     let effect =
         publish_effect::SpawnPublishEffect::new(std::path::PathBuf::from("."), dry, auth.clone());
