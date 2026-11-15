@@ -245,6 +245,122 @@ pub fn apply_report(
 }
 
 /// Renders the plan as an aligned human table plus per-release reasons.
+/// The publish report, human/gha shape (M5.2 step 2, §13.7/§13.8): the
+/// rows in execution order (the engine guarantees the order), the
+/// tallies derived from the rows, and the not-targets the plan
+/// carried.
+pub fn publish_report(report: &halyard_publish::PublishReport, mode: &str) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "publish ({mode}): {} published, {} already published, {} forecast, {} skipped, \
+         {} failed",
+        report.published, report.already_published, report.forecast, report.skipped, report.failed,
+    );
+    for row in &report.rows {
+        let what = match &row.outcome {
+            halyard_publish::PublishOutcome::Published {
+                visibility_confirmed,
+            } => {
+                if *visibility_confirmed {
+                    "published (visibility confirmed)".to_owned()
+                } else {
+                    "published (index never confirmed — dependents skip)".to_owned()
+                }
+            }
+            halyard_publish::PublishOutcome::AlreadyPublished => {
+                "already published (no-op)".to_owned()
+            }
+            halyard_publish::PublishOutcome::Forecast => "forecast (dry run)".to_owned(),
+            halyard_publish::PublishOutcome::Skipped { reason } => format!("skipped ({reason})"),
+            halyard_publish::PublishOutcome::Failed {
+                code,
+                message,
+                retryable,
+            } => format!("failed [{code}] (retryable: {retryable}) — {message}"),
+        };
+        let _ = writeln!(
+            out,
+            "  layer {} {}@{} ({}): {}",
+            row.layer, row.package, row.version, row.registry, what,
+        );
+    }
+    out
+}
+
+/// The publish report's machine shape (deterministic field order rides
+/// `serde_json`, §16.3 "stable JSON").
+pub fn publish_report_json(
+    report: &halyard_publish::PublishReport,
+    not_targets: &[halyard_publish::SkippedRelease],
+    mode: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "mode": mode,
+        "targets": report.rows.len(),
+        "rows": report.rows.iter().map(publish_row_json).collect::<Vec<_>>(),
+        "not_targets": not_targets.iter().map(publish_not_target_json).collect::<Vec<_>>(),
+        "tallies": {
+            "published": report.published,
+            "already_published": report.already_published,
+            "forecast": report.forecast,
+            "skipped": report.skipped,
+            "failed": report.failed,
+        },
+    })
+}
+
+/// One row's machine shape: the outcome is tagged by `kind` (the error
+/// taxonomy convention — a stable discriminator).
+pub fn publish_row_json(row: &halyard_publish::PublishRow) -> serde_json::Value {
+    let outcome = match &row.outcome {
+        halyard_publish::PublishOutcome::Published {
+            visibility_confirmed,
+        } => serde_json::json!({
+            "kind": "published",
+            "visibility_confirmed": visibility_confirmed,
+        }),
+        halyard_publish::PublishOutcome::AlreadyPublished => {
+            serde_json::json!({ "kind": "already_published" })
+        }
+        halyard_publish::PublishOutcome::Forecast => {
+            serde_json::json!({ "kind": "forecast" })
+        }
+        halyard_publish::PublishOutcome::Skipped { reason } => {
+            serde_json::json!({ "kind": "skipped", "reason": reason })
+        }
+        halyard_publish::PublishOutcome::Failed {
+            code,
+            message,
+            retryable,
+        } => serde_json::json!({
+            "kind": "failed",
+            "code": code,
+            "message": message,
+            "retryable": retryable,
+        }),
+    };
+    serde_json::json!({
+        "package": row.package,
+        "version": row.version,
+        "ecosystem": row.ecosystem,
+        "registry": row.registry,
+        "manifest": row.manifest,
+        "manifest_dir": row.manifest_dir,
+        "layer": row.layer,
+        "outcome": outcome,
+    })
+}
+
+/// One not-target's machine shape (§16.3: what was ignored and why).
+pub fn publish_not_target_json(skip: &halyard_publish::SkippedRelease) -> serde_json::Value {
+    serde_json::json!({
+        "package": skip.package,
+        "version": skip.version,
+        "reason": skip.reason,
+    })
+}
+
 pub fn plan_human(plan: &Plan, stats: &HistoryStats) -> String {
     let mut out = String::new();
     let _ = writeln!(
