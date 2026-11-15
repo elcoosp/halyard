@@ -297,3 +297,124 @@ fn unsupported_and_unknown_render_honestly() {
 // workspace's clippy.toml allows (`allow-unwrap-in-tests` & co.): a
 // contract test asserting an unexpected shape must fail loudly, not
 // silently pass.
+
+// ---------------------------------------------------------------------------
+// The legacy `config` filename (the routing completion, ADR-0021):
+// "Cargo also reads config files without the .toml extension, such as
+// .cargo/config. Support for the .toml extension was added in version
+// 1.39 and is the preferred form. If both files exist, Cargo will use
+// the file without the extension." (Cargo Book, Configuration —
+// Hierarchical structure; verbatim in docs/research/publish-tooling.md).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cargo_config_paths_enumerate_the_legacy_siblings_in_cargo_order() {
+    // Ascending precedence: per directory the .toml file first and the
+    // legacy file last (the file without the extension wins when both
+    // exist); directories closer to the project override the home.
+    let home = std::path::Path::new("/home/u/.cargo");
+    let project = std::path::Path::new("/srv/repo");
+    let paths = halyard_eco_cargo::registry_config::config_paths_for(Some(home), project);
+    assert_eq!(
+        paths,
+        vec![
+            home.join("config.toml"),
+            home.join("config"),
+            project.join(".cargo/config.toml"),
+            project.join(".cargo/config"),
+        ],
+        "the enumeration mirrors the Cargo Book's hierarchy with the legacy siblings"
+    );
+}
+
+#[test]
+fn the_legacy_file_alone_is_read() -> Result<(), BoxError> {
+    let dir = tempfile::tempdir()?;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join(".cargo"))?;
+    std::fs::write(
+        project.join(".cargo/config"),
+        "[registries.corp]\nindex = \"sparse+https://legacy.example/index\"\n",
+    )?;
+    let lookup = registry_index("corp", &[project.join(".cargo/config")]);
+    assert_eq!(lookup, sparse("https://legacy.example/index"));
+    Ok(())
+}
+
+#[test]
+fn the_legacy_file_wins_when_both_exist_in_one_directory() -> Result<(), BoxError> {
+    let dir = tempfile::tempdir()?;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join(".cargo"))?;
+    std::fs::write(
+        project.join(".cargo/config.toml"),
+        "[registries.corp]\nindex = \"sparse+https://toml.example/index\"\n",
+    )?;
+    std::fs::write(
+        project.join(".cargo/config"),
+        "[registries.corp]\nindex = \"sparse+https://legacy.example/index\"\n",
+    )?;
+    // The path order `cargo_config_paths` yields: the legacy file is
+    // the later (higher-precedence) entry.
+    let lookup = registry_index(
+        "corp",
+        &[
+            project.join(".cargo/config.toml"),
+            project.join(".cargo/config"),
+        ],
+    );
+    assert_eq!(
+        lookup,
+        sparse("https://legacy.example/index"),
+        "Cargo reads the file without the extension when both exist"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_toml_file_still_governs_when_the_legacy_file_carries_no_entry() -> Result<(), BoxError> {
+    // Both files merge per key: the legacy file wins on conflicting
+    // keys, it does not erase the .toml file's entries.
+    let dir = tempfile::tempdir()?;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join(".cargo"))?;
+    std::fs::write(
+        project.join(".cargo/config.toml"),
+        "[registries.corp]\nindex = \"sparse+https://toml.example/index\"\n",
+    )?;
+    std::fs::write(project.join(".cargo/config"), "[net]\nretry = 2\n")?;
+    let lookup = registry_index(
+        "corp",
+        &[
+            project.join(".cargo/config.toml"),
+            project.join(".cargo/config"),
+        ],
+    );
+    assert_eq!(lookup, sparse("https://toml.example/index"));
+    Ok(())
+}
+
+#[test]
+fn an_unparsable_legacy_file_refuses_fail_closed() -> Result<(), BoxError> {
+    let dir = tempfile::tempdir()?;
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(project.join(".cargo"))?;
+    std::fs::write(project.join(".cargo/config"), "not toml [")?;
+    let lookup = registry_index(
+        "corp",
+        &[
+            project.join(".cargo/config.toml"),
+            project.join(".cargo/config"),
+        ],
+    );
+    match lookup {
+        RegistryIndexLookup::Unsupported(message) => {
+            assert!(
+                message.contains("config"),
+                "the refusal names the file: {message}"
+            );
+        }
+        other => unreachable!("an unparsable config must be Unsupported, got {other:?}"),
+    }
+    Ok(())
+}
