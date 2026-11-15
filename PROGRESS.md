@@ -41,6 +41,109 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 
 
+| M4.7 step 2 `--write` slice + ADR-0021 routing-completion slice | done | (tree left dirty; no commits) | M1 (M4.7 step 2, ADR-0023): the §16.2 write step — `halyard_config::migrate` gains the `DraftSink` seam (object-safe, `exists` + create-only atomic `write`), the production `AtomicDraftSink` (temp sibling → fsync → rename, refuses a missing parent dir instead of mkdir-ing), the reference fake `MemoryDraftSink` (models pre-existing files, records writes in order), the pure `plan_draft_write` (zero configured tools → `None` — absence is a value; one → its draft **verbatim** from the report; two or more → `E-CFG-MIGRATE` naming every candidate, never a guess) + `run_draft_write` (the exists gate reads before any write; plain-data `DraftWriteReport` with snake-case `DraftWriteOutcome`); CLI `migrate --write` (JSON gains a `write` block **only when the flag ran** — the frozen report-only shape stays byte-stable; the human header names what landed; a `::notice` in gha; refusals surface `E-CFG-MIGRATE`, nothing-configured is an honest no-op); 12 engine tests (`tests/migrate_write.rs`) + 6 CLI gates (`cli_migrate.rs`) — one red→green cycle (red on E0432 unresolved write-seam imports + the unknown `--write` flag); bench group `migrate_write` (plan + memory-sink run); example `migrate_write` (lands the draft in a temp dir, re-loads it through the strict loader, demonstrates the create-only refusal); ADR-0023 + E-CFG-MIGRATE as-built (three new causes) + index row + arch §16.2 as-built + root/CLI README rows. M2 (ADR-0021's declared routing completions): the cargo legacy `config` filename (VERIFIED Cargo Book quote — "If both files exist, Cargo will use the file without the extension"; the module doc's earlier "deprecated upstream, out of scope" claim was WRONG — drift fixed) via the pure `config_paths_for` enumeration (`config.toml` first, legacy `config` last per directory — the merge core already implements per-key precedence); the npmrc scoped-registry env variables (the npm docs document NO env form — settled by probe against npm 11.19.1, seven probes recorded: the literal `npm_config_@<scope>:registry` name is the scoped key's env form, case-insensitive; the underscore intermediate form is NOT the scoped key — npm reads it as an unknown `myscope-registry` key and warns; the scoped key governs a scoped package regardless of the source tier) via `scoped_registry_env_variable`/`scoped_env_name_matches`/`scan_scoped_registry_env` + the 5th `env_scoped_registry` parameter on `resolve_publish_registry` (precedence: publishConfig → scoped key env→npmrc → plain key env→npmrc → default); 5 cargo tests + 7 npm tests — one red→green cycle (red on E0425/E0061); research note section (verbatim quotes + the seven probes) + ADR-0021 as-built + module docs + CLI README publish row. Doc-drift fixes (additive): the `Command` enum doc listed `migrate` among the absent commands (wired since M4.7) — corrected; the human migrate renderer header + `ToolSurvey::draft` doc moved from "never written" to as-built; `publish-tooling.md`'s "legacy config not read" gap note replaced by the completion record | The knope/release-plz migration sources, the M4.7 corpus-lane acceptance, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; see the session log below |
+
+
+### 2026-11-15 — M4.7 step 2: the §16.2 `migrate --write` (ADR-0023) + the ADR-0021 routing completions (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `50aaf92` (the
+  M4.7 step-1 migrate slice): baseline re-verified on a fresh
+  toolchain (stable 1.100.0, `RUSTFLAGS="-C debuginfo=0"` — the disk
+  ceiling lesson applied from the first build) at 105 suites, 857
+  tests, 0 failed. The declared start points were (1) M4.7 step 2:
+  the `migrate --write` path over the validated draft, (2) the
+  routing completions (the ADR-0021 map's declared open items), (3)
+  the M2.6 dhat re-audit, (4) M5.3 OIDC on a live CI runtime. Picked
+  (1) as M1 — the write half of the §16.2 row, report-first by
+  design so the decision rules get their own review — and (2) as M2.
+- **M1 implemented (no stubs), one full red→green cycle** (the 12
+  engine tests written first — red on E0432 unresolved write-seam
+  imports; the 6 CLI gates red on the unknown `--write` flag — then
+  implemented):
+  - Design decisions (ADR-0023): what the human reviewed is exactly
+    what lands (the plan carries the report's draft verbatim — no
+    re-serialization drift); the migration never guesses (two
+    configured tools refuse with every candidate named — picking one
+    would silently discard the other's mappings, the exact
+    "half-understood config" failure ADR-0022 refuses); an existing
+    config is never clobbered (create-only, the file byte-identical
+    after the refusal — the re-run refusal *is* the honest
+    "already migrated" signal); absence is a value (`NothingConfigured`
+    exit 0, the sink never touched); the engine stays pure (the
+    `DraftSink` seam is object-safe and injected like
+    `TagWriter`/`PublishEffect`; `AtomicDraftSink` walks the §9.1
+    atomic protocol and refuses a missing parent directory instead of
+    mkdir-ing; `MemoryDraftSink` is the deterministic reference fake).
+  - The CLI renderers keep the frozen contract byte-stable: the JSON
+    `write` block exists only when the flag ran; the report-only
+    header text is unchanged (pinned by the existing tests).
+  - One real bug caught by the CLI fixtures: a bare `halyard.toml`
+    target's `Path::parent()` is the empty path — `"".is_dir()` is
+    false, so the AtomicDraftSink refused the honest happy path; the
+    empty parent now resolves to `.` (the `-C` chdir lands there),
+    pinned by the write test.
+- **M2 implemented (M1 green end-to-end first), one red→green cycle**
+  (red on E0425 unresolved `config_paths_for` + E0061 on the npm
+  signature):
+  - The cargo legacy `config` filename: VERIFIED per §0.4 — the Cargo
+    Book's Configuration page quotes "Cargo also reads config files
+    without the .toml extension … If both files exist, Cargo will use
+    the file without the extension." Two facts pinned: the page
+    nowhere says the legacy name is deprecated (the module doc's
+    earlier "deprecated upstream, out of scope" claim was drift) and
+    the extension-less file WINS per directory. The pure
+    `config_paths_for` enumerates `config.toml` first and legacy
+    `config` last per directory; the resolver's per-key merge then
+    reproduces the documented semantics (legacy wins on conflicts, a
+    file without the key erases nothing). Five tests pin the order,
+    the legacy-only read, the both-files precedence, the no-entry
+    merge and the fail-closed unparsable legacy file.
+  - The npmrc scoped-registry env variables: the npm docs document NO
+    env form for scoped keys (the config page points at the .npmrc
+    page, which documents neither) — settled by **probe** against npm
+    11.19.1 (the ADR-0017 method), seven probes recorded in the
+    research note: the literal `npm_config_@<scope>:registry` name is
+    the scoped key's env form (case-insensitive, probe 4); the
+    underscore intermediate form is NOT the scoped key — npm reads it
+    as an unknown `myorg-registry` key and warns it will stop working
+    (probes 1/3); env beats files within the key (probe 5); and the
+    scoped key governs a scoped package regardless of the source tier
+    — a scoped .npmrc key beats a plain `NPM_CONFIG_REGISTRY` env
+    value (the cross-tier probe). The resolver's precedence is now
+    exactly npm's observable grammar: publishConfig → scoped key
+    (env → npmrc) → plain key (env → npmrc) → default; the
+    set-but-empty scoped env var is refused naming the variable. Seven
+    tests pin it; the honest POSIX caveat recorded (`@` and `:` are
+    not shell identifier characters — CI env maps set the variable).
+- **Tests/bench/example totals.** +31 tests / +1 suite over base (12
+  engine `tests/migrate_write.rs` + 6 new CLI gates in
+  `cli_migrate.rs` + 8 npm scoped-env tests + 5 cargo legacy-config
+  tests; 106 suites, 888 tests, 0 failed on the final tree). Bench
+  group `migrate_write` (plan + memory-sink run) registered and run
+  beside the existing survey groups. Examples `migrate_write` (lands
+  the draft in a temp dir, re-loads it through the strict loader,
+  demonstrates the create-only refusal) and `resolve_publish_registry`
+  (extended with the scoped-env case) run clean.
+- **Gates on the final tree.** fmt green; clippy
+  `--workspace --all-targets --all-features --locked -- -D warnings`
+  0 findings (three real findings surfaced en route and were fixed in
+  code, not suppressed: a redundant closure, a `wrote`/`write`
+  similar-names pair, and `indexing_slicing` violations in the new
+  tests — the no-test-allowance rule held, the tests now use
+  `.get()` chains); the lint-hygiene grep empty; the full
+  `test --workspace --all-features --locked` green; `--benches`
+  compiled and run; the cache conflict-feature lane (`--features loom`
+  release) green; the `-D warnings` doc sweep green.
+- **Honest state at cut-off.** The knope/release-plz migration
+  sources, the M4.7 corpus-lane acceptance, M5.3 OIDC, the corpus-wide
+  pnpm differential, the M2.6 dhat re-audit and the two p50
+  perf-budget misses are unchanged. Tree left dirty (no commits).
+- **Next session start point.** (1) the knope/release-plz
+  `MigrationSource` impls (the write path needs no changes), (2) the
+  M4.7 corpus-lane acceptance (20 real-world configs), (3) the M2.6
+  dhat re-audit with the cache warm, (4) M5.3 OIDC on a live CI
+  runtime.
+
 ### 2026-11-15 — M4.7 step 1: the migration report (`halyard migrate`, ADR-0022) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `ea8ef3f` (the
