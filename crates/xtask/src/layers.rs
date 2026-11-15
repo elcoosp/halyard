@@ -105,6 +105,16 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-forge"],
         external: Some(&["serde_json"]),
     },
+    // M5.2 publish engine (§13): the orchestration half of publish —
+    // layer planning over the core graph, the resume/visibility probes
+    // over the registry seam, the injected `PublishEffect`. The spawn
+    // effect (the real `cargo publish`/`pnpm publish`) joins with the
+    // CLI shell; the engine itself owns no I/O.
+    LayerRule {
+        name: "halyard-publish",
+        workspace: &["halyard-core", "halyard-registry"],
+        external: Some(&[]),
+    },
     LayerRule {
         name: "halyard-test-support",
         workspace: &["halyard-core", "halyard-forge"],
@@ -316,7 +326,10 @@ mod tests {
             "halyard-eco-npm",
             "halyard-edit",
             "halyard-forge",
+            "halyard-forge-github",
             "halyard-git",
+            "halyard-publish",
+            "halyard-registry",
             "halyard-test-support",
             "halyard-version",
             "xtask",
