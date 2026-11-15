@@ -17,6 +17,7 @@
 
 pub mod error;
 pub mod loader;
+pub mod migrate;
 pub mod model;
 pub mod resolve;
 
@@ -25,6 +26,13 @@ pub use loader::{load, load_from_str};
 pub use model::HalyardConfig;
 pub use resolve::{
     Layer, ResolvedConfig, TagStyleSetting, config_hash, env_layer, env_layer_from, resolve,
+};
+
+// M4.7 step 1 (`migrate`): the foreign release-tool migration seam and
+// its report data model — the command renders it and writes nothing.
+pub use crate::migrate::{
+    ChangesetsSource, ForeignFiles, MappingRow, MigrationReport, MigrationSource, PackageSurvey,
+    ReleasePleaseSource, ToolSurvey, UnmappedRow, default_sources, migrate,
 };
 
 // Re-exported for the CLI (M1.10) and adapter consumption.
