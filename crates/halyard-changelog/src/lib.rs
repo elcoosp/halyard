@@ -320,25 +320,41 @@ fn render_release_styled(release: &PlanRelease, style: Style) -> Result<String, 
 /// the user-template path). The environment is `empty()` — minimal and
 /// deterministic, no builtin filters/globals (see the M3.2 note on
 /// `Environment::empty()`); the context is `version`, `tag`, `sections`.
+///
+/// A failure surfaces minijinja's whole error chain, not just the top
+/// error: template syntax errors carry their cause (the offending file
+/// location) one level down, and a `format!("{e}")` dropped it (the
+/// `E-CHLOG-TEMPLATE` diagnosis the user sees was losing the "caused
+/// by" line the fix hangs on).
 fn render_template_source(
     template_source: &str,
     version: &str,
     tag: &str,
     sections: &Sections,
 ) -> Result<String, String> {
+    fn with_causes(error: &dyn std::error::Error, label: &str) -> String {
+        use std::fmt::Write as _;
+        let mut rendered = format!("{label}: {error}");
+        let mut source = error.source();
+        while let Some(cause) = source {
+            let _ = write!(rendered, "\n  caused by: {cause}");
+            source = cause.source();
+        }
+        rendered
+    }
     let mut env = Environment::empty();
     env.add_template("release", template_source)
-        .map_err(|e| format!("compile: {e}"))?;
+        .map_err(|e| with_causes(&e, "compile"))?;
     let template = env
         .get_template("release")
-        .map_err(|e| format!("compile: {e}"))?;
+        .map_err(|e| with_causes(&e, "compile"))?;
     template
         .render(context! {
             version => version,
             tag => tag,
             sections => sections,
         })
-        .map_err(|e| format!("render: {e}"))
+        .map_err(|e| with_causes(&e, "render"))
 }
 
 /// Renders the changelog document for a **group of releases sharing one
