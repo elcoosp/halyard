@@ -38,5 +38,11 @@ harness = false
 name = "governor"
 harness = false
 
+# M4.5 step 1: the §11.6 check-comment path — the render the shell feeds
+# the seam, the create and marker-rewrite upsert shapes.
+[[bench]]
+name = "pr_comment"
+harness = false
+
 [lints]
 workspace = true
