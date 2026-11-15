@@ -107,7 +107,13 @@ impl From<halyard_forge::ForgeError> for RegistryError {
 /// "is this exact version visible on the registry right now?". The
 /// M5.2 publisher consumes it for idempotent resume (I2) and for the
 /// §13 step-3 visibility wait ([`wait_until_visible`]).
-pub trait Registry {
+///
+/// `Send + Sync` (M5.2): the publish engine runs independent targets of
+/// one topological layer on scoped threads, so the injected clients are
+/// shared across threads by construction. Both shipped impls already
+/// satisfied the bound ([`CratesIo`]/[`Npm`] hold an
+/// `Arc<dyn HttpTransport>`, which is `Send + Sync`).
+pub trait Registry: Send + Sync {
     /// Whether `version` of `name` is visible on the registry.
     ///
     /// # Errors
@@ -304,9 +310,11 @@ pub struct VisibilityPolicy {
 }
 
 /// The sleep effect of the visibility wait — injected so tests observe
-/// the exact delay sequence (the [`crate::governor`]-style injected
-/// clock/sleeper convention of ADR-0015).
-pub trait RegistrySleeper {
+/// the exact delay sequence (the injected clock/sleeper convention of
+/// ADR-0015 — the forge governor's pair, textually referenced: the
+/// registry crate does not depend on the forge governor). `Send + Sync`
+/// (M5.2): the publish engine waits inside per-target scoped threads.
+pub trait RegistrySleeper: Send + Sync {
     /// Sleeps (or records) one backoff delay.
     fn sleep(&self, delay: Duration);
 }
