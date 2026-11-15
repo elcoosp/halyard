@@ -10,12 +10,14 @@
 //! fail-closed on every guess (an existing target is never clobbered;
 //! two configured tools are a refusal, never a pick).
 //!
-//! The seam ([`MigrationSource`]) is the extension point the later
-//! migrate slices fill (knope/release-plz per §16.2): one source per
-//! tool, each declaring the files it reads and mapping them onto the
-//! frozen v1 model. [`default_sources`] is the registry the shell
-//! surveys; [`migrate`] runs any slice of sources over the discovered
-//! files, so a downstream caller can migrate one tool in isolation.
+//! The seam ([`MigrationSource`]) is the extension point the migrate
+//! slices fill — all four §16.2 tools are registered (ADR-0022 +
+//! ADR-0024): release-please, changesets, knope and release-plz, one
+//! source per tool, each declaring the files it reads and mapping them
+//! onto the frozen v1 model. [`default_sources`] is the registry the
+//! shell surveys; [`migrate`] runs any slice of sources over the
+//! discovered files, so a downstream caller can migrate one tool in
+//! isolation.
 //!
 //! Conventions:
 //!
@@ -34,11 +36,13 @@
 //!   rows, `PartialEq`-comparable output.
 //!
 //! The foreign grammars are VERIFIED per §0.4 against the
-//! release-please manifest-releaser documentation and config schema and
-//! the changesets config documentation — the quotes and the open
-//! VERIFY items live in `docs/research/migrate-config-grammars.md`
-//! (notably: the changesets git-tag grammar is *not* verified; the
-//! report says so instead of guessing).
+//! release-please manifest-releaser documentation and config schema,
+//! the changesets config documentation, knope's configuration pages
+//! (config, packages, Release step) and release-plz's configuration
+//! reference — the quotes and the open VERIFY items live in
+//! `docs/research/migrate-config-grammars.md` (notably: the changesets
+//! git-tag grammar is *not* verified; the report says so instead of
+//! guessing).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -48,7 +52,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::loader::load_from_str;
 use crate::model::{
-    BumpLevel, HalyardConfig, NpmAccess, PackageOverride, PreMajorCfg, RepoCfg, TagStyle,
+    BumpLevel, ChangelogCfg, HalyardConfig, NpmAccess, PackageOverride, PreMajorCfg, RepoCfg,
+    TagStyle,
 };
 use halyard_core::TagTemplate;
 
@@ -105,10 +110,15 @@ pub trait MigrationSource: std::fmt::Debug {
 }
 
 /// The registered sources the shell surveys (`M4.7 step 1` ships
-/// release-please and changesets; the later migrate slices add knope /
-/// release-plz per §16.2).
+/// release-please and changesets; the §16.2 extension adds knope and
+/// release-plz, the row's remaining two tools).
 pub fn default_sources() -> Vec<Box<dyn MigrationSource>> {
-    vec![Box::new(ReleasePleaseSource), Box::new(ChangesetsSource)]
+    vec![
+        Box::new(ReleasePleaseSource),
+        Box::new(ChangesetsSource),
+        Box::new(KnopeSource),
+        Box::new(ReleasePlzSource),
+    ]
 }
 
 /// Runs the given sources over the discovered files. Tool rows are
@@ -523,19 +533,30 @@ fn unmapped_row(foreign_key: &str, reason: &str) -> UnmappedRow {
     }
 }
 
-fn unmapped_from(foreign_key: &str, lookup: &str, table: &[(&str, &str)]) -> UnmappedRow {
+/// Looks a foreign key up in a documented-reasons table; unknown keys
+/// get the source's own fallback sentence (so the report always names
+/// where the grammar came from, never a bare "unmapped").
+fn unmapped_from_table(
+    foreign_key: &str,
+    lookup: &str,
+    table: &[(&str, &str)],
+    fallback: &str,
+) -> UnmappedRow {
     let reason = table
         .iter()
         .find(|(known, _)| *known == lookup)
-        .map_or_else(
-            || {
-                "documented release-please option with no v1 equivalent \
-                 (see docs/research/migrate-config-grammars.md)"
-                    .to_owned()
-            },
-            |(_, reason)| (*reason).to_owned(),
-        );
+        .map_or_else(|| fallback.to_owned(), |(_, reason)| (*reason).to_owned());
     unmapped_row(foreign_key, &reason)
+}
+
+fn unmapped_from(foreign_key: &str, lookup: &str, table: &[(&str, &str)]) -> UnmappedRow {
+    unmapped_from_table(
+        foreign_key,
+        lookup,
+        table,
+        "documented release-please option with no v1 equivalent \
+         (see docs/research/migrate-config-grammars.md)",
+    )
 }
 
 /// The `halyard.toml` rendering of one bump level.
@@ -1264,6 +1285,1041 @@ impl MigrationSource for ChangesetsSource {
             unmapped,
             packages: Vec::new(),
             draft: Some(render_draft(&config, CS_CONFIG)?),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// knope (the §16.2 extension)
+// ---------------------------------------------------------------------------
+
+/// The knope config (`knope.toml` — VERIFIED against the tool's own
+/// configuration documentation: the config page's `[package]` /
+/// `[packages."<name>"]` shapes and the Release step page's tag rules;
+/// quotes in `docs/research/migrate-config-grammars.md`).
+#[derive(Debug)]
+pub struct KnopeSource;
+
+const KN_CONFIG: &str = "knope.toml";
+
+/// Per-package keys that carry no v1 equivalent, each with the reason
+/// the report shows.
+const KN_UNMAPPED_PACKAGE: &[(&str, &str)] = &[
+    (
+        "versioned_files",
+        "halyard rewrites manifests and lockfiles per the discovered ecosystem (§9); extra \
+         versioned files are not a v1 surface",
+    ),
+    (
+        "changelog",
+        "the per-package changelog path has no v1 equivalent — halyard renders `CHANGELOG.md` \
+         per package (§9.4)",
+    ),
+    (
+        "scopes",
+        "a conventional-commit scope allow-list is not a v1 key — commit types map through \
+         `commits.types` (§16.4) and the §9.4 styles",
+    ),
+    (
+        "extra_changelog_sections",
+        "halyard renders the §9.4 styles; extra changelog sections are not a v1 key",
+    ),
+    (
+        "assets",
+        "release assets upload is a forge-side flow (§11.1); the asset list is not a v1 key",
+    ),
+];
+
+/// Root keys that carry no v1 equivalent.
+const KN_UNMAPPED_ROOT: &[(&str, &str)] = &[
+    (
+        "github",
+        "knope's GitHub token/owner/repo config is the forge seam's concern (§11.4); halyard \
+         resolves credentials itself",
+    ),
+    ("jira", "Jira issue transitions are not a v1 surface"),
+    (
+        "variables",
+        "knope's workflow variables carry no v1 equivalent",
+    ),
+];
+
+const KN_FALLBACK: &str =
+    "documented knope option with no v1 equivalent (see docs/research/migrate-config-grammars.md)";
+
+/// Reads a TOML string key, reporting a type mismatch fail-closed.
+fn kn_str(table: &toml::Table, key: &str, path: &str) -> Result<Option<String>, ConfigError> {
+    match table.get(key) {
+        None | Some(toml::Value::String(_)) => Ok(table
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned)),
+        Some(other) => Err(ConfigError::Migrate {
+            path: path.to_owned(),
+            message: format!("`{key}` must be a string, got {other}"),
+        }),
+    }
+}
+
+/// Reads a TOML array-of-strings key, reporting a type mismatch
+/// fail-closed.
+fn kn_str_array(
+    table: &toml::Table,
+    key: &str,
+    path: &str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(toml::Value::Array(items)) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    toml::Value::String(value) => out.push(value.clone()),
+                    other => {
+                        return Err(ConfigError::Migrate {
+                            path: path.to_owned(),
+                            message: format!("`{key}` must be an array of strings, got {other}"),
+                        });
+                    }
+                }
+            }
+            Ok(Some(out))
+        }
+        Some(other) => Err(ConfigError::Migrate {
+            path: path.to_owned(),
+            message: format!("`{key}` must be an array of strings, got {other}"),
+        }),
+    }
+}
+
+/// The per-package survey row's provenance note (the foreign list of
+/// versioned files).
+fn kn_versioned_note(table: &toml::Table, path: &str) -> Result<Option<String>, ConfigError> {
+    Ok(kn_str_array(table, "versioned_files", path)?
+        .map(|files| format!("knope versioned_files: {}", files.join(", "))))
+}
+
+/// One knope package's survey row: the name is the component, the
+/// documented tag rule supplies the template.
+fn kn_package_survey(
+    name: &str,
+    table: &toml::Table,
+    tag: &str,
+    path: &str,
+) -> Result<PackageSurvey, ConfigError> {
+    Ok(PackageSurvey {
+        path: name.to_owned(),
+        component: Some(name.to_owned()),
+        tag: tag.to_owned(),
+        release: true,
+        notes: kn_versioned_note(table, path)?.into_iter().collect(),
+    })
+}
+
+/// Surveys the single `[package]` shape: the Release step's documented
+/// tag rule becomes one appendix-A.3 template, the section's keys are
+/// reported per the documented-reasons table, and the repository-root
+/// survey row carries the versioned files as provenance.
+fn kn_survey_single_package(
+    pkg: &toml::Table,
+    rows: &mut Vec<MappingRow>,
+    unmapped: &mut Vec<UnmappedRow>,
+    packages: &mut Vec<PackageSurvey>,
+) -> Result<String, ConfigError> {
+    let tag = "v{version}".to_owned();
+    rows.push(MappingRow {
+        foreign_key: "package (Release step tag rule)".to_owned(),
+        halyard_key: "repo.tag_style".to_owned(),
+        value: tag.clone(),
+        note: Some(
+            "knope's documented single-package tag shape (\"this tag will be v{version}\"); \
+             validated against the appendix-A.3 template grammar"
+                .to_owned(),
+        ),
+    });
+    packages.push(PackageSurvey {
+        // knope's single `[package]` section covers the repository
+        // root; the versioned files carry the real paths as provenance
+        // notes.
+        path: ".".to_owned(),
+        component: None,
+        tag: tag.clone(),
+        release: true,
+        notes: kn_versioned_note(pkg, KN_CONFIG)?.into_iter().collect(),
+    });
+    for key in pkg.keys() {
+        unmapped.push(unmapped_from_table(
+            key,
+            key,
+            KN_UNMAPPED_PACKAGE,
+            KN_FALLBACK,
+        ));
+    }
+    Ok(tag)
+}
+
+/// Surveys the `[packages."<name>"]` shape: the Release step's
+/// documented multi-package rule is uniform, so every package's tag is
+/// one template.
+fn kn_survey_multi_packages(
+    pkgs: &toml::Table,
+    rows: &mut Vec<MappingRow>,
+    unmapped: &mut Vec<UnmappedRow>,
+    packages: &mut Vec<PackageSurvey>,
+) -> Result<String, ConfigError> {
+    let tag = "{name}/v{version}".to_owned();
+    rows.push(MappingRow {
+        foreign_key: "packages (Release step tag rule)".to_owned(),
+        halyard_key: "repo.tag_style".to_owned(),
+        value: tag.clone(),
+        note: Some(
+            "knope's documented multi-package tag shape (\"each package gets its own tag in \
+             the format {package_name}/v{version}\"); validated against the appendix-A.3 \
+             template grammar"
+                .to_owned(),
+        ),
+    });
+    for (name, pkg) in pkgs {
+        let pkg = pkg.as_table().ok_or_else(|| ConfigError::Migrate {
+            path: KN_CONFIG.to_owned(),
+            message: format!("`[packages.\"{name}\"]` must be a table"),
+        })?;
+        packages.push(kn_package_survey(name, pkg, &tag, KN_CONFIG)?);
+        for key in pkg.keys() {
+            unmapped.push(unmapped_from_table(
+                &format!("packages[{name}].{key}"),
+                key,
+                KN_UNMAPPED_PACKAGE,
+                KN_FALLBACK,
+            ));
+        }
+    }
+    Ok(tag)
+}
+
+/// The workflows advisory row (the configured names ride the reason) —
+/// `None` when the config declares no `[[workflows]]`.
+fn kn_workflows_row(value: &toml::Table) -> Result<Option<UnmappedRow>, ConfigError> {
+    let Some(workflows) = value.get("workflows") else {
+        return Ok(None);
+    };
+    let items = workflows.as_array().ok_or_else(|| ConfigError::Migrate {
+        path: KN_CONFIG.to_owned(),
+        message: "`[[workflows]]` must be an array of workflow tables".to_owned(),
+    })?;
+    let mut names = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let table = item.as_table().ok_or_else(|| ConfigError::Migrate {
+            path: KN_CONFIG.to_owned(),
+            message: format!("`[[workflows]]` entry {index} must be a table"),
+        })?;
+        let name = kn_str(table, "name", KN_CONFIG)?.unwrap_or_else(|| "(unnamed)".to_owned());
+        names.push(name);
+    }
+    Ok(Some(unmapped_row(
+        "workflows",
+        &format!(
+            "knope's workflow automation (the PrepareRelease/Release steps) is halyard's own \
+             pipeline (§16.2); the configured names carry no config mapping — configured: {}",
+            names.join(", ")
+        ),
+    )))
+}
+
+impl MigrationSource for KnopeSource {
+    fn tool(&self) -> &'static str {
+        "knope"
+    }
+
+    fn config_paths(&self) -> &'static [&'static str] {
+        &[KN_CONFIG]
+    }
+
+    fn survey(&self, files: &ForeignFiles) -> Result<ToolSurvey, ConfigError> {
+        let mut found: Vec<String> = self
+            .config_paths()
+            .iter()
+            .filter(|p| files.get(p).is_some())
+            .map(|p| (*p).to_owned())
+            .collect();
+        found.sort();
+        let Some(raw) = files.get(KN_CONFIG) else {
+            return Ok(ToolSurvey {
+                tool: self.tool().to_owned(),
+                configured: false,
+                ..ToolSurvey::default()
+            });
+        };
+        let value = toml::from_str::<toml::Table>(raw).map_err(|error| ConfigError::Migrate {
+            path: KN_CONFIG.to_owned(),
+            message: format!("invalid TOML: {error}"),
+        })?;
+
+        let mut rows: Vec<MappingRow> = Vec::new();
+        let mut unmapped: Vec<UnmappedRow> = Vec::new();
+        let mut survey_packages: Vec<PackageSurvey> = Vec::new();
+
+        // The two documented shapes are exclusive: one `[package]` or
+        // named `[packages."<name>"]` sub-tables. Both at once is a
+        // broken config, not a guess.
+        let shape = match (value.get("package"), value.get("packages")) {
+            (Some(_), Some(_)) => {
+                return Err(ConfigError::Migrate {
+                    path: KN_CONFIG.to_owned(),
+                    message: "the knope config cannot declare both `[package]` and `[packages]` \
+                              — the Release step's two documented package shapes are exclusive"
+                        .to_owned(),
+                });
+            }
+            (Some(pkg), None) => {
+                let pkg = pkg.as_table().ok_or_else(|| ConfigError::Migrate {
+                    path: KN_CONFIG.to_owned(),
+                    message: "`[package]` must be a table".to_owned(),
+                })?;
+                Some(kn_survey_single_package(
+                    pkg,
+                    &mut rows,
+                    &mut unmapped,
+                    &mut survey_packages,
+                )?)
+            }
+            (None, Some(pkgs)) => {
+                let pkgs = pkgs.as_table().ok_or_else(|| ConfigError::Migrate {
+                    path: KN_CONFIG.to_owned(),
+                    message: "`[packages]` must be a table of named package sub-tables".to_owned(),
+                })?;
+                if pkgs.is_empty() {
+                    // An empty `[packages]` table declares no package —
+                    // the same advisory as the shapeless config.
+                    None
+                } else {
+                    Some(kn_survey_multi_packages(
+                        pkgs,
+                        &mut rows,
+                        &mut unmapped,
+                        &mut survey_packages,
+                    )?)
+                }
+            }
+            (None, None) => None,
+        };
+        if shape.is_none() {
+            unmapped.push(unmapped_row(
+                "(package section)",
+                "the knope config declares no package section — the Release step's tag shape is \
+                 unknown; set `repo.tag_style` against this repository's existing tags \
+                 (appendix A.3)",
+            ));
+        }
+        if let Some(workflows) = kn_workflows_row(&value)? {
+            unmapped.push(workflows);
+        }
+
+        // Root keys that are not mapped.
+        for key in value.keys() {
+            match key.as_str() {
+                "package" | "packages" | "workflows" => {}
+                _ => unmapped.push(unmapped_from_table(key, key, KN_UNMAPPED_ROOT, KN_FALLBACK)),
+            }
+        }
+
+        rows.sort_by(|a, b| a.foreign_key.cmp(&b.foreign_key));
+        unmapped.sort_by(|a, b| a.foreign_key.cmp(&b.foreign_key));
+        survey_packages.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let mut config = HalyardConfig::default();
+        if let Some(template) = shape {
+            config.repo = Some(RepoCfg {
+                base_branch: None,
+                tag_style: Some(TagStyle(template)),
+            });
+        }
+
+        Ok(ToolSurvey {
+            tool: self.tool().to_owned(),
+            configured: true,
+            files: found,
+            rows,
+            unmapped,
+            packages: survey_packages,
+            draft: Some(render_draft(&config, KN_CONFIG)?),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// release-plz (the §16.2 extension)
+// ---------------------------------------------------------------------------
+
+/// The release-plz config (`release-plz.toml`, `.release-plz.toml`,
+/// `.config/release-plz.toml` — VERIFIED against the tool's
+/// configuration reference: the documented top-down search order, the
+/// `[workspace]` defaults and the Tera templates; quotes in
+/// `docs/research/migrate-config-grammars.md`).
+#[derive(Debug)]
+pub struct ReleasePlzSource;
+
+/// The documented search order: the first existing path wins and the
+/// shadowed files are not read.
+const PLZ_CONFIGS: &[&str] = &[
+    "release-plz.toml",
+    ".release-plz.toml",
+    ".config/release-plz.toml",
+];
+
+/// The documented workspace default for the release/tag name template
+/// (the single-crate default `v{{ version }}` rides the same rule
+/// halyard's `auto` applies, so the multi-package shape is what a
+/// survey can pin without guessing).
+const PLZ_DEFAULT_TAG: &str = "{name}-v{version}";
+
+/// `[workspace]` keys that carry no v1 equivalent, each with the reason
+/// the report shows.
+const PLZ_UNMAPPED_WORKSPACE: &[(&str, &str)] = &[
+    (
+        "allow_dirty",
+        "release-plz's dirty-worktree refusal is a run-time gate; halyard's shell presents the \
+         tree state the caller is in",
+    ),
+    (
+        "changelog_config",
+        "deprecated upstream in favor of `[changelog]`; the git-cliff header/body template is \
+         not a v1 key",
+    ),
+    (
+        "changelog_path",
+        "the per-package changelog path has no v1 equivalent — halyard renders `CHANGELOG.md` \
+         per package (§9.4)",
+    ),
+    (
+        "custom_major_increment_regex",
+        "regex-triggered bumps are not a v1 key — commit types map through `commits.types` \
+         (§16.4)",
+    ),
+    (
+        "custom_minor_increment_regex",
+        "regex-triggered bumps are not a v1 key — commit types map through `commits.types` \
+         (§16.4)",
+    ),
+    (
+        "dependencies_update",
+        "halyard's rewriter updates workspace requirements itself (appendix A.2)",
+    ),
+    (
+        "features_always_increment_minor",
+        "release-plz's pre-1.0 feat behavior (the documented default bumps the minor only \
+         starting with 1.x releases) does not map onto halyard's §10.2 defaults — review \
+         `versioning.pre_major` deliberately",
+    ),
+    (
+        "git_release_body",
+        "the forge release body is the §11.1 machine's forge half's concern",
+    ),
+    (
+        "git_release_draft",
+        "draft forge releases are a forge-side option (§11.1)",
+    ),
+    (
+        "git_release_enable",
+        "forge releases ride the §11.1 machine's forge half; suppression is per-package \
+         `release = false` (§16.4)",
+    ),
+    (
+        "git_release_generate_notes",
+        "forge-generated release notes are a forge-side option (§11.1)",
+    ),
+    (
+        "git_release_latest",
+        "the forge release's latest-flag is a forge-side option (§11.1)",
+    ),
+    (
+        "git_release_name",
+        "the release name shape is not a v1 key (§11.1)",
+    ),
+    (
+        "git_release_type",
+        "the forge release's prod/pre/auto shape is a forge-side option (§11.1)",
+    ),
+    (
+        "git_only",
+        "halyard's publish is opt-in (`publish.enabled`, invariant I7), so \
+         tags-without-publish is already the default shape",
+    ),
+    (
+        "max_analyze_commits",
+        "halyard attributes the history itself (§8.3); a scan bound is not a v1 key",
+    ),
+    (
+        "pr_body",
+        "the §11.3 body renderer owns the Release-PR shape; custom templates are not a v1 key",
+    ),
+    (
+        "pr_branch_prefix",
+        "the Release-PR branch shape is the §11.1/§11.2 machine's concern",
+    ),
+    ("pr_draft", "draft Release PRs are not a v1 key (§11.3)"),
+    (
+        "pr_labels",
+        "Release-PR labels land with the §11.2 branch/label work",
+    ),
+    (
+        "pr_name",
+        "the §11.3 body renderer owns the Release-PR shape; custom templates are not a v1 key",
+    ),
+    (
+        "publish_allow_dirty",
+        "cargo publish run knobs are the spawned tool's own flags (§13)",
+    ),
+    (
+        "publish_all_features",
+        "cargo publish run knobs are the spawned tool's own flags (§13)",
+    ),
+    (
+        "publish_features",
+        "cargo publish run knobs are the spawned tool's own flags (§13)",
+    ),
+    (
+        "publish_no_verify",
+        "cargo publish run knobs are the spawned tool's own flags (§13)",
+    ),
+    (
+        "publish_timeout",
+        "the publish timeout is the spawned tool run's own knob (§13)",
+    ),
+    (
+        "release",
+        "halyard releases what discovery finds unless `[[package]] release = false` (§16.4)",
+    ),
+    (
+        "release_always",
+        "release-plz's on-push release trigger is CI glue; halyard's shell decides when a \
+         release runs",
+    ),
+    (
+        "release_commits",
+        "commit filtering is halyard's attribution (§8.3) — the regex dialects differ, so the \
+         report does not map them for you",
+    ),
+    (
+        "repo_url",
+        "the compare URL derives from the git remote (§9.4)",
+    ),
+    ("semver_check", "cargo-semver-checks gating is not a v1 key"),
+];
+
+/// Root keys outside `[workspace]`/`[[package]]` that carry no v1
+/// equivalent.
+const PLZ_UNMAPPED_ROOT: &[(&str, &str)] = &[(
+    "changelog",
+    "the git-cliff template body/header is not a v1 key — halyard renders the §9.4 styles (the \
+     documented default format is what the `changelog.style` row pins)",
+)];
+
+const PLZ_FALLBACK: &str = "documented release-plz option with no v1 equivalent (see \
+                            docs/research/migrate-config-grammars.md)";
+
+/// Translates a documented Tera tag/release-name template onto the
+/// appendix-A.3 grammar: `{{ package }}` → `{name}`, `{{ version }}` →
+/// `{version}`. `None` when any other Tera variable, block or
+/// whitespace variant survives the translation — the migration never
+/// half-translates a template it cannot verify.
+fn plz_translate_tag_template(raw: &str) -> Option<String> {
+    let translated = raw
+        .replace("{{ package }}", "{name}")
+        .replace("{{ version }}", "{version}");
+    let leftover = translated.contains("{{")
+        || translated.contains("}}")
+        || translated.contains("{%")
+        || translated.contains("%}");
+    (!leftover && TagTemplate::parse(&translated).is_ok()).then_some(translated)
+}
+
+/// Reads a TOML boolean key, reporting a type mismatch fail-closed.
+fn plz_bool(table: &toml::Table, key: &str, path: &str) -> Result<Option<bool>, ConfigError> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(toml::Value::Boolean(value)) => Ok(Some(*value)),
+        Some(other) => Err(ConfigError::Migrate {
+            path: path.to_owned(),
+            message: format!("`{key}` must be a boolean, got {other}"),
+        }),
+    }
+}
+
+/// Reads a TOML string key, reporting a type mismatch fail-closed.
+fn plz_str(table: &toml::Table, key: &str, path: &str) -> Result<Option<String>, ConfigError> {
+    match table.get(key) {
+        None => Ok(None),
+        Some(toml::Value::String(value)) => Ok(Some(value.clone())),
+        Some(other) => Err(ConfigError::Migrate {
+            path: path.to_owned(),
+            message: format!("`{key}` must be a string, got {other}"),
+        }),
+    }
+}
+
+/// One `[[package]]` entry's resolved inputs: the crate name, the tag
+/// template it resolved to (its own override, or the workspace default
+/// when it carries none — `None` when no template resolves, which is
+/// always paired with an already-reported unmapped row), whether that
+/// template came from the override, its release decision, and the raw
+/// entry for the per-key scan.
+struct PlzPackage {
+    name: String,
+    resolved_tag: Option<String>,
+    tag_from_override: bool,
+    release: bool,
+    version_group: Option<String>,
+    entry: toml::Table,
+}
+
+/// The reason an untranslatable Tera template reports (the placeholders
+/// the appendix-A.3 grammar accepts).
+fn plz_untranslatable_row(foreign_key: &str, raw: &str) -> UnmappedRow {
+    unmapped_row(
+        foreign_key,
+        &format!(
+            "the Tera template `{raw}` carries variables the appendix-A.3 grammar cannot \
+             express — pick a template built from the documented `{{{{ package }}}}`/`{{{{ \
+             version }}}}` placeholders"
+        ),
+    )
+}
+
+/// Reads the `[[package]]` entries (the reference marks `name`
+/// required): each entry's tag override translates onto the appendix-A.3
+/// grammar, falling back to the workspace default when it carries none.
+fn plz_read_packages(
+    value: &toml::Table,
+    path: &str,
+    fill: Option<&str>,
+    unmapped: &mut Vec<UnmappedRow>,
+) -> Result<Vec<PlzPackage>, ConfigError> {
+    let Some(entries) = value.get("package") else {
+        return Ok(Vec::new());
+    };
+    let entries = entries.as_array().ok_or_else(|| ConfigError::Migrate {
+        path: path.to_owned(),
+        message: "[[package]] must be an array of package tables".to_owned(),
+    })?;
+    let mut plz_packages = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let entry = entry.as_table().ok_or_else(|| ConfigError::Migrate {
+            path: path.to_owned(),
+            message: "[[package]] entries must be tables".to_owned(),
+        })?;
+        let name = plz_str(entry, "name", path)?.ok_or_else(|| ConfigError::Migrate {
+            path: path.to_owned(),
+            message: "every [[package]] entry must carry `name` (the reference marks it \
+                      required)"
+                .to_owned(),
+        })?;
+        let override_tag = plz_str(entry, "git_tag_name", path)?.and_then(|raw| {
+            plz_translate_tag_template(&raw).or_else(|| {
+                unmapped.push(plz_untranslatable_row(
+                    &format!("packages[{name}].git_tag_name"),
+                    &raw,
+                ));
+                None
+            })
+        });
+        let (resolved_tag, tag_from_override) = match override_tag {
+            Some(template) => (Some(template), true),
+            None => (fill.map(str::to_owned), false),
+        };
+        let release = plz_bool(entry, "release", path)?.unwrap_or(true);
+        let version_group = plz_str(entry, "version_group", path)?;
+        plz_packages.push(PlzPackage {
+            name,
+            resolved_tag,
+            tag_from_override,
+            release,
+            version_group,
+            entry: entry.clone(),
+        });
+    }
+    plz_packages.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(plz_packages)
+}
+
+/// The tag-style row: the workspace template (or the documented
+/// default), overridden per package — a unified resolution pins
+/// `repo.tag_style`; a disagreement is a reported semantic difference,
+/// never a pick. The unified template also lands on the draft.
+fn plz_tag_row(
+    workspace: &toml::Table,
+    path: &str,
+    plz_packages: &[PlzPackage],
+    fill: Option<&String>,
+    used_default: bool,
+    unmapped: &mut Vec<UnmappedRow>,
+    draft: &mut HalyardConfig,
+) -> Result<Option<MappingRow>, ConfigError> {
+    let tag_enabled = plz_bool(workspace, "git_tag_enable", path)?;
+    if tag_enabled == Some(false) {
+        unmapped.push(unmapped_row(
+            "git_tag_enable",
+            "release-plz creates no tags when false — set `repo.tag_style` deliberately if this \
+             repository tags releases another way",
+        ));
+        return Ok(None);
+    }
+    let Some(fill) = fill else {
+        // The workspace template was untranslatable (its row is already
+        // reported); nothing unifies.
+        return Ok(None);
+    };
+    let unified = if plz_packages.iter().any(|p| p.resolved_tag.is_none()) {
+        // An unresolvable per-package template already reported its
+        // row; nothing unifies.
+        None
+    } else if plz_packages.is_empty() {
+        Some(fill.clone())
+    } else {
+        let templates: Vec<&String> = plz_packages
+            .iter()
+            .filter_map(|p| p.resolved_tag.as_ref())
+            .collect();
+        let first: Option<&String> = templates.first().copied();
+        if templates.iter().all(|t| Some(*t) == first) {
+            first.cloned()
+        } else {
+            let shapes: Vec<String> = plz_packages
+                .iter()
+                .filter_map(|p| {
+                    p.resolved_tag
+                        .as_ref()
+                        .map(|template| format!("{}: {template}", p.name))
+                })
+                .collect();
+            unmapped.push(unmapped_row(
+                "git_tag_name (per-package disagreement)",
+                &format!(
+                    "the packages disagree about the tag shape ({}); halyard v1 carries one \
+                     repo-wide `repo.tag_style` — pick one deliberately after review",
+                    shapes.join(", ")
+                ),
+            ));
+            None
+        }
+    };
+    Ok(unified.map(|template| {
+        let any_override = plz_packages
+            .iter()
+            .any(|p| p.tag_from_override && p.resolved_tag.is_some());
+        let (foreign_key, note) = if used_default && !any_override {
+            (
+                "git_tag_name (workspace default)",
+                "release-plz's documented workspace default; halyard's `auto` resolves the \
+                 same rule (single-package repos release `v{version}`)",
+            )
+        } else {
+            (
+                "git_tag_name",
+                "translated from the release-plz Tera template; validated against the \
+                 appendix-A.3 template grammar",
+            )
+        };
+        draft.repo = Some(RepoCfg {
+            base_branch: None,
+            tag_style: Some(TagStyle(template.clone())),
+        });
+        MappingRow {
+            foreign_key: foreign_key.to_owned(),
+            halyard_key: "repo.tag_style".to_owned(),
+            value: template,
+            note: Some(note.to_owned()),
+        }
+    }))
+}
+
+/// The changelog rows: the documented default format pins the v1 style;
+/// an explicit `changelog_update = false` reports the difference
+/// instead.
+fn plz_changelog_rows(
+    workspace: &toml::Table,
+    path: &str,
+    rows: &mut Vec<MappingRow>,
+    unmapped: &mut Vec<UnmappedRow>,
+    draft: &mut HalyardConfig,
+) -> Result<(), ConfigError> {
+    let changelog_update = plz_bool(workspace, "changelog_update", path)?;
+    match changelog_update {
+        None | Some(true) => {
+            let foreign_key = if changelog_update.is_none() {
+                "changelog_update (default)"
+            } else {
+                "changelog_update"
+            };
+            rows.push(MappingRow {
+                foreign_key: foreign_key.to_owned(),
+                halyard_key: "changelog.style".to_owned(),
+                value: "keep-a-changelog".to_owned(),
+                note: Some(
+                    "release-plz's documented default (Keep a Changelog format) — matches \
+                     halyard's built-in default; pinned explicitly"
+                        .to_owned(),
+                ),
+            });
+            draft.changelog = Some(ChangelogCfg {
+                style: Some("keep-a-changelog".to_owned()),
+                hidden_types: None,
+            });
+        }
+        Some(false) => {
+            unmapped.push(unmapped_row(
+                "changelog_update",
+                "release-plz leaves changelogs untouched when false — halyard renders \
+                 changelogs per §9.4, so set `changelog.style` deliberately",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The `[[package]].release` row for the release-disabled entries (the
+/// one key the v1 surface expresses exactly) + the draft overrides.
+fn plz_release_rows(
+    plz_packages: &[PlzPackage],
+    rows: &mut Vec<MappingRow>,
+    draft: &mut HalyardConfig,
+) {
+    let declined: Vec<&str> = plz_packages
+        .iter()
+        .filter(|p| !p.release)
+        .map(|p| p.name.as_str())
+        .collect();
+    if declined.is_empty() {
+        return;
+    }
+    rows.push(MappingRow {
+        foreign_key: "[[package]].release".to_owned(),
+        halyard_key: "[[package]].release".to_owned(),
+        value: format!("false for: {}", declined.join(", ")),
+        note: Some(
+            "release-plz's per-package `release = false` overrides become halyard's own (§16.4)"
+                .to_owned(),
+        ),
+    });
+    for name in &declined {
+        draft.package.push(PackageOverride {
+            name: Some((*name).to_owned()),
+            release: Some(false),
+            include: Vec::new(),
+            exclude: Vec::new(),
+        });
+    }
+}
+
+/// The per-package survey rows (the foreign tool's own view) + the
+/// per-key unmapped rows.
+fn plz_survey_packages(
+    plz_packages: &[PlzPackage],
+    fill: Option<&str>,
+    unmapped: &mut Vec<UnmappedRow>,
+) -> Vec<PackageSurvey> {
+    plz_packages
+        .iter()
+        .map(|package| {
+            for key in package.entry.keys() {
+                match key.as_str() {
+                    "name" | "git_tag_name" | "release" | "version_group" => {}
+                    _ => unmapped.push(unmapped_from_table(
+                        &format!("packages[{}].{key}", package.name),
+                        key,
+                        &[],
+                        PLZ_FALLBACK,
+                    )),
+                }
+            }
+            PackageSurvey {
+                // release-plz's `[[package]].name` is the crate name —
+                // the survey carries it as the row key.
+                path: package.name.clone(),
+                component: None,
+                tag: package
+                    .resolved_tag
+                    .clone()
+                    .unwrap_or_else(|| fill.unwrap_or_default().to_owned()),
+                release: package.release,
+                notes: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// The `version_group` review row (halyard's linked policy is
+/// workspace-wide, so a group is never a pin) — `None` when no entry
+/// carries one.
+fn plz_version_group_row(plz_packages: &[PlzPackage]) -> Option<UnmappedRow> {
+    let groups: Vec<String> = plz_packages
+        .iter()
+        .filter_map(|p| {
+            p.version_group
+                .as_ref()
+                .map(|group| format!("{} → {group}", p.name))
+        })
+        .collect();
+    if groups.is_empty() {
+        return None;
+    }
+    Some(unmapped_row(
+        "version_group",
+        &format!(
+            "release-plz's version groups are package subsets; halyard's \
+             `versioning.policy = \"linked\"` is workspace-wide (§5.4) — review the groups \
+             before pinning (configured: {})",
+            groups.join(", ")
+        ),
+    ))
+}
+
+/// The publish advisory row: the master switch is never set by a
+/// migration (invariant I7).
+fn plz_publish_row(workspace: &toml::Table, path: &str) -> Result<UnmappedRow, ConfigError> {
+    let publish = plz_bool(workspace, "publish", path)?;
+    Ok(unmapped_row(
+        "publish",
+        if publish == Some(false) {
+            "release-plz leaves publishing off; halyard publishing stays opt-in anyway \
+             (`publish.enabled` is never set by a migration — invariant I7)"
+        } else {
+            "release-plz publishes by default; halyard publishing stays opt-in \
+             (`publish.enabled` is never set by a migration — invariant I7)"
+        },
+    ))
+}
+
+impl MigrationSource for ReleasePlzSource {
+    fn tool(&self) -> &'static str {
+        "release-plz"
+    }
+
+    fn config_paths(&self) -> &'static [&'static str] {
+        PLZ_CONFIGS
+    }
+
+    fn survey(&self, files: &ForeignFiles) -> Result<ToolSurvey, ConfigError> {
+        // The documented top-down search order: the first existing path
+        // wins, the shadowed paths are not read.
+        let found: Vec<String> = PLZ_CONFIGS
+            .iter()
+            .filter(|p| files.get(p).is_some())
+            .map(|p| (*p).to_owned())
+            .take(1)
+            .collect();
+        let Some(path) = found.first().cloned() else {
+            return Ok(ToolSurvey {
+                tool: self.tool().to_owned(),
+                configured: false,
+                ..ToolSurvey::default()
+            });
+        };
+        let Some(raw) = files.get(&path) else {
+            // Defensive: the shell only feeds discovered files, so this
+            // is the same honest not-configured shape.
+            return Ok(ToolSurvey {
+                tool: self.tool().to_owned(),
+                configured: false,
+                ..ToolSurvey::default()
+            });
+        };
+        let value = toml::from_str::<toml::Table>(raw).map_err(|error| ConfigError::Migrate {
+            path: path.clone(),
+            message: format!("invalid TOML: {error}"),
+        })?;
+
+        let mut rows: Vec<MappingRow> = Vec::new();
+        let mut unmapped: Vec<UnmappedRow> = Vec::new();
+        let mut draft = HalyardConfig::default();
+
+        // The `[workspace]` table (release-plz applies it to every
+        // package; per-package overrides follow).
+        let empty_workspace = toml::Table::new();
+        let workspace = match value.get("workspace") {
+            None => &empty_workspace,
+            Some(workspace) => workspace.as_table().ok_or_else(|| ConfigError::Migrate {
+                path: path.clone(),
+                message: "[workspace] must be a table".to_owned(),
+            })?,
+        };
+
+        // The workspace template (or the documented default) is what a
+        // package without its own override resolves to. `None` = the
+        // configured template was untranslatable (its row is reported
+        // below) — the survey never half-translates.
+        let ws_tag_raw = plz_str(workspace, "git_tag_name", &path)?;
+        let used_default = ws_tag_raw.is_none();
+        let fill: Option<String> = match &ws_tag_raw {
+            None => Some(PLZ_DEFAULT_TAG.to_owned()),
+            Some(raw) => plz_translate_tag_template(raw).or_else(|| {
+                unmapped.push(plz_untranslatable_row("git_tag_name", raw));
+                None
+            }),
+        };
+
+        // The `[[package]]` entries, the tag-style resolution, the
+        // release/changelog rows and the survey rows.
+        let plz_packages = plz_read_packages(&value, &path, fill.as_deref(), &mut unmapped)?;
+        let tag_row = plz_tag_row(
+            workspace,
+            &path,
+            &plz_packages,
+            fill.as_ref(),
+            used_default,
+            &mut unmapped,
+            &mut draft,
+        )?;
+        if let Some(row) = tag_row {
+            rows.push(row);
+        }
+        plz_release_rows(&plz_packages, &mut rows, &mut draft);
+        plz_changelog_rows(workspace, &path, &mut rows, &mut unmapped, &mut draft)?;
+        unmapped.push(plz_publish_row(workspace, &path)?);
+        if let Some(group_row) = plz_version_group_row(&plz_packages) {
+            unmapped.push(group_row);
+        }
+        let mut survey_packages =
+            plz_survey_packages(&plz_packages, fill.as_deref(), &mut unmapped);
+
+        // Workspace keys that are not mapped.
+        for key in workspace.keys() {
+            match key.as_str() {
+                "git_tag_enable" | "git_tag_name" | "changelog_update" | "publish" => {}
+                _ => unmapped.push(unmapped_from_table(
+                    key,
+                    key,
+                    PLZ_UNMAPPED_WORKSPACE,
+                    PLZ_FALLBACK,
+                )),
+            }
+        }
+        // Root keys outside `[workspace]`/`[[package]]` that are not
+        // mapped.
+        for key in value.keys() {
+            match key.as_str() {
+                "workspace" | "package" => {}
+                _ => unmapped.push(unmapped_from_table(
+                    key,
+                    key,
+                    PLZ_UNMAPPED_ROOT,
+                    PLZ_FALLBACK,
+                )),
+            }
+        }
+
+        rows.sort_by(|a, b| a.foreign_key.cmp(&b.foreign_key));
+        unmapped.sort_by(|a, b| a.foreign_key.cmp(&b.foreign_key));
+        survey_packages.sort_by(|a, b| a.path.cmp(&b.path));
+
+        Ok(ToolSurvey {
+            tool: self.tool().to_owned(),
+            configured: true,
+            files: found,
+            rows,
+            unmapped,
+            packages: survey_packages,
+            draft: Some(render_draft(&draft, &path)?),
         })
     }
 }
