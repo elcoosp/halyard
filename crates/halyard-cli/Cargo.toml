@@ -42,6 +42,11 @@ halyard-changelog = { workspace = true }
 # M5.1 (§13): the doctor's opt-in `--registries` probe rides the
 # Registry seam over the forge transport (network only by the flag, I5).
 halyard-registry = { workspace = true }
+# M5.2 (§13): the publish command drives the halyard-publish engine —
+# plan validation, topological layers, the resume probes and the
+# visibility wait; the shell owns the spawn effect (the adapter crates'
+# argv tables) and the live registry routing.
+halyard-publish = { workspace = true }
 # M4.3 `check` (§11.6): the title-lint seam — the engine lives in the
 # parser leaf (policy injected via `TitleBumpRule`), the CLI binds the
 # resolved `PlanConfig` mapping and renders the verdicts.
