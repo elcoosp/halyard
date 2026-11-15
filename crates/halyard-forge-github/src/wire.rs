@@ -292,6 +292,67 @@ pub fn parse_installation_token(body: &str) -> Result<String, ForgeError> {
         })
 }
 
+/// A parsed PR comment body (`GET/POST/PATCH …/issues/{n}/comments`).
+#[derive(Debug, Deserialize)]
+pub struct RestComment {
+    /// The comment id (the PATCH address; a comment without an id is
+    /// unusable for the rewrite and the marker scan skips it).
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// Web URL of the comment.
+    #[serde(default)]
+    pub html_url: Option<String>,
+    /// The comment body (the marker scan's input).
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// Parses a PR-comment list body (`E-FORGE-TRANSPORT` when unreadable).
+///
+/// # Errors
+///
+/// [`ForgeError::Transport`] when the body is not the documented JSON
+/// array.
+pub fn parse_comment_list(body: &str) -> Result<Vec<RestComment>, ForgeError> {
+    serde_json::from_str(body)
+        .map_err(|error| ForgeError::transport(format!("unparseable comment list body: {error}")))
+}
+
+/// Parses a created/updated comment body.
+///
+/// # Errors
+///
+/// [`ForgeError::Transport`] when the body is not the documented JSON
+/// object.
+pub fn parse_comment(body: &str) -> Result<RestComment, ForgeError> {
+    serde_json::from_str(body)
+        .map_err(|error| ForgeError::transport(format!("unparseable comment body: {error}")))
+}
+
+/// The first comment `marker` identifies (its body contains the marker
+/// line) that also carries a usable `id` — the PATCH address the
+/// rewrite needs. `None` when the scan finds nothing usable.
+#[must_use]
+pub fn comment_with_marker<'a>(
+    comments: &'a [RestComment],
+    marker: &str,
+) -> Option<&'a RestComment> {
+    comments.iter().find(|comment| {
+        comment.id.is_some()
+            && comment
+                .body
+                .as_deref()
+                .is_some_and(|body| body.contains(marker))
+    })
+}
+
+/// Builds the `POST/PATCH …/issues/{n}/comments` body (the comment's
+/// markdown, marker included).
+#[must_use]
+pub fn comment_body(body: &str) -> String {
+    serde_json::json!({ "body": body }).to_string()
+}
+
 /// The `errors[].code` values of a validation-failure body — the
 /// `already_exists` discriminator the I1 race mapping needs (research
 /// §4).
