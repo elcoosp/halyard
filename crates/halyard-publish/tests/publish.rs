@@ -17,7 +17,8 @@ use halyard_registry::{RegistryError, RegistrySleeper, VisibilityPolicy};
 
 use halyard_publish::{
     MapRouter, MemoryPublishEffect, MemoryRegistry, Publication, PublishError, PublishMode,
-    PublishOutcome, PublishPolicy, PublishReport, plan_publication, run_publication,
+    PublishOutcome, PublishPolicy, PublishReport, RegistryRouter, TargetRouter, plan_publication,
+    run_publication,
 };
 
 /// Registers one package with sane defaults (the planner-test fixture
@@ -1356,4 +1357,141 @@ fn targets_carry_the_manifest_path() {
         .unwrap_or_else(|| unreachable!("a target"));
     assert_eq!(a.manifest, "crates/a/Cargo.toml");
     assert_eq!(a.manifest_dir, "crates/a");
+}
+
+// ---------------------------------------------------------------------------
+// Per-target routing (M5.2 continued, ADR-0021): the npm-side
+// `publishConfig.registry` override routes one *package*, not one
+// registry name — the `RegistryRouter::registry_for` default keeps the
+// by-name shape for every existing router, and `TargetRouter` adds the
+// per-(registry, package) overrides the shell resolves from the npm
+// configuration.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn target_router_resolves_the_override_before_the_by_name_route() {
+    let by_name = MemoryRegistry::new();
+    let override_a = MemoryRegistry::new();
+    let router = TargetRouter::new()
+        .with("crates.io", Arc::new(by_name.clone()))
+        .with_override("crates.io", "a", Arc::new(override_a.clone()));
+    let (_ws, publication) = publication_ab();
+    let a = publication
+        .targets
+        .iter()
+        .find(|t| t.package == "a")
+        .unwrap_or_else(|| unreachable!("target a exists"));
+    let b = publication
+        .targets
+        .iter()
+        .find(|t| t.package == "b")
+        .unwrap_or_else(|| unreachable!("target b exists"));
+    // The override wins for its exact (registry, package) key; the
+    // other package rides the by-name client.
+    let routed_a = router
+        .registry_for(a)
+        .unwrap_or_else(|e| unreachable!("override routes: {e}"));
+    let routed_b = router
+        .registry_for(b)
+        .unwrap_or_else(|e| unreachable!("by-name routes: {e}"));
+    // The distinction is observable through the scripted clients' logs
+    // (probing a through each records which client answered).
+    let _ = (routed_a, routed_b);
+    assert_eq!(
+        by_name.probe_log().len(),
+        0,
+        "no probes yet: the routing never probes"
+    );
+}
+
+#[test]
+fn target_router_probe_logs_show_which_client_answered() {
+    // The routing's identity, observable: `a` rides the override
+    // client, `b` the by-name client — each probe lands in exactly one
+    // log.
+    let by_name = MemoryRegistry::new();
+    let override_a = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    // The modelled upload couples with the override client: a's
+    // successful publish stages into it, so the §13 step-3 wait
+    // observes a realistic index lag (b's probes ride the uncoupled
+    // by-name client — it has no dependents, so an unconfirmed wait
+    // stays an honest `Published` row without gating anyone).
+    effect.publishes_into(&override_a);
+    let router = TargetRouter::new()
+        .with("crates.io", Arc::new(by_name.clone()))
+        .with_override("crates.io", "a", Arc::new(override_a.clone()));
+    let (_ws, publication) = publication_ab();
+    let report = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy(),
+        &RecordingSleeper::default(),
+    )
+    .unwrap_or_else(|e| unreachable!("both targets route: {e}"));
+    assert_eq!(report.published, 2, "both targets publish");
+    let a_log = override_a.probe_log();
+    assert!(
+        a_log.contains(&("a".to_owned(), "0.2.0".to_owned())),
+        "the override client probed a: {a_log:?}"
+    );
+    assert!(
+        a_log.iter().all(|(name, _)| name == "a"),
+        "the override client only saw a: {a_log:?}"
+    );
+    let b_log = by_name.probe_log();
+    assert!(
+        b_log.contains(&("b".to_owned(), "0.3.0".to_owned())),
+        "the by-name client probed b: {b_log:?}"
+    );
+    assert!(
+        b_log.iter().all(|(name, _)| name == "b"),
+        "the by-name client only saw b: {b_log:?}"
+    );
+}
+
+#[test]
+fn target_router_registry_for_covers_an_override_without_a_by_name_client() {
+    // A per-target override stands alone: the package it names routes
+    // even when its registry has no by-name client (the engine routes
+    // every target through registry_for, so the override is sufficient).
+    let override_a = MemoryRegistry::new();
+    let router = TargetRouter::new().with_override("crates.io", "a", Arc::new(override_a.clone()));
+    let (_ws, publication) = publication_ab();
+    let a = publication
+        .targets
+        .iter()
+        .find(|t| t.package == "a")
+        .unwrap_or_else(|| unreachable!("target a exists"));
+    assert!(
+        router.registry_for(a).is_ok(),
+        "the override routes without a by-name client"
+    );
+    // `b` has no override and no by-name client: refused, named.
+    let Err(error) = router.registry("crates.io") else {
+        unreachable!("no by-name client is configured");
+    };
+    assert_eq!(error.code(), "E-PUB-REGISTRY");
+}
+
+#[test]
+fn map_router_registry_for_delegates_to_the_by_name_route() {
+    // The trait default keeps every existing router working unchanged.
+    let registry = MemoryRegistry::new();
+    let router = MapRouter::new().with("crates.io", Arc::new(registry.clone()));
+    let (_ws, publication) = publication_ab();
+    let a = publication
+        .targets
+        .iter()
+        .find(|t| t.package == "a")
+        .unwrap_or_else(|| unreachable!("target a exists"));
+    assert!(
+        router.registry_for(a).is_ok(),
+        "the default delegates to registry(name)"
+    );
+    assert!(
+        registry.probe_log().is_empty(),
+        "routing itself never probes"
+    );
 }
