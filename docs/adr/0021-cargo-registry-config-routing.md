@@ -135,9 +135,17 @@ Constraints that shaped the design:
   moves from `registry(name)` to `registry_for(target)` — the default
   method means no shipped router changes behavior.
 - What stays open: source-replacement (`[source.<name>]` mirroring)
-  is not a publish-target form and stays out of scope; the legacy
-  `config` filename (deprecated upstream) is not read; the npmrc
-  scoped-registry *environment* variables (`npm_config_@scope:registry`
-  shapes) are a documented gap (the plain `NPM_CONFIG_REGISTRY`
-  override ships); a git-index probe client (spawning `git` against
-  the index repo) has no §-requirement.
+  is not a publish-target form and stays out of scope; a git-index
+  probe client (spawning `git` against the index repo) has no
+  §-requirement.
+- *(As-built, 2026-11-15, the routing-completion slice: the two
+  declared open items above are closed — the legacy `config` filename
+  is read with the Cargo Book's documented precedence (the file
+  without the extension wins when both exist; the earlier "deprecated
+  upstream" note was wrong — the page never says deprecated) and the
+  npmrc scoped-registry environment variables resolve through the
+  probe-verified literal `npm_config_@<scope>:registry` name
+  (case-insensitive; the underscore intermediate form is NOT the
+  scoped key), with the scoped key governing a scoped package
+  regardless of the source tier. The VERIFIED quotes and the seven
+  probes live in `docs/research/publish-tooling.md`.)*
