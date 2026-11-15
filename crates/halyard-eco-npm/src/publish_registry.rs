@@ -21,7 +21,14 @@
 //!   precedence, the cargo-resolution convention).
 //! * `@scope:registry` — npm config's scoped-registry grammar: a
 //!   `@scope/name` package publishes through its scope's key, beating
-//!   the plain `registry` key.
+//!   the plain `registry` key **regardless of the source tier** (the
+//!   cross-tier probe: a scoped .npmrc key beats a plain env registry
+//!   value for that scope's packages).
+//! * `npm_config_@<scope>:registry` — the scoped key's environment
+//!   form, VERIFIED by probe (npm 11.19.1; the seven probes are
+//!   recorded in `docs/research/publish-tooling.md`): the variable
+//!   name is the literal config-key suffix, case-insensitive; the
+//!   underscore intermediate form is NOT the scoped key.
 //!
 //! Fail-closed rules mirror the cargo side
 //! (`halyard_eco_cargo::registry_config`): a set-but-empty value is
@@ -81,25 +88,72 @@ impl std::fmt::Display for PublishRegistryBase {
 /// The documented default (`registry` config key, npm docs).
 const DEFAULT_REGISTRY: &str = "https://registry.npmjs.org";
 
+/// The scoped-registry environment variable of one scope — the literal
+/// config-key suffix, VERIFIED by probe (npm 11.19.1; probes recorded
+/// in `docs/research/publish-tooling.md`): `npm config get
+/// @myorg:registry` resolves when the environment carries
+/// `npm_config_@myorg:registry` (and the uppercase spelling — config
+/// values are case-insensitive), while the underscore intermediate form
+/// (`npm_config_myorg_registry`) is NOT the scoped key — npm reads it
+/// as an unknown `myorg-registry` key and warns it will stop working.
+#[must_use]
+pub fn scoped_registry_env_variable(scope: &str) -> String {
+    format!("npm_config_@{scope}:registry")
+}
+
+/// Whether one environment-variable name is the scoped-registry
+/// variable of `scope` (ASCII case-insensitive — the documented
+/// case-insensitivity rule, pinned by probe 4).
+#[must_use]
+pub fn scoped_env_name_matches(actual: &std::ffi::OsStr, scope: &str) -> bool {
+    let expected = scoped_registry_env_variable(scope);
+    actual
+        .to_str()
+        .is_some_and(|name| name.eq_ignore_ascii_case(&expected))
+}
+
+/// Scans the environment for the scoped-registry variable of `scope`
+/// (the I/O shell's env read; the variable name is not a valid POSIX
+/// shell identifier, so CI systems set it through their env maps and
+/// the value arrives here). The first case-insensitive match wins.
+#[must_use]
+pub fn scan_scoped_registry_env(scope: &str) -> Option<String> {
+    std::env::vars_os()
+        .find(|(name, _)| scoped_env_name_matches(name, scope))
+        .and_then(|(_, value)| value.to_str().map(ToOwned::to_owned))
+}
+
 /// Resolves the publish-registry base of one npm package (the pure
 /// core the I/O shell and the tests share).
 ///
 /// * `name` — the package name (`p1` or `@scope/pkg`; the scope
-///   selects the `@scope:registry` npmrc key).
+///   selects the `@scope:registry` npmrc key and its env variable).
 /// * `package_json` — the manifest bytes when readable (`None` = the
 ///   manifest is absent or unreadable; it carries no `publishConfig`
 ///   then, and the npmrc chain still resolves).
 /// * `npmrc_files` — `(source-label, text)` pairs in **ascending
 ///   precedence** (the per-user file first, the per-project file
 ///   last; a later file overrides an earlier one per key).
-/// * `env_registry` — the `NPM_CONFIG_REGISTRY` value when set (it
-///   overrides the npmrc files; a set-but-empty value is refused).
+/// * `env_registry` — the `NPM_CONFIG_REGISTRY` value when set.
+/// * `env_scoped_registry` — the `npm_config_@<scope>:registry` value
+///   when set (the scoped key's env form, VERIFIED by probe; only a
+///   scoped package has one).
+///
+/// The resolution mirrors npm's own grammar (VERIFIED, quotes and
+/// probes in `docs/research/publish-tooling.md`): the per-package
+/// publish-time `publishConfig.registry` outranks everything; within
+/// the remaining config keys the scoped key governs a scoped package
+/// **regardless of the source tier** (a `@scope:registry` value from
+/// an .npmrc file beats a plain `NPM_CONFIG_REGISTRY` env value —
+/// probe-pinned), and within one key the env tier beats the npmrc
+/// files. A set-but-empty value is refused with the source named.
 #[must_use]
 pub fn resolve_publish_registry(
     name: &str,
     package_json: Option<&[u8]>,
     npmrc_files: &[(&str, &str)],
     env_registry: Option<&str>,
+    env_scoped_registry: Option<&str>,
 ) -> PublishRegistryBase {
     // The publish-time, per-package override outranks the general
     // config sources (npm docs: publishConfig overrides "the registry
@@ -109,25 +163,30 @@ pub fn resolve_publish_registry(
     {
         return lookup;
     }
-    if let Some(value) = env_registry {
-        if value.trim().is_empty() {
-            return PublishRegistryBase::Unsupported(
-                "the NPM_CONFIG_REGISTRY environment variable is set but empty — an empty \
-                 registry URL is a doomed resolution; set it to the registry's http(s) base \
-                 URL or unset it"
-                    .to_owned(),
-            );
-        }
-        return validate_registry_url(value, "the NPM_CONFIG_REGISTRY override");
-    }
-
-    // npmrc files, ascending precedence: the per-project file wins
-    // over the per-user one; a later file overrides per key. The
-    // scoped key beats the plain key for a scoped package (npm's
-    // scoped-registry grammar).
     let scope = name
         .strip_prefix('@')
         .and_then(|rest| rest.split('/').next());
+
+    // The scoped key's env form (probe-verified variable name): the
+    // env tier of the scoped key beats the files tier of the same key.
+    if let Some(scope) = scope
+        && let Some(value) = env_scoped_registry
+    {
+        if value.trim().is_empty() {
+            return PublishRegistryBase::Unsupported(format!(
+                "the {} environment variable is set but empty — an empty registry URL is a \
+                 doomed resolution; set it to the registry's http(s) base URL or unset it",
+                scoped_registry_env_variable(scope)
+            ));
+        }
+        return validate_registry_url(
+            value,
+            &format!("the {} override", scoped_registry_env_variable(scope)),
+        );
+    }
+
+    // npmrc files, ascending precedence: the per-project file wins
+    // over the per-user one; a later file overrides per key.
     let mut plain: Option<String> = None;
     let mut scoped: Option<String> = None;
     let mut scoped_seen = false;
@@ -157,8 +216,23 @@ pub fn resolve_publish_registry(
             ));
         }
     }
+    // The scoped key governs a scoped package regardless of the source
+    // tier: it beats the plain `registry` key even when the plain value
+    // comes from the env tier (the cross-tier probe, pinned by tests).
     if scoped_seen && let Some(value) = scoped.as_deref() {
         return validate_registry_url(value, "the @scope:registry key");
+    }
+    // The plain key: the env tier beats the files tier.
+    if let Some(value) = env_registry {
+        if value.trim().is_empty() {
+            return PublishRegistryBase::Unsupported(
+                "the NPM_CONFIG_REGISTRY environment variable is set but empty — an empty \
+                 registry URL is a doomed resolution; set it to the registry's http(s) base \
+                 URL or unset it"
+                    .to_owned(),
+            );
+        }
+        return validate_registry_url(value, "the NPM_CONFIG_REGISTRY override");
     }
     if let Some(value) = plain.as_deref() {
         return validate_registry_url(value, "the .npmrc registry key");
@@ -167,8 +241,10 @@ pub fn resolve_publish_registry(
 }
 
 /// The I/O shell of [`resolve_publish_registry`]: reads the manifest
-/// bytes, the per-project and per-user `.npmrc`, and the
-/// `NPM_CONFIG_REGISTRY` environment value.
+/// bytes, the per-project and per-user `.npmrc`, the
+/// `NPM_CONFIG_REGISTRY` environment value and — for a scoped package —
+/// the scoped key's `npm_config_@<scope>:registry` variable
+/// (case-insensitive scan, VERIFIED by probe).
 #[must_use]
 pub fn publish_registry_base(
     project_root: &Path,
@@ -192,11 +268,16 @@ pub fn publish_registry_base(
         .collect();
     let env_registry = std::env::var_os("NPM_CONFIG_REGISTRY")
         .and_then(|value| value.to_str().map(ToOwned::to_owned));
+    let env_scoped_registry = name
+        .strip_prefix('@')
+        .and_then(|rest| rest.split('/').next())
+        .and_then(scan_scoped_registry_env);
     resolve_publish_registry(
         name,
         package_json.as_deref(),
         &borrowed,
         env_registry.as_deref(),
+        env_scoped_registry.as_deref(),
     )
 }
 
