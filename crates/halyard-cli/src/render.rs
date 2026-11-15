@@ -1820,33 +1820,61 @@ pub fn release_live_gha(
 }
 
 // ---------------------------------------------------------------------------
-// migrate (M4.7 step 1, §16.2)
+// migrate (M4.7, §16.2)
 // ---------------------------------------------------------------------------
 
 /// The migration report's machine shape: the engine's own
 /// [`halyard_config::MigrationReport`] serialization (the engine type is
 /// the single source of the field names; `BTreeMap`/sorted vectors keep
-/// it deterministic, I3).
+/// it deterministic, I3). The `write` block exists only when `--write`
+/// ran — without the flag the document is the frozen report-only shape.
 pub fn migrate_report_json(
     report: &halyard_config::MigrationReport,
+    write: Option<&halyard_config::DraftWriteReport>,
 ) -> serde_json::Result<serde_json::Value> {
-    serde_json::to_value(report)
+    let mut value = serde_json::to_value(report)?;
+    if let (Some(write), Some(map)) = (write, value.as_object_mut()) {
+        map.insert("write".to_owned(), serde_json::to_value(write)?);
+    }
+    Ok(value)
 }
 
-/// The migration report, human shape (M4.7 step 1): per tool the found
-/// files, the mapped rows with their notes, the semantic differences,
-/// the per-package survey and the draft `halyard.toml` — explicitly a
-/// draft: the command is report-only and never writes.
-pub fn migrate_report(report: &halyard_config::MigrationReport) -> String {
+/// The migration report, human shape (M4.7): per tool the found
+/// files, the mapped rows with their notes, the semantic differences
+/// and the draft `halyard.toml`. The header names what the command did
+/// with the draft: without `--write` (or when nothing was configured)
+/// it wrote nothing; with `--write` it names the file, the byte count
+/// and the tool the draft came from.
+pub fn migrate_report(
+    report: &halyard_config::MigrationReport,
+    write: Option<&halyard_config::DraftWriteReport>,
+) -> String {
     let configured = report.tools.iter().filter(|t| t.configured).count();
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "migrate (M4.7 step 1): {} tool(s) surveyed, {} configured with foreign configs — \
-         the report is data; halyard never wrote anything",
-        report.tools.len(),
-        configured
-    );
+    let landed = write.filter(|w| w.outcome == halyard_config::DraftWriteOutcome::Written);
+    match landed {
+        Some(write) => {
+            let _ = writeln!(
+                out,
+                "migrate (M4.7): {} tool(s) surveyed, {} configured — wrote `{}` ({} bytes) \
+                 from the {} draft; the pre-flight refusals still fail closed",
+                report.tools.len(),
+                configured,
+                write.path,
+                write.bytes,
+                write.tool
+            );
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "migrate (M4.7): {} tool(s) surveyed, {} configured with foreign configs — \
+                 the report is data; halyard never wrote anything",
+                report.tools.len(),
+                configured
+            );
+        }
+    }
     for survey in &report.tools {
         if !survey.configured {
             let _ = writeln!(out, "{}: not detected", survey.tool);
@@ -1884,20 +1912,45 @@ pub fn migrate_report(report: &halyard_config::MigrationReport) -> String {
             }
         }
         if let Some(draft) = &survey.draft {
-            let _ = writeln!(out, "  draft halyard.toml (never written by this slice):");
+            let label = match landed {
+                Some(write) if survey.tool == write.tool => format!(
+                    "draft halyard.toml (written to `{}`, {} bytes):",
+                    write.path, write.bytes
+                ),
+                _ => "draft halyard.toml (report copy, never written):".to_owned(),
+            };
+            let _ = writeln!(out, "  {label}");
             for line in draft.lines() {
                 let _ = writeln!(out, "    {line}");
             }
         }
     }
+    if write.is_some_and(|w| w.outcome == halyard_config::DraftWriteOutcome::NothingConfigured) {
+        let _ = writeln!(
+            out,
+            "nothing to write: no foreign configuration was detected — absence is a value, \
+             not an error"
+        );
+    }
     out
 }
 
-/// The migration report, GHA shape (M4.7 step 1): a job-summary table
+/// The migration report, GHA shape (M4.7): a job-summary table
 /// per configured tool plus `::warning` annotations for the semantic
-/// differences (the rows a migration review must read).
-pub fn migrate_report_gha(report: &halyard_config::MigrationReport) -> String {
+/// differences (the rows a migration review must read); a `::notice`
+/// names the write when `--write` ran.
+pub fn migrate_report_gha(
+    report: &halyard_config::MigrationReport,
+    write: Option<&halyard_config::DraftWriteReport>,
+) -> String {
     let mut out = String::new();
+    if let Some(write) = write.filter(|w| w.outcome == halyard_config::DraftWriteOutcome::Written) {
+        let _ = writeln!(
+            out,
+            "::notice::halyard migrate: wrote `{}` ({} bytes) from the {} draft",
+            write.path, write.bytes, write.tool
+        );
+    }
     for survey in &report.tools {
         if !survey.configured {
             let _ = writeln!(
@@ -1925,10 +1978,17 @@ pub fn migrate_report_gha(report: &halyard_config::MigrationReport) -> String {
             );
         }
         if let Some(draft) = &survey.draft {
-            let _ = writeln!(
-                out,
-                "\nDraft `halyard.toml` (the report carries it; nothing was written):\n"
-            );
+            let label = match write {
+                Some(write)
+                    if survey.tool == write.tool
+                        && write.outcome == halyard_config::DraftWriteOutcome::Written =>
+                {
+                    format!("Draft `halyard.toml` (written, {} bytes):\n", write.bytes)
+                }
+                _ => "Draft `halyard.toml` (the report carries it; nothing was written):\n"
+                    .to_owned(),
+            };
+            let _ = writeln!(out, "\n{label}");
             let _ = writeln!(out, "```toml\n{draft}```");
         }
     }
