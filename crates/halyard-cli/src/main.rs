@@ -1735,9 +1735,17 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
     if !dry && cli.offline {
         return Err(CliError::new(
             "E-CLI-PUBLISH",
-            "--offline contradicts a live publish (the resume probes and the tool upload are              the live run's network) — use `publish --dry` for the offline forecast, or drop              --offline for the real run",
+            "--offline contradicts a live publish (the resume probes and the tool upload are \
+             the live run's network) — use `publish --dry` for the offline forecast, or drop \
+             --offline for the real run",
         ));
     }
+    // The shell captures the publish-auth snapshot once (M5.3 step 1,
+    // ADR-0019): resolution and scrubbing share one deterministic table,
+    // and a present-but-empty token variable refuses the run here —
+    // before any plan, probe or spawn (E-PUB-AUTH).
+    let auth = halyard_publish::EnvPublishAuth::capture()
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let publication = profiler
@@ -1756,7 +1764,14 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
     )
     .in_mode(mode);
     let router = publish_effect::publish_router();
-    let effect = publish_effect::SpawnPublishEffect::new(std::path::PathBuf::from("."), dry);
+    let auth = std::sync::Arc::new(auth);
+    let effect =
+        publish_effect::SpawnPublishEffect::new(std::path::PathBuf::from("."), dry, auth.clone());
+    // The per-registry auth provenance (M5.3 step 2): which documented
+    // variable authenticates each registry — resolved before the run,
+    // rendered in every format (names only, never values).
+    let auth_map = halyard_publish::auth_summary(auth.as_ref(), &publication.targets)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let report = profiler
         .span("publish-run", || {
             halyard_publish::run_publication(
@@ -1774,9 +1789,10 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
             &report,
             &publication.not_targets,
             mode_label,
+            &auth_map,
         ))?)?,
         Format::Gha | Format::Human => {
-            print!("{}", render::publish_report(&report, mode_label));
+            print!("{}", render::publish_report(&report, mode_label, &auth_map));
         }
     }
     if report.failed == 0 {
