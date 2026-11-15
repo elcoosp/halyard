@@ -6,7 +6,12 @@
 //! live-mode tests here only cover the offline paths: zero targets and
 //! the fail-closed routing gap).
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::process::Command;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 
 use halyard_test_support::{CommitSpec, GitFixture};
 
@@ -404,15 +409,16 @@ fn doctor_reports_the_publish_auth_row() -> Result<(), BoxError> {
 }
 
 /// A configured non-default cargo registry fail-closes at the shell's
-/// routing map (M5.2's by-design routing gate: the map owns the two §13
-/// clients — crates.io and npm — and third-party cargo indexes have no
-/// resume-probe client, so the run refuses with `E-PUB-REGISTRY` naming
-/// the registry **before any spawn**, dry mode included — a forecast
-/// must never show a spawn the live run would refuse). The `--registry`
-/// argv mapping this milestone ships is pinned at the grammar's owner
-/// (the adapter crate's argv tests) and wired through the effect; the
-/// end-to-end custom-registry publish waits on a third-party registry
-/// client joining the routing map (the documented open item).
+/// routing map when the registry is **not configured anywhere**: the
+/// routing map owns the two §13 clients (crates.io, npm), and a name
+/// neither of them covers nor a cargo config file resolves is refused
+/// with `E-PUB-REGISTRY` naming the registry **before any spawn**, dry
+/// mode included — a forecast must never show a spawn the live run
+/// would refuse. The configured side of this contract is pinned below
+/// (`publish_dry_forecasts_a_configured_custom_registry` &
+/// `publish_live_probes_a_custom_registry_over_loopback`): a
+/// `[registries.<name>]` entry (or its env override) resolves the
+/// registry's sparse index and joins the routing map (ADR-0021).
 #[test]
 fn publish_refuses_a_custom_registry_before_any_spawn() -> Result<(), BoxError> {
     let config = "[publish]\nenabled = true\n\n[publish.cargo]\nregistry = \"corp.repo\"\n";
@@ -433,6 +439,482 @@ fn publish_refuses_a_custom_registry_before_any_spawn() -> Result<(), BoxError> 
     assert!(
         text.contains("corp.repo"),
         "the refusal names the registry: {text}"
+    );
+    assert!(
+        !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
+        "zero side effects — the tool never spawned: {text}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Custom cargo registry routing (ADR-0021): a `publish.registry` name
+// other than the default resolves through the cargo configuration — the
+// `[registries.<name>]` `index` key (Cargo Book "Registries", VERIFIED)
+// or its `CARGO_REGISTRIES_<NAME>_INDEX` env override — and a
+// sparse-HTTP index joins the routing map as a probe client. An
+// unresolvable name still refuses (the pin above); a resolvable name
+// routes, offline-verifiable end to end over a loopback sparse index.
+// ---------------------------------------------------------------------------
+
+/// A stateful loopback registry: the **first** GET per path answers
+/// `404` (the version is not published yet), every later GET answers
+/// `200` with the version's document — the §13 resume/visibility
+/// sequence in one deterministic server (the fake-forge loopback
+/// discipline: hand-rolled HTTP, no new dependencies). The body style
+/// follows the protocol the routed client speaks: the cargo sparse
+/// index's newline-delimited file or the npm packument document. The
+/// serving thread lives until the test process ends; the served
+/// request count and paths are read from the shared `Arc` after the
+/// run.
+struct FakeIndex {
+    versions: BTreeMap<String, String>,
+    packument: bool,
+    served: std::sync::atomic::AtomicUsize,
+    seen: Mutex<BTreeSet<String>>,
+}
+
+impl FakeIndex {
+    /// Starts the server; returns the shared fake and the base URL the
+    /// configuration must carry.
+    fn start(
+        versions: BTreeMap<String, String>,
+        base_path: &'static str,
+        packument: bool,
+    ) -> Result<(Arc<Self>, String), BoxError> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let index = Arc::new(Self {
+            versions,
+            packument,
+            served: std::sync::atomic::AtomicUsize::new(0),
+            seen: Mutex::new(BTreeSet::new()),
+        });
+        let server = Arc::clone(&index);
+        thread::spawn(move || {
+            while let Ok((mut stream, _addr)) = listener.accept() {
+                if let Some(path) = server.serve_one(&mut stream) {
+                    server
+                        .seen
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(path);
+                }
+                server
+                    .served
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        Ok((index, format!("http://127.0.0.1:{port}{base_path}")))
+    }
+
+    /// How many requests the fake answered so far.
+    fn served(&self) -> usize {
+        self.served.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The served paths, sorted.
+    fn served_paths(&self) -> Vec<String> {
+        self.seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Reads one HTTP exchange and answers it: `404` on the first hit
+    /// of the path (not yet published), `200` + the index line after.
+    /// Returns the served path.
+    fn serve_one(&self, stream: &mut TcpStream) -> Option<String> {
+        let mut buf = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end;
+        loop {
+            let read = stream.read(&mut chunk).ok()?;
+            if read == 0 {
+                return None;
+            }
+            if let Some(slice) = chunk.get(..read) {
+                buf.extend_from_slice(slice);
+            }
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = pos;
+                break;
+            }
+        }
+        let head = buf.get(..header_end).map_or(String::new(), |bytes| {
+            String::from_utf8_lossy(bytes).into_owned()
+        });
+        let request_line = head.lines().next().unwrap_or_default();
+        let path = request_line.split(' ').nth(1)?.to_owned();
+        // The sparse index layout's last path segment is the package
+        // name (`/index/2/p1`); the version turns visible after the
+        // first probe miss (the §13 sequence).
+        let first_hit = self
+            .seen
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.clone());
+        let name = path.rsplit('/').next().unwrap_or_default().to_owned();
+        let version = self.versions.get(&name);
+        let (status, body) = match (first_hit, version) {
+            (true, _) | (false, None) => ("404 Not Found".to_owned(), String::new()),
+            (false, Some(version)) if self.packument => (
+                "200 OK".to_owned(),
+                format!("{{\"versions\":{{\"{version}\":{{}}}}}}"),
+            ),
+            (false, Some(version)) => (
+                "200 OK".to_owned(),
+                format!(
+                    "{{\"name\":\"{name}\",\"vers\":\"{version}\",\"deps\":[],\
+                     \"cksum\":\"0\",\"features\":{{}},\"yanked\":false}}\n"
+                ),
+            ),
+        };
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).ok()?;
+        stream.flush().ok()?;
+        Some(path)
+    }
+}
+
+/// Commits `.cargo/config.toml` into the fixture (the cargo
+/// configuration the routing resolution reads at publish time).
+fn configure_registry(fx: &mut GitFixture, config: &str) -> Result<(), BoxError> {
+    fx.commit_with(&CommitSpec::files(
+        vec![(".cargo/config.toml".to_owned(), config.to_owned())],
+        "chore: configure the corp registry",
+    ))?;
+    Ok(())
+}
+
+/// A configured custom registry routes: the dry forecast proceeds over
+/// the shimmed tool (no probe — dry never touches the registry, I5)
+/// and the argv carries the documented `--registry <name>` mapping.
+#[test]
+fn publish_dry_forecasts_a_configured_custom_registry() -> Result<(), BoxError> {
+    let config = "[publish]\nenabled = true\n\n[publish.cargo]\nregistry = \"corp\"\n";
+    let mut fx = build_workspace("custom-dry", config)?;
+    configure_registry(
+        &mut fx,
+        "[registries.corp]\nindex = \"sparse+https://corp.example/index/\"\n",
+    )?;
+    let shim = write_cargo_shim("shim-custom-dry")?;
+    let log = fixture_dir("shim-log-custom-dry")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        out.status.success(),
+        "the configured registry routes: {text}"
+    );
+    assert!(text.contains("\"forecast\""), "rows say forecast: {text}");
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("--registry") && recorded.contains("corp"),
+        "the argv carries the registry mapping: {recorded}"
+    );
+    Ok(())
+}
+
+/// A custom registry configured with a git-protocol index is an honest
+/// refusal: the probe speaks the sparse-HTTP protocol only, the decline
+/// names the protocol and the fix, and nothing spawns (zero side
+/// effects — validate-then-act, §15.3).
+#[test]
+fn publish_refuses_a_custom_registry_with_a_git_index() -> Result<(), BoxError> {
+    let config = "[publish]\nenabled = true\n\n[publish.cargo]\nregistry = \"corp\"\n";
+    let mut fx = build_workspace("custom-git", config)?;
+    configure_registry(
+        &mut fx,
+        "[registries.corp]\nindex = \"https://corp.example/git/index\"\n",
+    )?;
+    let shim = write_cargo_shim("shim-custom-git")?;
+    let log = fixture_dir("shim-log-custom-git")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        !out.status.success(),
+        "a git index is not probeable: {text}"
+    );
+    assert!(text.contains("E-PUB-REGISTRY"), "the stable code: {text}");
+    assert!(
+        text.contains("git") && text.contains("sparse+"),
+        "the decline names the protocol and the fix: {text}"
+    );
+    assert!(
+        !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
+        "zero side effects — the tool never spawned: {text}"
+    );
+    Ok(())
+}
+
+/// The end-to-end custom-registry publish (the routing map's new
+/// client): the resume probe hits the configured sparse index over the
+/// loopback transport, the shim records the `--registry` argv, and the
+/// §13 step-3 visibility wait confirms both targets through the same
+/// index — zero duplicates, dependents un-gated.
+#[test]
+fn publish_live_probes_a_custom_registry_over_loopback() -> Result<(), BoxError> {
+    let config = "[publish]\nenabled = true\n\n[publish.cargo]\nregistry = \"corp\"\n";
+    let mut fx = build_workspace("custom-live", config)?;
+    let (index, base) = FakeIndex::start(
+        BTreeMap::from([
+            ("p1".to_owned(), "0.1.1".to_owned()),
+            ("p2".to_owned(), "0.1.1".to_owned()),
+        ]),
+        "/index",
+        false,
+    )?;
+    configure_registry(
+        &mut fx,
+        &format!("[registries.corp]\nindex = \"sparse+{base}/\"\n"),
+    )?;
+    let shim = write_cargo_shim("shim-custom-live")?;
+    let log = fixture_dir("shim-log-custom-live")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        out.status.success(),
+        "the loopback publish succeeded: {text}"
+    );
+    assert!(
+        text.contains("\"published\": 2"),
+        "both targets landed: {text}"
+    );
+    assert!(
+        text.contains("\"visibility_confirmed\": true"),
+        "the visibility wait confirmed through the custom index: {text}"
+    );
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("--registry") && recorded.contains("corp"),
+        "the argv carries the registry mapping: {recorded}"
+    );
+    // The probe sequence rode the custom index: one resume probe plus
+    // one visibility probe per target (the §13 step-2/3 shape), at the
+    // sparse-index paths of both package names.
+    assert_eq!(
+        index.served(),
+        4,
+        "resume + visibility per target: served {:?}",
+        index.served_paths()
+    );
+    let served = index.served_paths();
+    for path in ["/index/2/p1", "/index/2/p2"] {
+        assert!(
+            served.iter().any(|seen| seen == path),
+            "the probe reached the custom index at {path}: served {served:?}"
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The npm-side per-target routing (M5.2 continued, ADR-0021): a
+// package.json `publishConfig.registry` names the registry the spawned
+// `pnpm publish` targets, so the §13 probe resolves the same way — a
+// custom base joins the routing map as a per-target override, offline-
+// verifiable end to end over a loopback packument.
+// ---------------------------------------------------------------------------
+
+/// A two-package pnpm workspace plus a feat commit; `publish_config` is
+/// written into **every** package.json (the per-package override the
+/// npm routing reads).
+fn build_npm_workspace(label: &str, publish_config: Option<&str>) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    let publish = publish_config
+        .map(|registry| format!("\"publishConfig\": {{\"registry\": \"{registry}\"}},"))
+        .unwrap_or_default();
+    let root = format!(
+        "{{\n  \"name\": \"npm-ws\",\n  \"private\": true,\n  {publish}\n  \"workspaces\": \
+         [\"pkgs/*\"]\n}}\n"
+    );
+    let p1 = format!(
+        "{{\n  \"name\": \"p1\",\n  \"version\": \"0.1.0\",\n  {publish}\n  \"main\": \
+         \"lib.js\"\n}}\n"
+    );
+    let p2 = format!(
+        "{{\n  \"name\": \"p2\",\n  \"version\": \"0.1.0\",\n  {publish}\n  \"main\": \
+         \"lib.js\",\n  \"dependencies\": {{\"p1\": \"^0.1.0\"}}\n}}\n"
+    );
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            ("package.json".to_owned(), root),
+            ("pkgs/p1/package.json".to_owned(), p1),
+            ("pkgs/p1/lib.js".to_owned(), String::new()),
+            ("pkgs/p2/package.json".to_owned(), p2),
+            ("pkgs/p2/lib.js".to_owned(), String::new()),
+        ],
+        "chore: scaffold npm workspace",
+    ))?;
+    let feat = vec![
+        (
+            "pkgs/p1/lib.js".to_owned(),
+            "exports.const = 2;\n".to_owned(),
+        ),
+        (
+            "pkgs/p2/lib.js".to_owned(),
+            "exports.const = 3;\n".to_owned(),
+        ),
+    ];
+    fx.commit_with(&CommitSpec::files(feat, "feat: bump the constants"))?;
+    Ok(fx)
+}
+
+/// A `pnpm` stand-in that records its argv and exits 0 (the packaged
+/// tool never runs; the argv is the assertion).
+fn write_pnpm_shim(label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let dir = fixture_dir(label)?;
+    let script = dir.join("pnpm");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$HALYARD_SHIM_LOG\"\nexit 0\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms)?;
+    }
+    Ok(dir)
+}
+
+/// The dry forecast proceeds for an npm workspace whose packages pin a
+/// custom registry: routing validation is offline (the override client
+/// builds from the publishConfig value; the dry run never probes, I5).
+#[test]
+fn publish_dry_forecasts_an_npm_publishconfig_workspace() -> Result<(), BoxError> {
+    let mut fx = build_npm_workspace("npm-dry", Some("https://corp.example/registry"))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-dry")?;
+    let log = fixture_dir("shim-log-npm-dry")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(out.status.success(), "the pinned registry routes: {text}");
+    assert!(text.contains("\"forecast\""), "rows say forecast: {text}");
+    assert!(text.contains("pkgs/p1"), "npm targets named: {text}");
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("publish"),
+        "the pnpm argv is recorded: {recorded}"
+    );
+    Ok(())
+}
+
+/// The end-to-end npm publish over a per-target override: the resume
+/// probe hits the publishConfig registry (the loopback packument), the
+/// shimmed `pnpm` records its argv, and the §13 step-3 wait confirms
+/// through the same base — the probes rode the *custom* base, not the
+/// default registry.
+#[test]
+fn publish_live_probes_an_npm_publishconfig_over_loopback() -> Result<(), BoxError> {
+    let (index, base) = FakeIndex::start(
+        BTreeMap::from([
+            ("p1".to_owned(), "0.1.1".to_owned()),
+            ("p2".to_owned(), "0.1.1".to_owned()),
+        ]),
+        "",
+        true,
+    )?;
+    let mut fx = build_npm_workspace("npm-live", Some(&base))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-live")?;
+    let log = fixture_dir("shim-log-npm-live")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        out.status.success(),
+        "the loopback publish succeeded: {text}"
+    );
+    assert!(
+        text.contains("\"published\": 2"),
+        "both targets landed: {text}"
+    );
+    assert!(
+        text.contains("\"visibility_confirmed\": true"),
+        "the visibility wait confirmed through the custom registry: {text}"
+    );
+    // The probes reached the *packument* paths of the custom base (the
+    // default registry is never contacted).
+    let served = index.served_paths();
+    for path in ["/p1", "/p2"] {
+        assert!(
+            served.iter().any(|seen| seen == path),
+            "the probe reached the custom registry at {path}: served {served:?}"
+        );
+    }
+    assert_eq!(index.served(), 4, "resume + visibility per target");
+    let _ = std::fs::read_to_string(&log)?;
+    Ok(())
+}
+
+/// A package pinning a non-HTTP registry is an honest refusal naming
+/// the package and the manifest — nothing spawns (validate-then-act).
+#[test]
+fn publish_refuses_an_npm_package_with_a_non_http_registry() -> Result<(), BoxError> {
+    let mut fx = build_npm_workspace("npm-bad", Some("corp.example/registry"))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-bad")?;
+    let log = fixture_dir("shim-log-npm-bad")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        !out.status.success(),
+        "a non-http base is not probeable: {text}"
+    );
+    assert!(text.contains("E-PUB-REGISTRY"), "the stable code: {text}");
+    assert!(
+        text.contains("p1") && text.contains("package.json"),
+        "the refusal names the package and the manifest: {text}"
     );
     assert!(
         !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
