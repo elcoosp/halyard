@@ -20,7 +20,9 @@ use halyard_core::reason::Oid;
 
 use crate::Forge;
 use crate::error::ForgeError;
-use crate::spec::{ApiCommit, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
+use crate::spec::{
+    ApiCommit, BranchName, CommentSpec, Pr, PrComment, PrSpec, RateInfo, Release, ReleaseSpec,
+};
 
 /// One recorded forge operation (the §11.5 "API usage summary" in
 /// miniature). `target` is the branch or tag the call addressed.
@@ -42,12 +44,27 @@ struct StoredPr {
     open: bool,
 }
 
+/// One stored PR comment (the §11.6 check comment the marker upsert
+/// manages; comments ride the PR they belong to, open or closed — real
+/// forges accept comments on closed PRs too). The marker lives in the
+/// body (the scan is body-based), never stored separately.
+#[derive(Debug)]
+struct StoredComment {
+    /// The PR the comment belongs to.
+    pr_number: u64,
+    /// The full comment body.
+    body: String,
+    /// The synthetic comment URL (`mem://pr/{n}/comment/{k}`).
+    url: String,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     failure: Option<ForgeError>,
     prs: Vec<StoredPr>,
     next_pr_number: u64,
     releases: Vec<Release>,
+    comments: Vec<StoredComment>,
     next_commit: u64,
     calls: Vec<CallRecord>,
 }
@@ -96,6 +113,18 @@ impl MemoryForge {
     /// Snapshot of the releases the forge currently holds.
     pub fn releases(&self) -> Vec<Release> {
         self.state().releases.clone()
+    }
+
+    /// The comment bodies stored under `pr_number`, oldest first — the
+    /// test-facing view behind the marker-upsert assertions (the seam
+    /// itself reads comments only through the upsert's scan).
+    pub fn pr_comments(&self, pr_number: u64) -> Vec<String> {
+        self.state()
+            .comments
+            .iter()
+            .filter(|comment| comment.pr_number == pr_number)
+            .map(|comment| comment.body.clone())
+            .collect()
     }
 
     /// Locks the state; poisoning cannot corrupt the invariants (every
@@ -233,6 +262,59 @@ impl Forge for MemoryForge {
         let oid = Oid::from_hex(hex.as_bytes())
             .unwrap_or_else(|| unreachable!("counter-formatted oid is 40 hex digits"));
         Ok(oid)
+    }
+
+    fn upsert_pr_comment(&self, spec: &CommentSpec) -> Result<PrComment, ForgeError> {
+        let mut state = self.state();
+        Self::record(
+            &mut state,
+            "upsert_pr_comment",
+            &format!("pr/{}", spec.pr_number),
+        );
+        spec.validate()?;
+        if let Some(failure) = state.failure.clone() {
+            return Err(failure);
+        }
+        // The marker scan (§11.4's find-first convention): the comment
+        // the marker identifies is rewritten in place — same URL, no
+        // duplicate (I1). Unknown PR numbers are refused fail-closed:
+        // the reference adapter only stores what its callers created,
+        // and a comment on a PR the model never saw is a caller bug the
+        // caller reports, never a guess.
+        if !state
+            .prs
+            .iter()
+            .any(|stored| stored.pr.number == spec.pr_number)
+        {
+            return Err(ForgeError::request(format!(
+                "PR {} does not exist in this forge — the comment targets a PR the caller \
+                 resolved first (find_release_pr by head branch); resolve it before upserting",
+                spec.pr_number
+            )));
+        }
+        let marker_hit = state.comments.iter_mut().find(|comment| {
+            comment.pr_number == spec.pr_number && comment.body.contains(&spec.marker)
+        });
+        if let Some(existing) = marker_hit {
+            existing.body.clone_from(&spec.body);
+            return Ok(PrComment {
+                url: existing.url.clone(),
+                created: false,
+            });
+        }
+        let sequence = state
+            .comments
+            .iter()
+            .filter(|comment| comment.pr_number == spec.pr_number)
+            .count()
+            + 1;
+        let url = format!("mem://pr/{}/comment/{}", spec.pr_number, sequence);
+        state.comments.push(StoredComment {
+            pr_number: spec.pr_number,
+            body: spec.body.clone(),
+            url: url.clone(),
+        });
+        Ok(PrComment { url, created: true })
     }
 
     fn rate_limit(&self) -> RateInfo {
