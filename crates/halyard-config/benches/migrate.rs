@@ -1,17 +1,25 @@
-//! Bench: foreign-config migration surveys (M4.7 step 1, §16.2).
+//! Bench: foreign-config migration surveys and the §16.2 write step
+//! (M4.7, ADR-0022/ADR-0023).
 //!
 //! Measures the release-please survey (JSON parse + key mapping +
 //! per-package tag resolution + draft serialization + strict-loader
-//! validation) and the changesets survey over realistic configs. The
-//! migration runs once per `halyard migrate` invocation — millisecond
-//! scale at worst — but the draft's loader round-trip is the part the
-//! gate must keep honest: a draft that stops parsing is a broken
-//! deliverable, and the bench pins that the validation stays cheap.
+//! validation), the changesets survey over realistic configs, and the
+//! write step's plan+run pair over the memory sink. The migration runs
+//! once per `halyard migrate` invocation — millisecond scale at worst —
+//! but the draft's loader round-trip is the part the gate must keep
+//! honest: a draft that stops parsing is a broken deliverable, and the
+//! bench pins that the validation stays cheap. The write decision is
+//! pinned because it runs on the `--write` path: the plan must stay a
+//! trivial scan over the report (the heavy work — validation — already
+//! happened in the survey).
 
 use criterion::Criterion;
 use halyard_config::ForeignFiles;
+use halyard_config::MemoryDraftSink;
 use halyard_config::default_sources;
 use halyard_config::migrate;
+use halyard_config::plan_draft_write;
+use halyard_config::run_draft_write;
 
 /// A realistic release-please manifest config: two packages with
 /// per-package options, the pre-major switches, and documented keys the
@@ -112,7 +120,46 @@ fn bench_migrate_surveys(c: &mut Criterion) {
     });
 }
 
+/// The §16.2 write step over the memory sink: the plan (a scan over the
+/// report) plus the run (the gate + one recorded write). The real
+/// `AtomicDraftSink` does filesystem I/O — the decision cost is what
+/// the bench keeps honest, the durability protocol is pinned by tests.
+/// Setup failures exit honestly (benches have no `unwrap`/`expect`
+/// surface outside test context).
+fn bench_migrate_write(c: &mut Criterion) {
+    let sources = default_sources();
+    let rp = release_please_files();
+    let report = migrate(&rp, &sources).unwrap_or_else(|error| {
+        eprintln!("the release-please survey must parse for the write bench: {error}");
+        std::process::exit(1);
+    });
+    let mut group = c.benchmark_group("migrate_write");
+    group.throughput(criterion::Throughput::Elements(1));
+    group.bench_function("plan_and_run_over_memory_sink", |b| {
+        b.iter(|| {
+            let planned = plan_draft_write(&report).unwrap_or_else(|error| {
+                eprintln!("the single configured draft always plans: {error}");
+                std::process::exit(1);
+            });
+            let plan = planned.unwrap_or_else(|| {
+                eprintln!("a configured tool is a write candidate");
+                std::process::exit(1);
+            });
+            let write =
+                run_draft_write(Some(plan), &MemoryDraftSink::new()).unwrap_or_else(|error| {
+                    eprintln!("a fresh sink never refuses: {error}");
+                    std::process::exit(1);
+                });
+            assert!(
+                write.bytes > 0 && write.tool == "release-please",
+                "the write lands the validated draft: {write:?}"
+            );
+        });
+    });
+}
+
 fn main() {
     let mut criterion = Criterion::default();
     bench_migrate_surveys(&mut criterion);
+    bench_migrate_write(&mut criterion);
 }
