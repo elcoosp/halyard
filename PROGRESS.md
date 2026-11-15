@@ -33,6 +33,79 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | §8.8 smart-minimal-fetch slice (M4.6 step 1) + M5.1 registry existence probes | done | feat/fetch-and-registry-probes (dirty; no commits) | M1 (M4.6 step 1): `halyard_git::fetch` (ADR-0016) — the pure planner (`latest_tags_for`, `deepen_boundaries_for` through the now-public `halyard_core::planner::effective_template` so fetch/plan/tag-phase cannot disagree, `plan_fetch`, `fetch_attempts`) + the live `TagFetcher`/`GixTagFetcher` effect (probe → select → classify → one minimal fetch, full-fetch fallback of the same refs, I1-idempotent, divergent release tags fail-closed `E-GIT-TAG-CONFLICT`); three recipe points settled empirically + pinned by tests (shallow machinery only on shallow repos — `--shallow-exclude` fails complete clones; the boundary is each package's previous release tag; `--deepen` loops deferred, the full fetch is the terminal fallback); `GitError::Fetch` (`E-GIT-FETCH` page + index); CLI `halyard fetch` (discovery+config only — a shallow clone must be fetchable; human/json/gha, exit 1 on failed rows) + 17 engine tests (`tests/fetch.rs`, red→green) + 4 CLI tests (`cli_fetch.rs`, red→green) + bench `fetch_plan` (selection 40×202 ≈ 596 µs, boundaries ≈ 594 µs, attempts 40 ≈ 12 µs) + example `fetch_plan` + ADR-0016 + arch §8.8/§16.2 as-built + README/CLI-README rows. M2 (M1 green first, M5.1 step 1): the `halyard-registry` crate (ADR-0017) — the `Registry` seam over the forge transport (no HTTP client; `UreqTransport` injected at runtime, `MemoryTransport` in tests; layer rule `registry → forge`, 17 crates ✓), `CratesIo` sparse-index + `Npm` packument `published()` with fail-closed status semantics (`404` ⇒ not published — verified live; uninterpretable ⇒ `E-REG-PROTOCOL`; names never reach the wire invalid ⇒ `E-REG-NAME`), `wait_until_visible` with the deterministic doubling-capped backoff + injected `RegistrySleeper`; URL grammar VERIFIED live (Cargo Book + npm registry docs + direct HTTP probes) and recorded in `docs/research/registry-existence-probes.md`; 12 contract tests (red→green) + bench `probe` (sparse parse ≈ 2.9 µs, packument ≈ 28.6 µs) + example `probe_registries` + `doctor --registries` opt-in probe (immutable-version probes; I5 respected) + `E-REG-*` pages ×3 + index rows | The M4.6 corpus checkout-time acceptance (corpus lane), the M5.1 nightly live checks (opt-in lane), the `--deepen` loops, the M5.2 publisher (declared consumer), publish/M5.2+, the corpus-wide pnpm differential, the M2.6 dhat re-audit. Micro-debt cleaned (additive): cache write-back failures remapped `E-GIT-OBJECT` → the new `GitError::Cache` (`E-GIT-CACHE` page — a durability failure is not an object-read error), the dead always-`None` `TagCandidate::version` field removed, the README daily-commands list completed (8 example rows drifted) | 2026-11-14; session log below |
 | M5.2 publish engine + CLI `publish` slice (§13, ADR-0018) | done | (tree left dirty; no commits) | M1: the `halyard-publish` crate (the §7.1-reserved `halyard-publish/` slot) — `plan_publication` (the §13 step-1 pure planner: recomputed `plan_hash` gate I8, the releases × workspace join with fail-closed `E-PUB-PLAN` contradictions, name-sorted layers over the workspace graph's non-dev edges, `E-PUB-ORDER` with the rendered cycle path, dev-only cycles legal, `not_targets` observability), `run_publication` (the §13 steps-2/3 resume loop: routing resolved before any call (`E-PUB-REGISTRY`, zero side effects), the resume probe (`AlreadyPublished` = the I1 no-op), the injected `PublishEffect` tool seam, the §13 step-3 visibility wait, the §13.7 outcome model as rows (`Published{visibility_confirmed}` / `AlreadyPublished` / `Skipped{upstream_failed\|invisible\|skipped}` / `Failed{code,message,retryable}`), deterministic name-sorted report (I3) with derived tallies, bounded within-layer parallelism (`PublishPolicy::max_parallel`, scoped std threads, `Send + Sync` on the injected seams — `Registry`/`RegistrySleeper` widened in `halyard-registry`, a no-op for every shipped impl)), the reference fakes (`MemoryRegistry` with modelled index lag, `MemoryPublishEffect` with per-package failure scripts + `successes()` zero-duplicates witness, `MapRouter`), 30 tests (incl. the §15.2 failure-injected-at-every-step convergence matrix), bench `publish` (layering-40 ≈ 200 µs, engine-pass-40 ≈ 84 µs), example `publish_plan` (interrupted run → I2 resume → zero duplicates), ADR-0018 + `E-PUB-PLAN/ORDER/REGISTRY/EFFECT` pages ×4 + index rows + layer rule + arch §13 as-built. M2 (M1 green first): the CLI `publish [--dry \| live]` command — the adapter crates' argv tables (`cargo_publish_args`/`pnpm_publish_args`, VERIFIED against the Cargo Book and pnpm.io live, `docs/research/publish-tooling.md`), the engine's `PublishMode::{Live,Dry}` + `Forecast` outcome (the dry forecast runs the tools' dry form and never probes — I5), the shell's `SpawnPublishEffect` (argv arrays, processes rooted at the package root, `--manifest-path` resolved against the repo root — the cwd lesson the CLI tests caught), live registry routing over the blocking transport, json/human/gha renderers with row-level spawn provenance (`manifest`/`manifest_dir`), §15.4 exit 4 on partial publish, `E-CLI-PUBLISH` (live + `--offline` fails closed) + 5 CLI tests (shim-recorded argv, byte-stable JSON, routing fail-closed, disabled-config no-op, gated rows over a broken tool). Micro-debt/docs drift fixed (additive): the rustdoc gate was red at base — three pre-existing broken intra-doc links (`halyard-git/src/refs.rs` → `TagTemplate::extract_version`, `halyard-registry` → a nonexistent `crate::governor`, `halyard-forge/src/transport.rs` → `MemoryForge` out of scope) — de-linked/re-worded, full `-D warnings` doc sweep green; the xtask `every_current_member_has_a_rule` test list was stale (missing `halyard-forge-github`/`halyard-registry`) — extended with all current members | The M5.3 OIDC/auth plumbing, the `publish --resume` flag (the engine already resumes; the flag is UX), the M4.6 corpus checkout-time acceptance, the M5.1 nightly live checks, the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses | 2026-11-14; session log below |
 
+| M5.3 step 1 publish-auth plumbing + step 2 observability slice (ADR-0019) | done | (tree left dirty; no commits) | M1 (M5.3 step 1): `halyard_publish::auth` — the `PublishAuth` seam (object-safe, `Send + Sync`, `credentials(&target) → Result<AuthOutcome, PublishError>` + the `secrets()` scrubbing contract), the `EnvPublishAuth` production capture (one deterministic env snapshot shared by resolution and scrubbing; the `CARGO_REGISTRIES_*_TOKEN` scan covers custom cargo registries), the VERIFIED grammar as data (`variables_for`: cargo `CARGO_REGISTRY_TOKEN` + the `registries.crates-io` fallback / `CARGO_REGISTRIES_<NAME>_TOKEN` uppercased dots-dashes→underscores; npm `NPM_TOKEN` → `NODE_AUTH_TOKEN`; unknown ecosystems honest-absent), absent-is-a-value (`AuthOutcome::Absent` — the tools' own credential stores govern), present-but-empty refused fail-closed `PublishError::Auth` (`E-PUB-AUTH` + page + index row, structural never-retryable), `scrub_secrets` (pure, `[secret]` marker) + `CredentialEnv`/`EnvPublishAuth` Debug redaction, `auth_summary` provenance helper (M2); the CLI effect consumes the seam (`SpawnPublishEffect::new(root, dry, auth)`: the resolved pair injected via `Command::env`, every surfaced stderr tail scrubbed of all resolved values, `E-PUB-AUTH` rows), the run-level capture refuses before planning (`cmd_publish`), 19 engine tests + 5 CLI tests (scrub-leak, empty-token refusal, provenance JSON + byte-stability, doctor row) — one full red→green cycle per half, both reds on record; bench `auth` (capture ≈2.3 ns, credentials×14 ≈1.4 µs, scrub-1KiB ≈ sub-µs) + example `publish_auth` (provenance-only output) + ADR-0019 + `docs/research/publish-auth-env.md` (VERIFIED quotes: Cargo Book config + registry-authentication, pnpm.io/npmrc incl. the project-`.npmrc` non-interpolation anti-exfiltration rule) + arch §13 as-built. M2 (M1 green end-to-end first): the renderers carry the per-registry `auth` provenance (json `auth` block + human/gha `publish-auth (M5.3):` tail, names only, byte-stable) and `doctor` gains the `publish-auth` check (the same capture the run performs; empty-token fails the check). Micro-debt/docs drift fixed (additive, not milestone substitutes): the mangled `E-CLI-PUBLISH` message (stray space runs mid-sentence) rewritten with correct wrapping; the spawn's stderr tail picks the last **non-empty** line (`next_back()` on blank-line-terminated stderr produced an empty diagnosis); the `publish-tooling.md` deferral note ("--registry mapping … deferred to M5.3's auth plumbing") is now satisfied by the seam (the token env maps the §13 registry name verbatim; a cargo `--registry` config-name mapping stays a no-guess open item); root README layout row + example list, CLI README publish row + publish-auth section | The M5.3 OIDC trusted publishing (its own VERIFY — the M0.6 note's `id-token`/hosted-runner facts need a live CI runtime), `github-release-notes` PR-comment mode, the M4.6 corpus checkout-time acceptance, the M5.1 nightly live checks, the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses, the cargo `--registry` flag mapping | 2026-11-15; session log below |
+
+### 2026-11-15 — M5.3 publish-auth plumbing (ADR-0019) + provenance observability (tree left dirty, no commits)
+
+- **Inventory at session start.** The base commit `651e8e9` re-verified green
+  on a fresh toolchain (stable 1.100.0): 97 suites, 733 tests, 0 failed —
+  after two sandbox infrastructure repairs (the 9.9 GB disk filled twice;
+  `CARGO_PROFILE_DEV_DEBUGINFO=0` proved ineffective on this cargo build,
+  `RUSTFLAGS="-C debuginfo=0"` brought the target from ≈8.7 GB to ≈1 GB; a
+  linker bus-error at 100 % disk was resource, not code). The declared
+  start points were (1) M5.3 OIDC/token auth plumbing + secret scrubbing,
+  (2) the corpus pnpm differential, (3) the M2.6 dhat re-audit, (4) the
+  `github-release-notes` PR-comment mode. Picked (1) — the `PublishEffect`
+  doc's own "our job: … auth plumbing" gap: no credential resolution, no
+  injection point, tool stderr landing verbatim in report rows (a token a
+  misconfigured tool echoes leaks into every renderer), and the
+  `publish-tooling.md` research note's explicit deferral to M5.3's auth
+  plumbing. OIDC is deferred honestly: the M0.6 research's requirements
+  (`id-token: write`, hosted runners) need a live CI runtime this sandbox
+  cannot exercise; the token half + scrubbing is fully offline-verifiable.
+- **M1 implemented (no stubs), one full red→green cycle** (the 16-test
+  engine contract written first, red on E0432/E0599 unresolved
+  `halyard_publish::auth`/`PublishError::Auth`; then the 5 CLI tests,
+  red against the pre-auth effect — 7 suites ran before the failing pair
+  stopped scheduling, exactly the two new tests failed):
+  - The env grammar VERIFIED per §0.4 (fetched pages, verbatim quotes in
+    `docs/research/publish-auth-env.md`): cargo reads its token variables
+    directly; pnpm expands `${NAME}` **only in user-level auth files**
+    (the project `.npmrc` credential interpolation is deliberately
+    ignored — "a malicious repository could otherwise send your CI tokens
+    to a registry it controls"), which is why halyard injects env vars
+    and never writes auth files. Injection via env is therefore support
+    for the tools' own contracts — ADR-0019 records honestly that the
+    seam's net-new capability is resolution/provenance, the fail-closed
+    empty-token refusal, the scrubbing contract and the injection point
+    a future non-env provider fills, not a token *transport*.
+  - Design decisions: absence is `AuthOutcome::Absent` (a value, never an
+    error — `cargo login` and the user-level auth file are invisible to
+    halyard), a present-but-empty candidate is `E-PUB-AUTH` naming the
+    variable (an empty bearer token is a doomed spawn + a confusing 401),
+    the capture is one deterministic snapshot shared by `credentials()`
+    and `secrets()` (the scrubbing contract cannot drift from what was
+    injected), and the `Debug`/`Display` paths redact values by
+    construction (pinned by test).
+- **M2 implemented (M1 green end-to-end first), red→green** (the 2 CLI
+  observability tests first, red against the frozen report shape, then
+  implemented): `auth_summary` (the engine-side provenance helper:
+  registry → `env:VARIABLE` or `none`, name-sorted I3, values never),
+  the `publish` JSON `auth` block + the human/gha `publish-auth (M5.3):`
+  tail, and the `doctor` `publish-auth` check (the same capture the run
+  performs — visible before the run, not after the first 401).
+- **Tests/bench/example totals.** 19 engine tests (`tests/auth.rs`) + 9
+  CLI `publish` tests (5 new: scrub-leak, empty-token refusal,
+  provenance JSON, its byte-stability, the doctor row); bench `auth`
+  registered and run (table capture ≈2.3 ns, 14-target resolution ≈
+  1.4 µs, 1 KiB scrub pass sub-µs); example `publish_auth` runs clean.
+  Full gate battery green on the final tree: fmt, clippy
+  `--workspace --all-targets --all-features -- -D warnings` (0 findings),
+  the lint-hygiene grep (empty), `test --workspace --all-features
+  --locked` (98 suites, 756 tests, 0 failed), the `-D warnings` doc
+  sweep, `check-layers` (18 crates), `schema-check` (both schemas).
+- **Honest state at cut-off.** OIDC trusted publishing, the
+  `--registry` flag mapping and provenance attestations stay M5.3+ (the
+  recorded VERIFY items); the corpus pnpm differential, the M2.6 dhat
+  re-audit and the two p50 perf-budget misses are unchanged. Tree left
+  dirty (no commits made).
+- **Next session start point.** (1) M5.3 continued: OIDC/trusted
+  publishing (VERIFY research on live CI) and the `--registry` flag
+  mapping over the same seam, (2) the corpus-wide pnpm differential as
+  an xtask subcommand, (3) the M2.6 dhat re-audit with the cache warm,
+  (4) the `github-release-notes` PR-comment mode.
+
+
 ### 2026-11-14 — §8.8 smart-minimal-fetch (M4.6 step 1, ADR-0016) + M5.1 registry existence probes (ADR-0017) (branch `feat/fetch-and-registry-probes`, tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `ba95b52` (the M5.5
