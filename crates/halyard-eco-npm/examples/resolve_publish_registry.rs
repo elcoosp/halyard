@@ -22,8 +22,13 @@ const NPMRC: &str = "@myorg:registry=https://myorg.example/\nregistry=https://np
 
 fn main() {
     println!("p1 (publishConfig.registry pinned):");
-    match resolve_publish_registry("p1", Some(PKG_WITH_OVERRIDE), &[(".npmrc", NPMRC)], None, None)
-    {
+    match resolve_publish_registry(
+        "p1",
+        Some(PKG_WITH_OVERRIDE),
+        &[(".npmrc", NPMRC)],
+        None,
+        None,
+    ) {
         PublishRegistryBase::Custom(base) => println!(
             "  custom base {base}\n  → probe with Npm::with_registry_base(transport, \"{base}\") \
              as a per-target override"
