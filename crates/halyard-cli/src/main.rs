@@ -106,12 +106,14 @@ struct Cli {
 }
 
 /// The v1 command surface (§16.2; the remaining commands —
-/// `migrate`, `init`, `action` — land with their
+/// `init`, `action` — land with their
 /// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
 /// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
-/// (§8.8) in the smart-minimal-fetch slice and `publish` (§13, the
-/// M5.2 engine + the verified-argv spawn) in the publish slice).
+/// (§8.8) in the smart-minimal-fetch slice, `publish` (§13, the
+/// M5.2 engine + the verified-argv spawn) in the publish slice and
+/// `migrate` (report, and with `--write` the §16.2 draft write) in the
+/// M4.7 slices).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -177,17 +179,27 @@ enum Command {
         dry: bool,
     },
     /// Import a foreign release tool's configuration into a migration
-    /// report (M4.7 step 1, §16.2): the release-please and changesets
+    /// report (M4.7, §16.2): the release-please and changesets
     /// configs are surveyed against the `halyard.toml` v1 surface —
     /// every mappable foreign key becomes a row with the pinned value
     /// (the foreign defaults preserved where they differ from
     /// halyard's), every semantic difference becomes an unmapped row
     /// with its reason, and a validated draft `halyard.toml` rides the
-    /// report. Report-only by design: nothing is written (the §16.2
-    /// write step lands with its own slice). Needs no git repo and no
-    /// existing `halyard.toml` — the migration targets a repo that is
-    /// not yet halyard-configured.
-    Migrate,
+    /// report. Without `--write` the command is report-only: nothing
+    /// is written. `--write` (M4.7 step 2) lands the validated draft
+    /// at `halyard.toml` atomically, create-only — an existing config
+    /// is never clobbered and two configured tools are a refusal, not
+    /// a guess (`E-CFG-MIGRATE`); nothing configured is an honest
+    /// no-op. Needs no git repo and no existing `halyard.toml` — the
+    /// migration targets a repo that is not yet halyard-configured.
+    Migrate {
+        /// Write the validated draft to `halyard.toml` (§16.2 step 2):
+        /// atomic (temp sibling → fsync → rename), refused when the
+        /// target already exists, refused when more than one foreign
+        /// tool is configured.
+        #[arg(long)]
+        write: bool,
+    },
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
         /// The package name.
@@ -363,8 +375,8 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         }
         Command::Release { dry, no_push } => cmd_release(cli, profiler, *dry, *no_push),
         Command::Publish { dry } => cmd_publish(cli, profiler, *dry),
-        Command::Migrate => {
-            cmd_migrate(cli, profiler)?;
+        Command::Migrate { write } => {
+            cmd_migrate(cli, profiler, *write)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Fetch => cmd_fetch(cli, profiler),
@@ -1840,14 +1852,20 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
     }
 }
 
-/// The `migrate` command (M4.7 step 1, §16.2): surveys the foreign
+/// The `migrate` command (M4.7, §16.2): surveys the foreign
 /// release-tool configuration in the working directory into a migration
 /// report. The shell owns the I/O (each source declares the files it
 /// reads; a missing file is absence, an unreadable one refuses), the
 /// engine maps and validates (ADR-0022), the renderers surface the
 /// mapped rows, the semantic differences and the validated draft.
-/// Report-only by design: nothing is written.
-fn cmd_migrate(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
+/// Without `--write` the command is report-only: nothing is written.
+/// `--write` (M4.7 step 2, ADR-0023) plans the write over the report
+/// and lands the validated draft at `halyard.toml` through the
+/// [`halyard_config::AtomicDraftSink`] — atomic, create-only, and
+/// fail-closed on every guess: an existing config is never clobbered,
+/// two configured tools refuse, nothing configured is an honest no-op
+/// (`E-CFG-MIGRATE` for the refusals).
+fn cmd_migrate(cli: &Cli, profiler: &mut Profiler, write: bool) -> Result<(), CliError> {
     let sources = halyard_config::default_sources();
     let mut files = halyard_config::ForeignFiles::new();
     for source in &sources {
@@ -1874,18 +1892,41 @@ fn cmd_migrate(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
             halyard_config::migrate(&files, &sources)
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The write step (M4.7 step 2): the pure plan first, then the
+    // effect over the real sink — validate-then-act (§15.3), so a
+    // refusal happens before anything touches the disk.
+    let write_report = if write {
+        let plan = profiler
+            .span("migrate-write-plan", || {
+                halyard_config::plan_draft_write(&report)
+            })
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+        Some(
+            profiler
+                .span("migrate-write-run", || {
+                    halyard_config::run_draft_write(plan, &halyard_config::AtomicDraftSink)
+                })
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?,
+        )
+    } else {
+        None
+    };
     match cli.format {
         Format::Json => {
-            let value = render::migrate_report_json(&report).map_err(|e| {
-                CliError::new(
-                    halyard_config::ConfigError::MIGRATE_CODE,
-                    format!("the migration report does not serialize: {e}"),
-                )
-            })?;
+            let value =
+                render::migrate_report_json(&report, write_report.as_ref()).map_err(|e| {
+                    CliError::new(
+                        halyard_config::ConfigError::MIGRATE_CODE,
+                        format!("the migration report does not serialize: {e}"),
+                    )
+                })?;
             print_pretty_json(&value)?;
         }
-        Format::Gha => print!("{}", render::migrate_report_gha(&report)),
-        Format::Human => print!("{}", render::migrate_report(&report)),
+        Format::Gha => print!(
+            "{}",
+            render::migrate_report_gha(&report, write_report.as_ref())
+        ),
+        Format::Human => print!("{}", render::migrate_report(&report, write_report.as_ref())),
     }
     Ok(())
 }
