@@ -21,10 +21,17 @@
 //!
 //! The resolution therefore reads, in ascending precedence:
 //!
-//! 1. `$CARGO_HOME/config.toml` (default `$HOME/.cargo/config.toml`;
-//!    the legacy `config` filename stays out of scope — it is
-//!    deprecated upstream),
-//! 2. `<project>/.cargo/config.toml` — closer files override,
+//! 1. `$CARGO_HOME/config.toml` (default `$HOME/.cargo/config.toml`)
+//!    and its legacy `config` sibling,
+//! 2. `<project>/.cargo/config.toml` and `<project>/.cargo/config` —
+//!    closer directories override, and per directory the file WITHOUT
+//!    the extension wins when both exist (the Cargo Book:
+//!    "If both files exist, Cargo will use the file without the
+//!    extension" — the routing-completion quote, verbatim in
+//!    `docs/research/publish-tooling.md`; the earlier draft's
+//!    "deprecated upstream, out of scope" claim was wrong — the page
+//!    never says deprecated, and the legacy file is what an operator
+//!    with the old layout actually reads),
 //! 3. the `CARGO_REGISTRIES_<NAME>_INDEX` environment variable, which
 //!    overrides every file (the env-variable rule: uppercase, dots and
 //!    dashes converted to underscores — the same rule
@@ -243,20 +250,37 @@ fn classify_resolved(name: &str, url: &str, source: &str) -> RegistryIndexLookup
 }
 
 /// The config files the resolution reads, in ascending precedence:
-/// `$CARGO_HOME/config.toml` (default `$HOME/.cargo/config.toml`) then
-/// the project's `.cargo/config.toml`. Missing files are skipped by
-/// [`registry_index`]; the legacy `config` filename (deprecated
-/// upstream) stays out of scope.
+/// per directory (`$CARGO_HOME`, default `$HOME/.cargo`, then the
+/// project's `.cargo`) the `config.toml` file first and the legacy
+/// `config` file last — the Cargo Book: "Cargo also reads config files
+/// without the .toml extension, such as .cargo/config. Support for the
+/// .toml extension was added in version 1.39 and is the preferred
+/// form. If both files exist, Cargo will use the file without the
+/// extension." (verbatim in `docs/research/publish-tooling.md`).
+/// Missing files are skipped by [`registry_index`].
 #[must_use]
 pub fn cargo_config_paths(project_root: &Path) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
     let home = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")));
+    config_paths_for(home.as_deref(), project_root)
+}
+
+/// The pure enumeration [`cargo_config_paths`] runs: the two
+/// directories' `config.toml` files first and the legacy `config`
+/// siblings last, so a later (higher-precedence) entry overrides per
+/// key — the merge in [`resolve_registry_index`] then reproduces the
+/// Cargo Book's rule (the file without the extension wins when both
+/// exist; a file without the key does not erase the other's entries).
+#[must_use]
+pub fn config_paths_for(home: Option<&Path>, project_root: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
     if let Some(home) = home {
         paths.push(home.join("config.toml"));
+        paths.push(home.join("config"));
     }
     paths.push(project_root.join(".cargo/config.toml"));
+    paths.push(project_root.join(".cargo/config"));
     paths
 }
 
