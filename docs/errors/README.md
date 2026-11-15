@@ -20,6 +20,7 @@ pattern from M1 onward where useful).
 | `E-CFG-TAG-STYLE` | [E-CFG-TAG-STYLE.md](E-CFG-TAG-STYLE.md) | config tag template (M1.8) |
 | `E-CFG-TOML` | [E-CFG-TOML.md](E-CFG-TOML.md) | config read/parse (M1.8) |
 | `E-CFG-ENV` | [E-CFG-ENV.md](E-CFG-ENV.md) | config env layer (M1.8) |
+| `E-CFG-MIGRATE` | [E-CFG-MIGRATE.md](E-CFG-MIGRATE.md) | foreign-config migration survey (M4.7) |
 | `E-EDIT-PATCHES` | [E-EDIT-PATCHES.md](E-EDIT-PATCHES.md) | edit patch validation (M1.4) |
 | `E-EDIT-VERIFY` | [E-EDIT-VERIFY.md](E-EDIT-VERIFY.md) | edit re-parse verification (M1.4) |
 | `E-EDIT-IO` | [E-EDIT-IO.md](E-EDIT-IO.md) | edit atomic write (M1.4) |
