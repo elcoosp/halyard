@@ -72,8 +72,18 @@ impl PublishEffect for SpawnPublishEffect {
                 // (the paths in the publication are repo-relative);
                 // the process itself runs at the package root.
                 let manifest = self.repo_root.join(&target.manifest);
-                let args =
-                    halyard_eco_cargo::cargo_publish_args(&manifest.to_string_lossy(), self.dry);
+                // The plan's publish contract names the registry (§13);
+                // the adapter's grammar maps it — the default
+                // registries ride the tool's own default, any other
+                // configured name reaches the spawn as `--registry
+                // <name>` (M5.3 continued, VERIFIED in the research
+                // note). The token side resolves the same name through
+                // the auth seam below, so argv and env agree.
+                let args = halyard_eco_cargo::cargo_publish_args(
+                    &manifest.to_string_lossy(),
+                    &target.registry,
+                    self.dry,
+                );
                 ("cargo", args)
             }
             // §13.4 names `pnpm publish` as the npm-side tool; a
