@@ -176,6 +176,18 @@ enum Command {
         #[arg(long)]
         dry: bool,
     },
+    /// Import a foreign release tool's configuration into a migration
+    /// report (M4.7 step 1, §16.2): the release-please and changesets
+    /// configs are surveyed against the `halyard.toml` v1 surface —
+    /// every mappable foreign key becomes a row with the pinned value
+    /// (the foreign defaults preserved where they differ from
+    /// halyard's), every semantic difference becomes an unmapped row
+    /// with its reason, and a validated draft `halyard.toml` rides the
+    /// report. Report-only by design: nothing is written (the §16.2
+    /// write step lands with its own slice). Needs no git repo and no
+    /// existing `halyard.toml` — the migration targets a repo that is
+    /// not yet halyard-configured.
+    Migrate,
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
         /// The package name.
@@ -351,6 +363,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         }
         Command::Release { dry, no_push } => cmd_release(cli, profiler, *dry, *no_push),
         Command::Publish { dry } => cmd_publish(cli, profiler, *dry),
+        Command::Migrate => {
+            cmd_migrate(cli, profiler)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Fetch => cmd_fetch(cli, profiler),
         Command::Explain { package } => {
             cmd_explain(cli, profiler, package)?;
@@ -1824,6 +1840,56 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
     }
 }
 
+/// The `migrate` command (M4.7 step 1, §16.2): surveys the foreign
+/// release-tool configuration in the working directory into a migration
+/// report. The shell owns the I/O (each source declares the files it
+/// reads; a missing file is absence, an unreadable one refuses), the
+/// engine maps and validates (ADR-0022), the renderers surface the
+/// mapped rows, the semantic differences and the validated draft.
+/// Report-only by design: nothing is written.
+fn cmd_migrate(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
+    let sources = halyard_config::default_sources();
+    let mut files = halyard_config::ForeignFiles::new();
+    for source in &sources {
+        for path in source.config_paths() {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    files.insert(*path, content);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(CliError::new(
+                        halyard_config::ConfigError::MIGRATE_CODE,
+                        format!(
+                            "cannot read {path}: {error} — fix the file's permissions; the \
+                             migration refuses a file it cannot survey"
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    let report = profiler
+        .span("migrate-survey", || {
+            halyard_config::migrate(&files, &sources)
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    match cli.format {
+        Format::Json => {
+            let value = render::migrate_report_json(&report).map_err(|e| {
+                CliError::new(
+                    halyard_config::ConfigError::MIGRATE_CODE,
+                    format!("the migration report does not serialize: {e}"),
+                )
+            })?;
+            print_pretty_json(&value)?;
+        }
+        Format::Gha => print!("{}", render::migrate_report_gha(&report)),
+        Format::Human => print!("{}", render::migrate_report(&report)),
+    }
+    Ok(())
+}
+
 fn cmd_explain(cli: &Cli, profiler: &mut Profiler, package: &str) -> Result<(), CliError> {
     let plan = compute_plan(cli, profiler)?;
     let release = plan
@@ -2019,24 +2085,22 @@ fn render_check_accepted(
                     })
                 })
                 .collect();
-            let mut document = serde_json::json!({
-                "title": title,
-                "verdict": "accepted",
-                "kind": lint.kind,
-                "scope": lint.scope,
-                "breaking": lint.breaking,
-                "level": lint.level.as_str(),
-                "predicted": predicted,
-                "pending": pending,
-            });
+            // Built as a map first so the conditional `comment` block
+            // inserts into a known object — no `unreachable!` panic
+            // surface on the live JSON print path.
+            let mut document = serde_json::Map::new();
+            document.insert("title".to_owned(), serde_json::json!(title));
+            document.insert("verdict".to_owned(), serde_json::json!("accepted"));
+            document.insert("kind".to_owned(), serde_json::json!(lint.kind));
+            document.insert("scope".to_owned(), serde_json::json!(lint.scope));
+            document.insert("breaking".to_owned(), serde_json::json!(lint.breaking));
+            document.insert("level".to_owned(), serde_json::json!(lint.level.as_str()));
+            document.insert("predicted".to_owned(), serde_json::json!(predicted));
+            document.insert("pending".to_owned(), serde_json::json!(pending));
             if let Some(outcome) = comment_outcome {
-                if let serde_json::Value::Object(ref mut map) = document {
-                    map.insert("comment".to_owned(), comment_json(outcome));
-                } else {
-                    unreachable!("the check document is an object");
-                }
+                document.insert("comment".to_owned(), comment_json(outcome));
             }
-            print_pretty_json(&document)?;
+            print_pretty_json(&serde_json::Value::Object(document))?;
         }
         Format::Gha => {
             print!("{}", render::check_gha(title, lint, predictions));
