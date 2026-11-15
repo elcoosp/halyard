@@ -37,7 +37,102 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M4.5 step 1 check-comment mode (§11.6, ADR-0020) + M5.3 continued `--registry` argv mapping | done | (tree left dirty; no commits) | M1 (M4.5 step 1): the `Forge::upsert_pr_comment` seam capability (ADR-0020) — the marker-based idempotent comment upsert (`<!-- halyard:check v1 -->` scan → rewrite-in-place / create; the §11.3 marker convention at comment scale), the shared `CommentSpec::validate` fail-closed contract (1-based PR, non-empty marker, body carries its own marker — `E-FORGE-REQUEST` before any store touch or exchange), the honest-decline trait default, the `MemoryForge` reference implementation (+ `pr_comments` test view), the `PreviewForge` forecast, the governor forwarding (content call: paced, budgeted, retried), the GitHub REST exchange (ascending 100-per-page marker scan until a short page → `PATCH issues/comments/{id}` or `POST issues/{n}/comments`) + `halyard_changelog::check_comment` (the §11.6 renderer: both verdict shapes, marker-first deterministic markdown, `CheckComment`/`CheckVerdict`/`CheckPrediction` plain data) + the CLI `check --pr-title --comment` (head branch = `GITHUB_HEAD_REF` else in-process gix, PR found by head through the adapter's find exchange, forked-head/missing-PR honest skip in the report, both verdicts post — a rejected title posts its diagnosis then still fails `E-CLI-TITLE`; creds/origin resolved before the verdict paths exit, honest decline `E-CLI-COMMENT` naming the fix; the §11.5 governor rides the live call; the `comment` report block exists only when the flag ran — byte-stable JSON when it does not) + 10 seam tests (`tests/comment.rs`: create/rewrite I1, multi-marker, closed-PR comment, fail-closed matrix, failpoint, call log, preview forecast, decline witness, governor pacing+budget) + 7 adapter wire tests (`tests/comment.rs`: scan→POST, scan→PATCH, page walk, fail-closed spec, transport verbatim, 404 taxonomy, call log) + 7 renderer tests + 3 CLI gates + 3 CLI loopback passes (post / rewrite-in-place / skip) + bench `pr_comment` (render-6, create, rewrite) + example `render_check_comment` + `E-CLI-COMMENT` page + index row + ADR-0020 + arch §11.4/§11.6/§16.2 as-built + README rows. M2 (M1 green first): the cargo `--registry` argv mapping (M5.3 continued) — `cargo_publish_args(manifest, registry, dry)` emits `--registry <name>` for a non-default registry, the two default spellings (`crates.io`/`crates-io`) ride the tool's documented `registry.default` with no flag (`is_default_registry`, mirroring the auth seam's `is_crates_io` — both pinned), VERIFIED against the Cargo Book with the verbatim quote recorded (`docs/research/publish-tooling.md`), the effect passes `target.registry` through the grammar, the CLI test pins the M5.2 routing gate honestly (a third-party cargo index has no resume-probe client → `E-PUB-REGISTRY` before any spawn, dry included, zero side effects — the end-to-end custom-registry publish waits on a client joining the routing map, documented; the argv grammar is complete and unit-pinned) + 2 adapter argv tests + the publish_args integration matrix extended. Micro-debt/docs drift fixed (additive): the garbled `EnvPublishAuth::from_table` doc sentence rewritten; the research note's stale `--allowed-registry` open item annotated as resolved for the flag mapping; a pre-existing clippy failure at base repaired (the `publish_auth` example's unterminated last statement — `semicolon_if_nothing_returned`, surfaced by this session's gate re-run) | — | 2026-11-15; session log below |
 | M5.2 continued: custom-registry routing (cargo config) + per-target npm routing | done | (tree left dirty; no commits) | M1: `halyard_eco_cargo::registry_config` (ADR-0021) — the `[registries.<name>]` / `CARGO_REGISTRIES_<NAME>_INDEX` resolution (VERIFIED Cargo Book quotes in `docs/research/publish-tooling.md`): sparse-HTTP indexes join the routing map as `CratesIo::with_index_base` clients, git-index/malformed/unconfigured/set-but-empty declines are honest `E-PUB-REGISTRY` naming the fix; CLI `publish_router(root, targets)` resolves every non-default target registry name before any call; 17 contract tests + 3 CLI tests (dry forecast over a configured registry, git-index refusal, the live loopback e2e: probe miss → shim `--registry corp` argv → visibility confirmed through the custom index) + bench `registry_config` (resolve ≈3.4 µs) + example `resolve_registry`; E-PUB-REGISTRY page as-built + arch §13 as-built. M2 (M1 green first): `RegistryRouter::registry_for` (by-name default) + `TargetRouter` (per-`(registry, package)` overrides) + engine routing through `registry_for`; `halyard_eco_npm::publish_registry` (VERIFIED npm quotes: `publishConfig.registry` > `NPM_CONFIG_REGISTRY` > `.npmrc` `@scope:registry`/`registry`, set-but-empty refused, non-HTTP declined); CLI resolves each npm target's manifest+npmrc chain into per-target overrides; 14 npm contract tests + 4 engine routing tests + 3 CLI tests (npm dry forecast, the live loopback packument e2e with the default registry never contacted, non-HTTP refusal) + bench `target_router` (≈27–33 ns) + example `resolve_publish_registry` | OIDC trusted publishing, the corpus-wide pnpm differential, the M2.6 dhat re-audit, npmrc scoped-registry env vars, source replacement, the legacy `config` filename — all unchanged | 2026-11-15; session log below |
+| M4.7 step 1 migration report slice (`halyard migrate`, ADR-0022) | done | (tree left dirty; no commits) | M1: `halyard_config::migrate` — the `MigrationSource` seam (tool name + declared config paths + survey over the discovered `ForeignFiles`; object-safe, the knope/release-plz sources are the declared next impls), the release-please and changesets sources over the VERIFIED grammars (`docs/research/migrate-config-grammars.md`: the release-please manifest-releaser doc + config schema quotes, the changesets config-page quotes), the plain-data report (`MigrationReport`/`ToolSurvey`/`MappingRow`/`UnmappedRow`/`PackageSurvey`, `Serialize`, deterministic I3), `E-CFG-MIGRATE` (`ConfigError::Migrate` + page + index row) fail-closed on a configured-but-unparseable file, the draft `halyard.toml` validated through the strict loader before it is surfaced (never written — the §16.2 write step is its own slice); release-please maps the pre-major pins (foreign defaults preserved with the note naming the side), the tag switches → `repo.tag_style` through the core's `TagTemplate` grammar (per-package disagreement reported, never guessed), per-package components + manifest last-release notes; changesets maps `access`/`baseBranch`/`ignore` (→ `[[package]] release = false` overrides)/`updateInternalDependencies` (→ cascade "always", the closest v1 shape, noted); 19 engine tests + 5 CLI tests (byte-stable JSON, honest not-detected, malformed refusal, gha/human rows; red→green on record: E0432 unresolved `halyard_config::migrate`) + bench `migrate` (release-please 4-pkg survey ≈7.3 µs, changesets ≈8.9 µs, empty tree ≈103 ns) + example `migrate_report` + CLI `halyard migrate` (report-only, no git repo needed) + ADR-0022 + arch §16.2 as-built + root/CLI README rows. M2 (M1 green first): the routing completions (the cargo legacy `config` filename + npmrc scoped-registry env vars, the ADR-0021 map's declared open items) — DEFERRED, not started. Micro-debt/docs drift fixed (additive, not milestone substitutes): the changelog minijinja errors now carry their full source chain (`render_template_source` was dropping the "caused by" line the E-CHLOG-TEMPLATE fix hangs on), the `check` JSON print path's `unreachable!` panic surface replaced with a map-first build, the README daily-commands list completed (probe_registries + release_pipeline rows drifted) and the status paragraph brought current (the ADR-0019/0021 rows and this slice were missing) | The §16.2 `migrate --write` step, the knope/release-plz sources, the M4.7 corpus-lane acceptance (20 real-world configs), the changesets git-tag grammar VERIFY (the docs page quoting `name@version` no longer exists at `main` — the survey carries the honest advisory row instead), M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit | 2026-11-15; session log below |
 
+
+
+### 2026-11-15 — M4.7 step 1: the migration report (`halyard migrate`, ADR-0022) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `ea8ef3f` (the
+  M5.2-continued routing slice). Baseline re-verified on a fresh
+  toolchain (stable 1.100.0, `RUSTFLAGS="-C debuginfo=0"` — the disk
+  ceiling lesson applied from the first build):
+  `test --workspace --all-features --locked` green at base (103
+  suites, 833 tests, 0 failed — exactly the previous session's
+  record). The declared start points were (1) M5.3 OIDC (needs a live
+  CI runtime — still deferred), (2) the corpus-wide pnpm differential
+  (no pnpm binary in the sandbox), (3) the M2.6 dhat re-audit, (4)
+  the publish `--resume` UX flag (deliberately not a flag per the
+  M5.2 log). Picked instead the last §16.2 command absent from the
+  wired set that needs no network and no new dependency: M4.7 step 1
+  (`migrate` — "read configs, emit report"), report-only so the
+  §16.2 write step stays its own reviewed slice. M2 candidate: the
+  routing completions (the ADR-0021 map's declared open items); the
+  M1 work filled the session budget honestly, so M2 is DEFERRED with
+  the inventory recorded, never half-wired.
+- **M1 implemented (no stubs), one full red→green cycle** (the 19
+  engine tests written first against the planned API — red on E0432
+  unresolved `halyard_config::migrate`; the 5 CLI tests red against
+  the absent command — then implemented):
+  - Design decisions (ADR-0022): the report precedes the write (the
+    draft is a report string, validated through the strict loader
+    before it is surfaced — the write step is its own slice);
+    absence is a value (`configured: false`, the command runs on any
+    directory with no git repo and no `halyard.toml` yet); a
+    configured-but-unparseable foreign file fails closed
+    (`ConfigError::Migrate`, E-CFG-MIGRATE + page + index row) — a
+    half-understood foreign config is never mapped, because a
+    mis-mapped tag template or pre-major pin silently changes what
+    releases; the pins preserve the foreign tool's *effective*
+    behavior including its documented defaults (release-please's
+    pre-1.0 defaults differ from halyard's §10.2 — the rows say which
+    side is the foreign default); semantic differences are rows with
+    reasons, never dropped; the seam (`MigrationSource`) is the
+    extension point the later migrate slices fill, exercised by a
+    test-local source so the trait is proven downstream-usable.
+  - The grammars were VERIFIED per §0.4 before any mapping
+    (`docs/research/migrate-config-grammars.md`): the release-please
+    manifest-releaser documentation and the checked-in config schema
+    (defaults quoted verbatim), the changesets config page. One
+    honest open item: the changesets git-tag grammar — the docs page
+    quoting the `name@version` shape no longer exists at `main`
+    (404 on the blob and raw URLs, the snippet survives only in
+    search caches) — the survey carries an advisory row ("set
+    `repo.tag_style` against the repository's existing tags") and
+    maps no changesets-derived template, rather than shipping an
+    unverified claim.
+  - TDD lesson pinned en route: the report rows are name-sorted, so
+    the tests select surveys by tool name — the first test draft
+    indexed `report.tools[0]` and passed the changesets survey off
+    as the release-please one (caught by the failures, fixed in the
+    tests; the engine never relied on order beyond the documented
+    sort).
+- **M2 (the routing completions) deferred, not started.** The cargo
+  legacy `config` filename and the npmrc scoped-registry env vars
+  stay declared open items on the ADR-0021 map. Reason: the M1 slice
+  (engine + CLI + docs + gates) consumed the session budget; shipping
+  a half-verified resolution extension would break the M2 bar ("fully
+  implemented, no partial milestone"). The inventory is recorded so
+  the next session starts clean.
+- **Micro-debt/docs drift fixed (additive, not milestone
+  substitutes).** The changelog minijinja errors now walk their
+  source chain (`render_template_source` stringified only the top
+  error — the `E-CHLOG-TEMPLATE` diagnosis was losing the "caused by"
+  line the fix hangs on); the `check` JSON print path's
+  `unreachable!("the check document is an object")` replaced with a
+  map-first build (no panic surface on a live path); the README
+  daily-commands list completed (`probe_registries` and
+  `release_pipeline` examples shipped without their rows) and the
+  status paragraph brought current (the publish-auth and
+  custom-registry rows, and this slice, were missing); the CLI README
+  command table gained the `migrate` row; the arch doc §16.2 as-built
+  note names the wired `migrate`.
+- **Tests/bench/example totals.** +24 tests / +2 suites over base
+  (19 engine `tests/migrate.rs` + 5 CLI `tests/cli_migrate.rs`; 105
+  suites, 857 tests, 0 failed on the final tree). Bench `migrate`
+  registered and run (release-please 4-package survey ≈7.3 µs,
+  changesets ≈8.9 µs, empty two-source survey ≈103 ns). Example
+  `migrate_report` runs clean.
+- **Honest state at cut-off.** The §16.2 `migrate --write` step, the
+  knope/release-plz sources, the M4.7 corpus-lane acceptance (20
+  real-world configs), the changesets tag-grammar VERIFY, M5.3 OIDC,
+  the corpus pnpm differential and the M2.6 dhat re-audit are
+  unchanged. Tree left dirty (no commits made).
+- **Next session start point.** (1) M4.7 step 2: the `migrate
+  --write` path over the validated draft (its own reviewed slice),
+  (2) the routing completions (legacy `config` filename + npmrc
+  scoped env vars), (3) the M2.6 dhat re-audit with the cache warm,
+  (4) M5.3 OIDC on a live CI runtime.
 
 ### 2026-11-15 — M5.2 continued: the custom-registry routing (ADR-0021) + the per-target npm routing (tree left dirty, no commits)
 
