@@ -24,7 +24,7 @@ use crate::{GitError, map_git_err};
 
 /// One tag candidate: name and peeled commit (§8.2). The per-package
 /// version is derived on demand through the package's template
-/// ([`TagTemplate::extract_version`]) — never stored on the candidate,
+/// (`TagTemplate::extract_version`) — never stored on the candidate,
 /// because the same tag parses differently per package template.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagCandidate {
