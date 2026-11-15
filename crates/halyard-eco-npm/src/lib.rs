@@ -37,6 +37,11 @@ pub mod pnpm_yaml;
 // adapter owns the tool grammar — the `refresh_command` convention).
 pub mod publish;
 pub use publish::pnpm_publish_args;
+// M5.2 continued (ADR-0021): where the §13 probe looks for one npm
+// package — the publishConfig.registry / NPM_CONFIG_REGISTRY / .npmrc
+// resolution the spawned `pnpm publish` itself reads (the per-target
+// routing map override's input).
+pub mod publish_registry;
 
 /// The npm-family adapter (§7.3 discovery + manifest-edit subset).
 #[derive(Clone, Copy, Debug, Default)]
