@@ -8,7 +8,10 @@
 //! `docs/research/publish-tooling.md`; the fail-closed rules mirror
 //! the cargo side (`halyard_eco_cargo::registry_config`).
 
-use halyard_eco_npm::publish_registry::{PublishRegistryBase, resolve_publish_registry};
+use halyard_eco_npm::publish_registry::{
+    PublishRegistryBase, resolve_publish_registry, scoped_env_name_matches,
+    scoped_registry_env_variable,
+};
 
 type BoxError = Box<dyn std::error::Error>;
 
@@ -26,7 +29,7 @@ fn pkg_json(publish_config: Option<&str>) -> Vec<u8> {
 #[test]
 fn no_configuration_resolves_the_documented_default() {
     assert_eq!(
-        resolve_publish_registry("p1", Some(&pkg_json(None)), &[], None),
+        resolve_publish_registry("p1", Some(&pkg_json(None)), &[], None, None),
         PublishRegistryBase::Default
     );
 }
@@ -42,6 +45,7 @@ fn publish_config_registry_overrides_everything() {
             Some(&pkg_json(Some("https://corp.example/registry"))),
             &[(".npmrc", "registry=https://npmrc.example/")],
             Some("https://env.example/"),
+            None,
         ),
         PublishRegistryBase::Custom("https://corp.example/registry".to_owned())
     );
@@ -57,7 +61,8 @@ fn the_env_registry_overrides_the_npmrc_files() {
             "p1",
             Some(&pkg_json(None)),
             &[(".npmrc", "registry=https://npmrc.example/")],
-            Some("https://env.example/")
+            Some("https://env.example/"),
+            None
         ),
         PublishRegistryBase::Custom("https://env.example".to_owned())
     );
@@ -68,7 +73,7 @@ fn an_env_registry_set_but_empty_fails_closed() {
     // The house empty-value rule (the auth seam's token, the cargo
     // side's index override): present-but-empty is a doomed
     // resolution, refused with the variable named.
-    let lookup = resolve_publish_registry("p1", Some(&pkg_json(None)), &[], Some(""));
+    let lookup = resolve_publish_registry("p1", Some(&pkg_json(None)), &[], Some(""), None);
     match lookup {
         PublishRegistryBase::Unsupported(message) => {
             assert!(
@@ -91,6 +96,7 @@ fn the_project_npmrc_overrides_the_user_npmrc() {
             "p1",
             Some(&pkg_json(None)),
             &[("user .npmrc", user), ("project .npmrc", project)],
+            None,
             None
         ),
         PublishRegistryBase::Custom("https://project.example".to_owned())
@@ -107,13 +113,20 @@ fn a_scoped_package_resolves_the_scope_registry_key() {
             "@myorg/pkg",
             Some(&pkg_json(None)),
             &[(".npmrc", npmrc)],
+            None,
             None
         ),
         PublishRegistryBase::Custom("https://myorg.example".to_owned())
     );
     // An unscoped package ignores the scoped key.
     assert_eq!(
-        resolve_publish_registry("pkg", Some(&pkg_json(None)), &[(".npmrc", npmrc)], None),
+        resolve_publish_registry(
+            "pkg",
+            Some(&pkg_json(None)),
+            &[(".npmrc", npmrc)],
+            None,
+            None
+        ),
         PublishRegistryBase::Custom("https://other.example".to_owned())
     );
 }
@@ -121,7 +134,13 @@ fn a_scoped_package_resolves_the_scope_registry_key() {
 #[test]
 fn an_npmrc_registry_set_but_empty_is_a_named_gap() {
     let npmrc = "registry=\n";
-    let lookup = resolve_publish_registry("p1", Some(&pkg_json(None)), &[(".npmrc", npmrc)], None);
+    let lookup = resolve_publish_registry(
+        "p1",
+        Some(&pkg_json(None)),
+        &[(".npmrc", npmrc)],
+        None,
+        None,
+    );
     match lookup {
         PublishRegistryBase::Unsupported(message) => {
             assert!(
@@ -140,7 +159,7 @@ fn a_non_http_publish_registry_is_an_honest_decline() {
         "file:///srv/registry",
         "corp.example",
     ] {
-        let lookup = resolve_publish_registry("p1", Some(&pkg_json(Some(url))), &[], None);
+        let lookup = resolve_publish_registry("p1", Some(&pkg_json(Some(url))), &[], None, None);
         match lookup {
             PublishRegistryBase::Unsupported(message) => {
                 assert!(
@@ -157,7 +176,13 @@ fn a_non_http_publish_registry_is_an_honest_decline() {
 fn npmrc_comments_and_spacing_are_grammar() {
     let npmrc = "# comment\n; also a comment\n\nregistry = https://spaced.example/\n";
     assert_eq!(
-        resolve_publish_registry("p1", Some(&pkg_json(None)), &[(".npmrc", npmrc)], None),
+        resolve_publish_registry(
+            "p1",
+            Some(&pkg_json(None)),
+            &[(".npmrc", npmrc)],
+            None,
+            None
+        ),
         PublishRegistryBase::Custom("https://spaced.example".to_owned())
     );
 }
@@ -167,7 +192,7 @@ fn an_unparsable_package_json_yields_the_fallback_chain() {
     // A manifest that cannot be parsed carries no publishConfig — the
     // npmrc chain still resolves (the spawn reads the same files).
     assert_eq!(
-        resolve_publish_registry("p1", Some(b"{not json"), &[], None),
+        resolve_publish_registry("p1", Some(b"{not json"), &[], None, None),
         PublishRegistryBase::Default
     );
     assert_eq!(
@@ -175,6 +200,7 @@ fn an_unparsable_package_json_yields_the_fallback_chain() {
             "p1",
             Some(b"{not json"),
             &[(".npmrc", "registry=https://npmrc.example/")],
+            None,
             None
         ),
         PublishRegistryBase::Custom("https://npmrc.example".to_owned())
@@ -184,7 +210,7 @@ fn an_unparsable_package_json_yields_the_fallback_chain() {
 #[test]
 fn a_missing_manifest_is_the_fallback_chain() {
     assert_eq!(
-        resolve_publish_registry("p1", None, &[], None),
+        resolve_publish_registry("p1", None, &[], None, None),
         PublishRegistryBase::Default
     );
 }
@@ -198,6 +224,7 @@ fn trailing_slashes_never_survive_the_base() {
             "p1",
             Some(&pkg_json(Some("https://corp.example/registry/"))),
             &[],
+            None,
             None
         ),
         PublishRegistryBase::Custom("https://corp.example/registry".to_owned())
@@ -276,4 +303,160 @@ fn the_shell_reads_manifest_and_npmrc_from_disk() -> Result<(), BoxError> {
         PublishRegistryBase::Custom("https://user.example".to_owned())
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The scoped-registry environment variable (the routing completion,
+// ADR-0021): the env form of the `@scope:registry` key. VERIFIED by
+// probe (npm 11.19.1) — the variable name is the literal config-key
+// suffix `npm_config_@<scope>:registry` (case-insensitive); the
+// underscore intermediate form (`npm_config_<scope>_registry`) is NOT
+// the scoped key (npm reads it as an unknown `myscope-registry` key and
+// warns). The quotes and the seven probes live in
+// `docs/research/publish-tooling.md`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_scoped_env_variable_is_the_literal_key_suffix() {
+    assert_eq!(
+        scoped_registry_env_variable("myorg"),
+        "npm_config_@myorg:registry"
+    );
+    assert_eq!(
+        scoped_registry_env_variable("my-scope"),
+        "npm_config_@my-scope:registry"
+    );
+}
+
+#[test]
+fn the_scoped_env_name_matches_case_insensitively() {
+    // "Config values are case-insensitive, so NPM_CONFIG_FOO=bar will
+    // work the same" — pinned by probe 4 (uppercase literal form).
+    assert!(scoped_env_name_matches(
+        std::ffi::OsStr::new("npm_config_@myorg:registry"),
+        "myorg"
+    ));
+    assert!(scoped_env_name_matches(
+        std::ffi::OsStr::new("NPM_CONFIG_@MYORG:REGISTRY"),
+        "myorg"
+    ));
+    assert!(!scoped_env_name_matches(
+        std::ffi::OsStr::new("npm_config_myorg_registry"),
+        "myorg"
+    ));
+    assert!(!scoped_env_name_matches(
+        std::ffi::OsStr::new("npm_config_@other:registry"),
+        "myorg"
+    ));
+    assert!(!scoped_env_name_matches(
+        std::ffi::OsStr::new("npm_config_registry"),
+        "myorg"
+    ));
+}
+
+#[test]
+fn the_scoped_env_variable_overrides_the_npmrc_scoped_key() {
+    // Probe 5: the env var and the .npmrc key are the same config key —
+    // env ranks above the files.
+    assert_eq!(
+        resolve_publish_registry(
+            "@myorg/pkg",
+            Some(&pkg_json(None)),
+            &[(".npmrc", "@myorg:registry=https://npmrc.example/")],
+            None,
+            Some("https://env.example/")
+        ),
+        PublishRegistryBase::Custom("https://env.example".to_owned())
+    );
+}
+
+#[test]
+fn the_scoped_env_variable_beats_every_plain_source() {
+    // The scoped key governs a scoped package regardless of the source
+    // tier (probe 7 + the cross-tier probe): `@scope:registry` beats
+    // `registry` even when the plain value comes from the env tier.
+    assert_eq!(
+        resolve_publish_registry(
+            "@myorg/pkg",
+            Some(&pkg_json(None)),
+            &[(".npmrc", "registry=https://npmrc.example/")],
+            Some("https://plain-env.example/"),
+            Some("https://scoped-env.example/")
+        ),
+        PublishRegistryBase::Custom("https://scoped-env.example".to_owned())
+    );
+}
+
+#[test]
+fn a_scoped_npmrc_key_beats_a_plain_env_registry() {
+    // The cross-tier probe: npm resolves the scoped KEY first — a
+    // `@scope:registry` value from an .npmrc file beats a plain
+    // `NPM_CONFIG_REGISTRY` env value for that scope's packages.
+    assert_eq!(
+        resolve_publish_registry(
+            "@myorg/pkg",
+            Some(&pkg_json(None)),
+            &[(".npmrc", "@myorg:registry=https://npmrc.example/")],
+            Some("https://plain-env.example/"),
+            None
+        ),
+        PublishRegistryBase::Custom("https://npmrc.example".to_owned())
+    );
+}
+
+#[test]
+fn a_scoped_env_registry_set_but_empty_fails_closed() {
+    let lookup = resolve_publish_registry(
+        "@myorg/pkg",
+        Some(&pkg_json(None)),
+        &[(".npmrc", "@myorg:registry=https://npmrc.example/")],
+        None,
+        Some("  "),
+    );
+    match lookup {
+        PublishRegistryBase::Unsupported(message) => {
+            assert!(
+                message.contains("npm_config_@myorg:registry"),
+                "the variable is named: {message}"
+            );
+        }
+        other => unreachable!("empty scoped env must be Unsupported, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unscoped_package_has_no_scoped_env_source() {
+    // The caller scans the environment for the package's own scope
+    // only; an unscoped package takes None and never reads a scoped
+    // variable.
+    assert_eq!(
+        resolve_publish_registry(
+            "pkg",
+            Some(&pkg_json(None)),
+            &[],
+            None,
+            Some("https://scoped-env.example/")
+        ),
+        PublishRegistryBase::Default
+    );
+}
+
+#[test]
+fn a_non_http_scoped_env_value_is_an_honest_decline() {
+    let lookup = resolve_publish_registry(
+        "@myorg/pkg",
+        Some(&pkg_json(None)),
+        &[],
+        None,
+        Some("git+ssh://corp.example/registry"),
+    );
+    match lookup {
+        PublishRegistryBase::Unsupported(message) => {
+            assert!(
+                message.contains("npm_config_@myorg:registry") && message.contains("http"),
+                "the decline names the variable and the fix: {message}"
+            );
+        }
+        other => unreachable!("non-HTTP scoped env must be Unsupported, got {other:?}"),
+    }
 }
