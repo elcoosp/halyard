@@ -37,7 +37,9 @@ use std::sync::Mutex;
 use crate::Forge;
 use crate::error::ForgeError;
 use crate::memory::CallRecord;
-use crate::spec::{ApiCommit, BranchName, Pr, PrSpec, RateInfo, Release, ReleaseSpec};
+use crate::spec::{
+    ApiCommit, BranchName, CommentSpec, Pr, PrComment, PrSpec, RateInfo, Release, ReleaseSpec,
+};
 
 /// The dry-run [`Forge`]: every probe sees an empty forge, every
 /// mutation is a forecast. Call records (§11.5) accumulate for the
@@ -113,6 +115,20 @@ impl Forge for PreviewForge {
     fn close_pr(&self, branch: &BranchName) -> Result<bool, ForgeError> {
         self.record("close_pr", branch.as_str());
         Ok(false)
+    }
+
+    /// The forecast comment (§11.6): the fresh path the live first run
+    /// would take (`created: true`), a `preview://` URL distinguishable
+    /// from a real forge's, nothing stored — the spec rides the shared
+    /// validation contract so a forecast refuses an invalid comment
+    /// exactly where the live run would.
+    fn upsert_pr_comment(&self, spec: &CommentSpec) -> Result<PrComment, ForgeError> {
+        self.record("upsert_pr_comment", &format!("pr/{}", spec.pr_number));
+        spec.validate()?;
+        Ok(PrComment {
+            url: format!("preview://pr/{}/comment", spec.pr_number),
+            created: true,
+        })
     }
 
     /// The modeled budget (§11.5): the preview spends nothing real, so
