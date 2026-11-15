@@ -60,6 +60,17 @@ halyard check --pr-title "feat(parser): accept spans"
 
 # Gate CI: exit code 3 when a release is pending (§15.4).
 halyard check --exit-code
+
+# Post the verdict to the PR under review (§11.6, M4.5 step 1): the
+# comment is found by the stable `<!-- halyard:check v1 -->` marker and
+# rewritten in place on every push (I1 — no duplicate comments); both
+# verdict shapes post (a rejected title posts its diagnosis, then the
+# command still fails with `E-CLI-TITLE`). Live-only: needs forge
+# credentials and a GitHub-shaped origin (`E-CLI-COMMENT` declines with
+# the fix otherwise); the PR is found by its head branch
+# (`GITHUB_HEAD_REF`, else the checked-out branch) and the call rides
+# the §11.5 governor as a content call.
+halyard check --pr-title "feat(parser): accept spans" --comment
 ```
 
 ## Command status (honest)
@@ -75,11 +86,11 @@ halyard check --exit-code
 | `completions <shell>` | available (M1.10) |
 | `apply [--dry]` | available (M3.6) |
 | `pr [--dry]` | available (M4.2b step 1 forecast + M4.1b live): live mode runs the §11.1 machine over the GitHub REST adapter — fail-closed on missing credentials and foreign forges; the live report carries the §11.5 governor summary (M5.5) |
-| `check [--pr-title] [--exit-code]` | available (M4.3) |
+| `check [--pr-title] [--exit-code] [--comment]` | available (M4.3; M4.5 step 1 adds `--comment` — the §11.6 verdict comment posted through the forge seam's marker-based `upsert_pr_comment`, rewrite-in-place idempotent, live-only with the honest `E-CLI-COMMENT` decline) |
 | `release [--dry] [--no-push]` | available (§11.1 step 2, git side): live mode creates the annotated tags through the real writer (targets resolved by the §11.1 manifest-pinpoint walk with per-row provenance) and pushes them to `origin` through the §11.2 push seam (`--no-push` skips; a missing remote is an honest skip); the forge half (GET-by-tag-first release creation) runs over the M4.1b adapter — through the §11.5 governor (M5.5) — when credentials allow it and is an honest skip otherwise; `--dry` forecasts everything offline |
 | `forge-smoke [--repo] [--api-base]` | available (M4.1b, the nightly job's read-only probe; M4.1c adds the App-auth mode — the JSON carries the resolved `auth_mode`; M5.5 adds the governor row) |
 | `fetch` | available (§8.8, M4.6 step 1, ADR-0016): probes `origin`'s tags, selects each package's latest release tag through the planner's template rule, fetches those tags plus the base branch in one minimal `git fetch` (blob-less; shallow clones deepen bounded by the previous releases; a failing minimal fetch retries once as the full fetch of the same refs); idempotent (I1) — tags already local at the probed target are not requested; a remote without a configured URL is an honest no-op; no `--dry` by design (the remote listing is the one input an offline forecast cannot have) |
-| `publish [--dry]` | available (M5.2 step 2, ADR-0018): the §13 engine validates the plan (recomputed hash, I8), layers the targets dependencies-first, resumes through the registry existence probes (already-published versions are no-ops, I1), waits for index visibility before dependents publish, and spawns `cargo publish` / `pnpm publish` per target through the adapter crates' verified argv tables (§13.4); `--dry` forecasts offline — the tools run their documented dry form, the registry is never probed (I5); failures are rows and the re-run continues from the first failure (§13.7); a partial publish exits 4 (§15.4); live mode under `--offline` fails closed (`E-CLI-PUBLISH`); the spawn injects the resolved publish credentials through the `PublishAuth` seam and scrubs every resolved token from surfaced tool output (M5.3 step 1, ADR-0019 — `E-PUB-AUTH` refuses a set-but-empty variable before any spawn); the JSON carries the per-registry `auth` provenance (variable names only) |
+| `publish [--dry]` | available (M5.2 step 2, ADR-0018): the §13 engine validates the plan (recomputed hash, I8), layers the targets dependencies-first, resumes through the registry existence probes (already-published versions are no-ops, I1), waits for index visibility before dependents publish, and spawns `cargo publish` / `pnpm publish` per target through the adapter crates' verified argv tables (§13.4); `--dry` forecasts offline — the tools run their documented dry form, the registry is never probed (I5); failures are rows and the re-run continues from the first failure (§13.7); a partial publish exits 4 (§15.4); live mode under `--offline` fails closed (`E-CLI-PUBLISH`); the spawn injects the resolved publish credentials through the `PublishAuth` seam and scrubs every resolved token from surfaced tool output (M5.3 step 1, ADR-0019 — `E-PUB-AUTH` refuses a set-but-empty variable before any spawn); the JSON carries the per-registry `auth` provenance (variable names only); `publish.cargo.registry` maps to the spawn as `--registry <name>` for a non-default registry (M5.3 continued — the default spellings ride the tool's own documented default with no flag, and the token side resolves the same name, so argv and env agree); a third-party cargo index has no resume-probe client yet, so a custom-registry run refuses `E-PUB-REGISTRY` before any spawn (the M5.2 routing gate) |
 | `migrate` / `init` / `action` | **(M4.x/M5)** — absent rather than stubbed |
 
 ## Forge credentials (M4.1c, ADR-0014)
