@@ -62,6 +62,29 @@ fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(u8, String), BoxErr
     Ok((code, text))
 }
 
+/// The env-carrying runner the comment-mode gates need (the credential
+/// env must be *emptied*, not inherited).
+fn halyard_with_env(
+    root: &std::path::Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<(u8, String), BoxError> {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_halyard"))
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("NO_COLOR", "1")
+        .envs(envs.iter().copied())
+        .output()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let code = u8::try_from(out.status.code().unwrap_or_default()).unwrap_or_default();
+    Ok((code, text))
+}
+
 #[test]
 fn exit_code_gate_reports_3_when_a_release_is_pending() -> Result<(), BoxError> {
     let fx = build_workspace("gate")?;
@@ -231,5 +254,77 @@ fn unmapped_legitimate_kind_is_a_quiet_no_bump() -> Result<(), BoxError> {
     assert!(out.contains("conveys none"), "{out}");
     assert!(out.contains("p1 0.1.0 → none"), "{out}");
     assert!(out.contains("p2 0.1.0 → none"), "{out}");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The §11.6 comment mode (M4.5 step 1): `check --pr-title --comment`
+// posts the verdict to the PR under review over the forge seam. The
+// offline gates here; the loopback passes live in `cli_forge.rs`.
+// ---------------------------------------------------------------------------
+
+/// The comment mode without a title has nothing to post — refused
+/// fail-closed (`E-CLI-COMMENT`) before any forge contact.
+#[test]
+fn comment_mode_without_a_title_is_refused() -> Result<(), BoxError> {
+    let fx = build_workspace("comment-no-title")?;
+    let (code, out) = halyard(fx.root(), &["check", "--comment"])?;
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("pass `--pr-title <TITLE>`"),
+        "the fix names the missing flag: {out}"
+    );
+    Ok(())
+}
+
+/// The comment mode is live-only: without credentials the honest decline
+/// names the fix instead of pretending the comment was posted.
+#[test]
+fn comment_mode_without_credentials_declines_honestly() -> Result<(), BoxError> {
+    let fx = build_workspace("comment-no-creds")?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["check", "--pr-title", "feat: add the thing", "--comment"],
+        &[("GITHUB_TOKEN", ""), ("HALYARD_FORGE_TOKEN", "")],
+    )?;
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("check comment needs live forge credentials"),
+        "the decline says what the mode needs: {out}"
+    );
+    assert!(
+        out.contains("GITHUB_TOKEN") || out.contains("HALYARD_APP"),
+        "the decline names the credential env, got: {out}"
+    );
+    Ok(())
+}
+
+/// The JSON error path carries the stable code (the Actions lane's
+/// assertion surface).
+#[test]
+fn comment_decline_is_a_stable_json_error() -> Result<(), BoxError> {
+    let fx = build_workspace("comment-json")?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &[
+            "--format",
+            "json",
+            "check",
+            "--pr-title",
+            "feat: add the thing",
+            "--comment",
+        ],
+        &[("GITHUB_TOKEN", ""), ("HALYARD_FORGE_TOKEN", "")],
+    )?;
+    assert_eq!(code, 1, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    assert_eq!(
+        value
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(serde_json::Value::as_str),
+        Some("E-CLI-COMMENT"),
+        "{out}"
+    );
     Ok(())
 }
