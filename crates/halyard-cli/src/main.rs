@@ -33,6 +33,7 @@ use halyard_git::tag_target::{GixTagTargetResolver, ManifestVersionProbe};
 mod check;
 mod doctor;
 mod profile;
+mod publish_effect;
 mod render;
 
 /// Output format (§16.2 global flags).
@@ -104,12 +105,13 @@ struct Cli {
     command: Command,
 }
 
-/// The v1 command surface (§16.2; the remaining effectful commands —
-/// `publish`, `migrate`, `init`, `action` — land with their
+/// The v1 command surface (§16.2; the remaining commands —
+/// `migrate`, `init`, `action` — land with their
 /// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
-/// §11.1 git-side tag-phase forecast) in the tag-phase slice and `fetch`
-/// (§8.8) in the smart-minimal-fetch slice).
+/// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
+/// (§8.8) in the smart-minimal-fetch slice and `publish` (§13, the
+/// M5.2 engine + the verified-argv spawn) in the publish slice).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -158,6 +160,21 @@ enum Command {
         /// release; the report states the skip).
         #[arg(long)]
         no_push: bool,
+    },
+    /// Publish the pending releases (M5.2, §13): the publish engine
+    /// validates the plan (I8), layers the targets dependencies-first
+    /// over the workspace graph, resumes through the registry
+    /// existence probes (already-published versions are no-ops, I1),
+    /// waits for index visibility before dependents publish and shells
+    /// out to `cargo publish` / `pnpm publish` per target (§13.4).
+    /// `--dry` forecasts offline: the tools run their documented dry
+    /// form, the registry is never probed (I5). Failures are rows —
+    /// the re-run continues from the first failure (§13.7); a partial
+    /// publish exits 4 (§15.4).
+    Publish {
+        /// Forecast offline (the tool's dry form, no registry probes).
+        #[arg(long)]
+        dry: bool,
     },
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
@@ -324,6 +341,7 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_forge_smoke(cli, repo.as_deref(), api_base.as_deref())
         }
         Command::Release { dry, no_push } => cmd_release(cli, profiler, *dry, *no_push),
+        Command::Publish { dry } => cmd_publish(cli, profiler, *dry),
         Command::Fetch => cmd_fetch(cli, profiler),
         Command::Explain { package } => {
             cmd_explain(cli, profiler, package)?;
@@ -1704,6 +1722,75 @@ fn release_pr_title(plan: &halyard_core::Plan) -> String {
 }
 
 /// The `explain` command.
+/// The `publish` command (M5.2 step 2, §13): the shell around the
+/// `halyard-publish` engine — plan → publication → run, with the
+/// per-ecosystem spawn effect (the adapter crates' argv tables) and the
+/// live registry routing (the two §13 clients over the blocking
+/// transport). `--dry` is the §13.8 forecast: the tools run their
+/// documented dry form, the registry is never probed (I5), and the
+/// report carries `Forecast` rows. Live failures are rows (§13.7); the
+/// command exits 4 on a partial publish (§15.4), 1 when nothing
+/// landed, and refuses a live run under `--offline` (`E-CLI-PUBLISH`).
+fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode, CliError> {
+    if !dry && cli.offline {
+        return Err(CliError::new(
+            "E-CLI-PUBLISH",
+            "--offline contradicts a live publish (the resume probes and the tool upload are              the live run's network) — use `publish --dry` for the offline forecast, or drop              --offline for the real run",
+        ));
+    }
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    let publication = profiler
+        .span("publish-plan", || {
+            halyard_publish::plan_publication(&plan, &context.discovery.workspace)
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let mode = if dry {
+        halyard_publish::PublishMode::Dry
+    } else {
+        halyard_publish::PublishMode::Live
+    };
+    let policy = halyard_publish::PublishPolicy::new(
+        halyard_publish::PublishPolicy::default_visibility(),
+        1,
+    )
+    .in_mode(mode);
+    let router = publish_effect::publish_router();
+    let effect = publish_effect::SpawnPublishEffect::new(std::path::PathBuf::from("."), dry);
+    let report = profiler
+        .span("publish-run", || {
+            halyard_publish::run_publication(
+                &publication,
+                &router,
+                &effect,
+                &policy,
+                &publish_effect::ThreadSleeper,
+            )
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let mode_label = if dry { "dry" } else { "live" };
+    match cli.format {
+        Format::Json => print_pretty_json(&json_value(&render::publish_report_json(
+            &report,
+            &publication.not_targets,
+            mode_label,
+        ))?)?,
+        Format::Gha | Format::Human => {
+            print!("{}", render::publish_report(&report, mode_label));
+        }
+    }
+    if report.failed == 0 {
+        return Ok(ExitCode::SUCCESS);
+    }
+    if !dry && report.published + report.already_published > 0 {
+        // §15.4 exit codes: 4 = partial publish (retryable) — the
+        // resume re-run continues from the first failure.
+        Ok(ExitCode::from(4))
+    } else {
+        Ok(ExitCode::FAILURE)
+    }
+}
+
 fn cmd_explain(cli: &Cli, profiler: &mut Profiler, package: &str) -> Result<(), CliError> {
     let plan = compute_plan(cli, profiler)?;
     let release = plan
