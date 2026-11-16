@@ -80,6 +80,13 @@ pub use auth::{
     variables_for,
 };
 
+pub mod oidc;
+
+pub use oidc::{
+    OidcContext, OidcExchanger, OidcPublishAuth, audience_for, encode_audience, gha_oidc_context,
+    tokens_endpoint,
+};
+
 // ---------------------------------------------------------------------------
 // Error taxonomy (§15.4 E-PUB-*)
 // ---------------------------------------------------------------------------
