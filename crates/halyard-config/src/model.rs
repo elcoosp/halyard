@@ -87,6 +87,12 @@ pub struct VersioningCfg {
     /// wins over the unbound `channel` default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_branches: Option<BTreeMap<String, String>>,
+    /// Maintenance-line branch patterns (§10.3, ADR-0027): each entry
+    /// names the branch AND the line it pins (`1.x`, `1.2.x`); the
+    /// checked-out branch's pin keeps every planned release on the
+    /// line and refuses bumps that would leave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintenance_branches: Option<Vec<String>>,
 }
 
 /// Workspace versioning policy (§5.4).
@@ -302,6 +308,12 @@ pub struct PackageOverride {
     /// Changed paths excluded from package attribution (§8.4).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
+    /// Per-package prerelease channel (§10.3, ADR-0026): names this
+    /// package's train, winning over the `[versioning].channel` default
+    /// and the `channel_branches` bindings. Requires `name` — a
+    /// path-glob override cannot carry a channel and fails closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
 }
 
 /// `[[link]]` explicit polyglot link (§6.5).
