@@ -328,3 +328,126 @@ fn comment_decline_is_a_stable_json_error() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The commits lint (§16.2's "lint PR title/commits" second half): the
+// pending history through the same title machinery — per-commit rows,
+// the typo gate refusing `E-CLI-COMMIT` (a near-miss kind silently
+// drops a bump), and autosquash/mapped-none rows as honest warnings.
+// ---------------------------------------------------------------------------
+
+/// One crate at `0.1.0`, tagged `v0.1.0` — the tagged shape the commits
+/// lint reads (a release base turns the following commits pending).
+fn build_tagged_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "Cargo.toml".to_owned(),
+                "[package]\nname = \"solo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n".to_owned(),
+            ),
+            (
+                "src/lib.rs".to_owned(),
+                "pub const C: usize = 1;\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold the crate",
+    ))?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    Ok(fx)
+}
+
+#[test]
+fn commit_lint_reports_driving_rows_and_stays_pending() -> Result<(), BoxError> {
+    let mut fx = build_tagged_workspace("commits-drives")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: bump the constant",
+    ))?;
+    let (code, text) = halyard(
+        fx.root(),
+        &["check", "--commits", "--exit-code", "--format", "json"],
+    )?;
+    assert_eq!(code, 3, "a pending release stays the exit-3 gate: {text}");
+    assert!(
+        text.contains("\"pending\": true"),
+        "the pending flag rides: {text}"
+    );
+    assert!(
+        text.contains("\"verdict\": \"drives\""),
+        "the driving verdict rides: {text}"
+    );
+    assert!(
+        text.contains("\"bump\": \"minor\""),
+        "the conveyed bump rides: {text}"
+    );
+    assert!(
+        text.contains("feat: bump the constant"),
+        "the subject is named: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_lint_refuses_a_typo_subject() -> Result<(), BoxError> {
+    let mut fx = build_tagged_workspace("commits-typo")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feet: bump the constant",
+    ))?;
+    let (code, text) = halyard(fx.root(), &["check", "--commits", "--format", "json"])?;
+    assert_eq!(code, 1, "a typo'd kind refuses the run: {text}");
+    assert!(
+        text.contains("E-CLI-COMMIT"),
+        "the refusal carries the stable code: {text}"
+    );
+    assert!(
+        text.contains("feet") && text.contains("feat"),
+        "the typo and the suggestion are both named: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_lint_mapped_rows_stay_warnings_and_autosquash_stays_dropped() -> Result<(), BoxError> {
+    let mut fx = build_tagged_workspace("commits-warnings")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("src/notes.md".to_owned(), "notes\n".to_owned())],
+        "docs: note the api",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 9;\n".to_owned(),
+        )],
+        "fixup! feat: bump the constant",
+    ))?;
+    let (code, text) = halyard(
+        fx.root(),
+        &["check", "--commits", "--exit-code", "--format", "json"],
+    )?;
+    assert_eq!(
+        code, 0,
+        "warnings never refuse, and nothing is pending: {text}"
+    );
+    assert!(
+        text.contains("\"verdict\": \"mapped_none\""),
+        "the mapped-none row rides: {text}"
+    );
+    assert!(
+        !text.contains("fixup! feat: bump the constant"),
+        "autosquash subjects never reach the digest (§8.5): {text}"
+    );
+    assert!(
+        !text.contains("E-CLI-COMMIT"),
+        "no refusal fires for honest warnings: {text}"
+    );
+    Ok(())
+}
