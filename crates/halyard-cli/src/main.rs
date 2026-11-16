@@ -108,14 +108,15 @@ struct Cli {
 }
 
 /// The v1 command surface (§16.2; the remaining commands —
-/// `init`, `action` — land with their
+/// `action` — land with their
 /// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
 /// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
 /// (§8.8) in the smart-minimal-fetch slice, `publish` (§13, the
-/// M5.2 engine + the verified-argv spawn) in the publish slice and
+/// M5.2 engine + the verified-argv spawn) in the publish slice,
 /// `migrate` (report, and with `--write` the §16.2 draft write) in the
-/// M4.7 slices).
+/// M4.7 slices and `init` (the §16.1 zero-config scaffold) in the
+/// ADR-0029 slice).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -201,6 +202,24 @@ enum Command {
         /// tool is configured.
         #[arg(long)]
         write: bool,
+    },
+    /// Scaffold the release workspace (§16.1/§16.2, ADR-0029): discovery
+    /// surveys the repository, and the engine plans a create-only write —
+    /// the documented `halyard.toml` skeleton (every key optional; the
+    /// defaults ride as comments and loading it yields the built-in
+    /// defaults exactly, so zero-config stays zero-config) and, with
+    /// `--github`, the §16.1 one-file release workflow
+    /// (`.github/workflows/release.yml`). Create-only, fail-closed: an
+    /// existing `halyard.toml` or workflow file is never clobbered and a
+    /// refusal never leaves a half-scaffold behind (`E-CFG-INIT`). Needs
+    /// no git history and no existing `halyard.toml`; the conventional
+    /// `--config` locations are never read (the scaffold always targets
+    /// the root `halyard.toml`).
+    Init {
+        /// Also write the §16.1 GitHub Actions release workflow
+        /// (`.github/workflows/release.yml`), create-only.
+        #[arg(long)]
+        github: bool,
     },
     /// Why is this package being released? The reason chain (§5.6).
     Explain {
@@ -379,6 +398,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         Command::Publish { dry } => cmd_publish(cli, profiler, *dry),
         Command::Migrate { write } => {
             cmd_migrate(cli, profiler, *write)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Init { github } => {
+            cmd_init(cli, profiler, *github)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Fetch => cmd_fetch(cli, profiler),
@@ -1929,6 +1952,84 @@ fn cmd_migrate(cli: &Cli, profiler: &mut Profiler, write: bool) -> Result<(), Cl
             render::migrate_report_gha(&report, write_report.as_ref())
         ),
         Format::Human => print!("{}", render::migrate_report(&report, write_report.as_ref())),
+    }
+    Ok(())
+}
+
+/// Surveys the working tree for the `init` scaffold (ADR-0029): the
+/// package count, the ecosystems present (one entry per package, sorted
+/// for I3-stable counts) and the single-package shape — the same
+/// count-based rule the planner's `auto` tag template applies
+/// (`effective_template`, so the shape line and the tag names can never
+/// disagree). Needs no git history: the scaffold targets a repo that is
+/// not yet halyard-configured.
+fn init_survey(profiler: &mut Profiler) -> Result<halyard_config::InitSurvey, CliError> {
+    profiler
+        .span("init-discover", || {
+            discover_repo(std::path::Path::new("."), &DiscoverInput::default())
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))
+        .map(|discovery| {
+            let workspace = &discovery.workspace;
+            let packages = workspace.packages().len();
+            let mut ecosystems: Vec<String> = workspace
+                .packages()
+                .iter()
+                .map(|package| package.ecosystem.resolve(workspace.interner()).to_owned())
+                .collect();
+            ecosystems.sort();
+            halyard_config::InitSurvey {
+                packages,
+                ecosystems,
+                single_package: packages == 1,
+            }
+        })
+}
+
+/// The `init` command (§16.1/§16.2, ADR-0029): surveys the repository
+/// and lands the create-only scaffold. The shell owns the I/O boundaries
+/// (discovery, the conventional-config footgun check); the engine plans
+/// and writes ([`halyard_config::plan_init`] +
+/// [`halyard_config::run_init`] over the
+/// [`halyard_config::AtomicScaffoldSink`] — atomic, create-only, the
+/// workflow's parent directories created). Refusals are stable-code
+/// errors (`E-CFG-INIT`): an existing `halyard.toml` is refused by the
+/// engine's gate, an existing `.config/halyard.toml` is refused here —
+/// a root config would shadow it, which the scaffold never does.
+fn cmd_init(cli: &Cli, profiler: &mut Profiler, github: bool) -> Result<(), CliError> {
+    // The conventional-config footgun: `resolve_config` prefers the root
+    // `halyard.toml` over `.config/halyard.toml` — landing a scaffold at
+    // the root would silently shadow the latter, so it refuses first.
+    let dotted = std::path::Path::new(".config/halyard.toml");
+    if dotted.is_file() {
+        return Err(CliError::new(
+            halyard_config::ConfigError::INIT_CODE,
+            "a configuration already exists at `.config/halyard.toml` — the scaffold \
+             writes `halyard.toml` at the repository root, which would shadow it; point \
+             `--config` at the existing file instead or remove it first",
+        ));
+    }
+    let survey = init_survey(profiler)?;
+    let plan = profiler
+        .span("init-plan", || halyard_config::plan_init(&survey, github))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let report = profiler
+        .span("init-run", || {
+            halyard_config::run_init(plan, &halyard_config::AtomicScaffoldSink)
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    match cli.format {
+        Format::Json => {
+            let value = render::init_report_json(&report).map_err(|e| {
+                CliError::new(
+                    halyard_config::ConfigError::INIT_CODE,
+                    format!("the init report does not serialize: {e}"),
+                )
+            })?;
+            print_pretty_json(&value)?;
+        }
+        Format::Gha => print!("{}", render::init_report_gha(&report)),
+        Format::Human => print!("{}", render::init_report(&report)),
     }
     Ok(())
 }
