@@ -286,15 +286,22 @@ halyard/
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
 │  ├─ halyard-edit/        EditSet (byte patches), atomic apply, EOL/BOM handling
 │  ├─ halyard-forge/       trait Forge + github/ gitlab/ gitea/ adapters (feature-gated)
+│  ├─ halyard-forge-github/ GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
 │  ├─ halyard-registry/    crates.io + npm clients (sparse index polling, existence checks)
 │  ├─ halyard-publish/     topological publisher, retry/resume, provenance
 │  ├─ halyard-config/      halyard.toml + JSON Schema, layered resolution, env overrides
 │  ├─ halyard-cli/         clap, miette, output formats (human/json/github-actions)
-│  ├─ halyard-action/      action runtime glue: outputs, summaries, annotations, token minting
-│  ├─ halyard-plugin-host/ (Year 2) wasmtime component host
 │  ├─ halyard-test-support/ git fixture builder, mock forge, golden helpers
 │  └─ xtask/               codegen (schemas), bench orchestration, release of halyard itself
-├─ bench/  corpus/  fuzz/  docs/{adr,research,spec}/  action/
+├─ bench/  corpus/  fuzz/  docs/{adr,research,errors}/
+```
+
+*(As-built note, 2026-11: the 18-member workspace is exactly this list
+minus the two planned-but-unbuilt slots — `halyard-action` (the §12
+action glue) and `halyard-plugin-host` (Year 2) land with their
+milestones and are absent rather than stubbed; `docs/` carries `adr/`,
+`research/` and `errors/` — no `spec/` — and the `action/` directory
+lands with the action.)*
 ```
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
@@ -669,15 +676,15 @@ CI **fails** a PR that regresses any p50 budget by > 5 % (§15.6).
 | Unit | `cargo nextest` | version algebra, parsers, patchers |
 | Property | `proptest` | cascade monotonic/terminating; EditSet patches commute & roundtrip; conventional parser total (never panics); semver req rewrite preserves operator |
 | Snapshot/golden | `insta` | PR body, changelog, plan JSON, error messages |
-| Fuzz | `cargo-fuzz` + OSS-Fuzz | TOML/JSON/YAML span scanners, conventional parser, tag-template matcher, cache file reader |
+| Fuzz | `cargo-fuzz` + OSS-Fuzz | conventional parser, tag-template matcher, JSON span scanner |
 | Differential | custom harness | (a) Cargo.lock patcher vs `cargo update -w --offline`; (b) our bump vs release-plz/release-please on shared fixtures (intentional diffs documented) ; (c) JSON span editor vs `serde_json` roundtrip semantic equality |
 | Git fixtures | `halyard-test-support::GitFixture` | declarative DSL builds repos (linear, merge-heavy, octopus, squash, shallow, partial, commit-graph on/off, worktrees) |
 | **History replay ("time machine")** | corpus runner | for N real OSS repos (tokio, serde, bevy, swc, rust-analyzer, turborepo, biome…) replay *every historical release*: run `plan` at the commit before each tag and compare to the actual released versions. Reports agreement %, drives policy defaults |
 | E2E | mock forge server (`wiremock`/custom) + real git | full Release PR lifecycle incl. partial-failure injection at every step |
 | Real forge smoke | dedicated GitHub org/repos, nightly | create PR, merge, tag, release, publish to crates.io *sandbox*/npm `--dry-run`/Verdaccio |
 | Mutation | `cargo-mutants` | on `core`, `version`, `edit`, `conventional` (target ≥ 85 % killed) |
-| Concurrency | `loom`, `shuttle` | cache, parallel diff |
-| Soundness | `miri` | cache crate |
+| Concurrency | `loom` | cache crate (documented-exclusive with `miri` and machine-enforced — a combined build is a `compile_error!`, ADR-0030; the CI loom job runs the documented invocation `cargo test -p halyard-cache --features loom --release`) |
+| Soundness | `miri` | cache crate (the nightly job; the interpreter defines `cfg(miri)`, no feature flag needed) |
 | Perf | §14 | gated |
 | Cross-platform | Linux/macOS/Windows × x86_64/aarch64 | CRLF, path separators, long paths, case-insensitive FS |
 
@@ -723,6 +730,11 @@ jobs:
 ```
 (`halyard fetch` replaces the checkout step when minimal fetch is desired.)
 
+*(As-built note, 2026-11: `halyard init [--github]` ships (ADR-0029) —
+the config skeleton is comment-only (loading it yields the built-in
+defaults exactly; the scaffold never sets keys) and the workflow above
+lands create-only, verbatim, with the parent directories created.)*
+
 ### 16.2 CLI surface
 
 | Command | Purpose |
@@ -748,7 +760,7 @@ Global flags: `--format human|json|gha`, `--color`, `-C <dir>`, `--config`, `--o
 
 *(As-built note, 2026-11: the wired commands are `plan`, `apply [--dry]`, `pr [--dry | live]`, `release [--dry | live] [--no-push]`, `fetch` (§8.8), `publish [--dry | live]` (M5.2: the §13 engine — verified-plan layers, registry resume, the visibility wait, the verified-argv tool spawn; ADR-0018), `explain`, `check`, `status`, `graph`, `doctor`, `schema`, `completions`, `forge-smoke`, `migrate` (M4.7, ADR-0022 + ADR-0023 + ADR-0024 — the
 release-please/changesets/knope/release-plz configs are surveyed into
-mapped rows, semantic differences and a validated draft `halyard.toml`; `--write` lands the reviewed draft at `halyard.toml` through the injected `DraftSink` — atomic, create-only, a refusal when the target exists or two tools are configured) — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; `init`, `bench`, `man` and the `action` glue land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
+mapped rows, semantic differences and a validated draft `halyard.toml`; `--write` lands the reviewed draft at `halyard.toml` through the injected `DraftSink` — atomic, create-only, a refusal when the target exists or two tools are configured) — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; and `init` (ADR-0029, §16.1: discovery surveys the repo, the engine plans the create-only zero-config scaffold — the documented `halyard.toml` skeleton whose commented defaults load as the built-in defaults exactly, plus the one-file release workflow with `--github`; refusals carry `E-CFG-INIT` and never leave a half-scaffold); `bench`, `man` and the `action` glue land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
 
 ### 16.3 DX principles
 - Errors teach: every error includes *what we looked at*, *what we expected*, *the exact fix*.
