@@ -1,5 +1,13 @@
 # E-CLI-RELEASE
 
+**Status: RETIRED.** No code emits this code any more — the live
+release shell (M4.2b completion) reports tag and push failures through
+their engine codes (`E-GIT-TAG`, `E-GIT-TAG-CONFLICT`, `E-GIT-PUSH`)
+as rows in the run report, and missing credentials are an honest skip,
+not an error. The page is kept for history (the code was the §11.1
+release command's decline path before the shell landed); new failures
+should reference the engine codes.
+
 **Code:** `E-CLI-RELEASE` · **Area:** CLI (release command, §11.1) ·
 **Raised by:** `halyard release`
 
