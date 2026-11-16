@@ -306,6 +306,13 @@
     "PackageOverride": {
       "description": "`[[package]]` per-package override (§16.4).",
       "properties": {
+        "channel": {
+          "description": "Per-package prerelease channel (§10.3, ADR-0026): names this\npackage's train, winning over the `[versioning].channel` default\nand the `channel_branches` bindings. Requires `name` — a\npath-glob override cannot carry a channel and fails closed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "exclude": {
           "description": "Changed paths excluded from package attribution (§8.4).",
           "items": {
@@ -476,6 +483,16 @@
           "description": "Branch-bound channels (§10.3 \"next branch ⇒ rc\", ADR-0025):\nbranch name → channel; when HEAD is on the branch, its binding\nwins over the unbound `channel` default.",
           "type": [
             "object",
+            "null"
+          ]
+        },
+        "maintenance_branches": {
+          "description": "Maintenance-line branch patterns (§10.3, ADR-0027): each entry\nnames the branch AND the line it pins (`1.x`, `1.2.x`); the\nchecked-out branch's pin keeps every planned release on the\nline and refuses bumps that would leave it.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
             "null"
           ]
         },
