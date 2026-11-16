@@ -18,6 +18,6 @@ Fix `from`/`to` in `halyard.toml`, or add the missing package to the workspace.
 ## Command
 
 ```bash
-halyard graph --format text
+halyard graph --graph-format text
 python3 -c "import tomllib;print(tomllib.load(open('halyard.toml','rb'))['link'])"
 ```
