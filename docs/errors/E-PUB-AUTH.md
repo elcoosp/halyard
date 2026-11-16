@@ -1,8 +1,10 @@
 # E-PUB-AUTH
 
 **Code:** `E-PUB-AUTH` · **Area:** publish auth plumbing (M5.3 step 1,
-ADR-0019) · **Raised by:** the [`PublishAuth`] seam — the
-[`EnvPublishAuth`] capture and the spawn effect's per-target resolution
+ADR-0019; the OIDC half M5.3 step 3, ADR-0031) · **Raised by:** the
+[`PublishAuth`] seam — the [`EnvPublishAuth`] capture, the spawn
+effect's per-target resolution, and the OIDC trusted-publishing context
+detection + exchange
 
 [`PublishAuth`]: https://docs.rs/halyard-publish/latest/halyard_publish/trait.PublishAuth.html
 [`EnvPublishAuth`]: https://docs.rs/halyard-publish/latest/halyard_publish/struct.EnvPublishAuth.html
@@ -32,6 +34,29 @@ the user-level auth file, governs the run).
 The variable is exported with an empty value — typically a CI
 `${SECRETS}` placeholder that resolved to nothing, or an
 `export CARGO_REGISTRY_TOKEN=` left in a shell profile.
+
+## The OIDC trusted-publishing refusals (ADR-0031)
+
+The same code also refuses a **misconfigured GitHub Actions OIDC
+context** — detected before any network, both in live and in dry:
+
+- **Half-present context**: `ACTIONS_ID_TOKEN_REQUEST_URL` is set but
+  `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is missing (or the reverse). The
+  runner exposes both variables when the workflow declares
+  `permissions: id-token: write`; exactly one means a half-configured
+  workflow. The message names the missing variable.
+- **Present-but-empty**: one of the two variables is set to the empty
+  string.
+
+A detected context is **not** an error — see the `publish-oidc` row of
+`halyard doctor`. Under a detected context a live publish exchanges
+the short-lived crates.io token when no documented variable covers the
+registry (trusted publishing is GitHub-Actions + crates.io today;
+custom registries keep the env grammar), and the exchange itself
+refuses with this code on a transport failure, a non-2xx answer, a
+body outside the documented shapes, or unparseable JSON. Every refusal
+message is scrubbed: the context token, the id-token and the exchanged
+token never ride a surfaced message.
 
 ## Fix
 
