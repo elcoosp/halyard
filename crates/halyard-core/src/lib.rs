@@ -42,6 +42,7 @@
 pub mod bitset;
 pub mod bump;
 pub mod canonical;
+pub mod change_file;
 pub mod discover;
 pub mod edit;
 pub mod glob;
@@ -61,6 +62,7 @@ pub mod trie;
 pub use bitset::SmallBitset;
 pub use bstr::BString;
 pub use canonical::{blake3_hex, canonical_json, plan_hash};
+pub use change_file::{ChangeBump, ChangeFiles, ChangeNote};
 pub use discover::{
     DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, Facets, ManifestFormat, RawDep,
     RawPackage, RawVersionSource,
