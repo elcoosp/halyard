@@ -33,5 +33,9 @@ criterion = { workspace = true }
 name = "migrate"
 harness = false
 
+[[bench]]
+name = "channel"
+harness = false
+
 [lints]
 workspace = true
