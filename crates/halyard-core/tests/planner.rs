@@ -11,7 +11,7 @@ use halyard_core::package::{
     DepEdge, DepKind, Ecosystem, GroupId, ManifestSite, Package, PathFilter, RelPath, ReqSpec,
     Span, TagTemplate, VersionSource, Workspace,
 };
-use halyard_core::planner::{PlanConfig, Snapshot, plan};
+use halyard_core::planner::{MaintenanceLine, PlanConfig, Snapshot, plan};
 use halyard_core::{Oid, PkgId, ReleaseRefs};
 use semver::{Version, VersionReq};
 
@@ -643,4 +643,388 @@ fn channel_applies_to_the_initial_release() {
     let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None], &"c".repeat(40));
     let plan = plan(&snapshot, &channel_cfg("rc")).unwrap();
     assert_eq!(plan.releases.first().unwrap().to, "1.1.0-rc.1");
+}
+// ---------------------------------------------------------------------
+// Per-package channel overrides (§10.3, M5.6 step 3 / ADR-0026): a
+// `[[package]] channel = "rc"` override names that package's train —
+// the most explicit policy wins over the repo-wide (branch-resolved)
+// default; every other package keeps the default (or stays stable).
+
+/// Applies a `[[package]] channel` override to a plan config — the same
+/// shape `ResolvedConfig::plan_config` builds from the resolved map.
+fn with_override(mut config: PlanConfig, name: &str, channel: &str) -> PlanConfig {
+    let channel =
+        PrereleaseChannel::new(channel).unwrap_or_else(|| unreachable!("fixture channel"));
+    config.package_channels.insert(name.to_owned(), channel);
+    config
+}
+
+#[test]
+fn package_override_channelizes_only_that_package() {
+    // No repo-wide channel: the override plans `app` on its `rc` train
+    // while `lib` keeps the stable derivation.
+    let mut ws = Workspace::new();
+    let app = push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml")
+        .expect("fixture package");
+    let lib = push_pkg(
+        &mut ws,
+        "lib",
+        Some("0.5.0"),
+        "v{version}",
+        "lib/Cargo.toml",
+    )
+    .expect("fixture package");
+    assert_ne!(app, lib, "the fixture packages carry distinct ids");
+    let commits = vec![
+        commit(1, "feat", false, "grow surface", None).expect("fixture commit"),
+        commit(2, "fix", false, "repair edge", None).expect("fixture commit"),
+    ];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0], vec![1]],
+        vec![
+            Some(BaseRef {
+                tag: "v1.2.3".into(),
+                oid: oid(3).expect("fixture oid"),
+            }),
+            Some(BaseRef {
+                tag: "v0.5.0".into(),
+                oid: oid(4).expect("fixture oid"),
+            }),
+        ],
+        &"a".repeat(40),
+    );
+    let plan = plan(&snapshot, &with_override(cfg(), "app", "rc")).unwrap();
+    let app_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "app")
+        .unwrap_or_else(|| unreachable!("the overridden package plans"));
+    assert_eq!(app_row.to, "1.3.0-rc.1", "the override names the train");
+    assert_eq!(app_row.tag, "v1.3.0-rc.1");
+    let lib_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "lib")
+        .unwrap_or_else(|| unreachable!("the un-overridden package plans"));
+    assert_eq!(lib_row.to, "0.5.1", "the stable derivation is untouched");
+}
+
+#[test]
+fn package_override_wins_over_the_repo_wide_channel() {
+    // Repo-wide `beta`; the override puts `app` on its own `rc` train.
+    let config = with_override(channel_cfg("beta"), "app", "rc");
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    push_pkg(
+        &mut ws,
+        "lib",
+        Some("0.5.0"),
+        "v{version}",
+        "lib/Cargo.toml",
+    )
+    .expect("fixture package");
+    let commits = vec![
+        commit(1, "feat", false, "grow surface", None).expect("fixture commit"),
+        commit(2, "fix", false, "repair edge", None).expect("fixture commit"),
+    ];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0], vec![1]],
+        vec![
+            Some(BaseRef {
+                tag: "v1.2.3".into(),
+                oid: oid(3).expect("fixture oid"),
+            }),
+            Some(BaseRef {
+                tag: "v0.5.0".into(),
+                oid: oid(4).expect("fixture oid"),
+            }),
+        ],
+        &"b".repeat(40),
+    );
+    let plan = plan(&snapshot, &config).unwrap();
+    let app_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "app")
+        .unwrap_or_else(|| unreachable!("the overridden package plans"));
+    assert_eq!(app_row.to, "1.3.0-rc.1", "the override beats the default");
+    let lib_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "lib")
+        .unwrap_or_else(|| unreachable!("the default-channel package plans"));
+    assert_eq!(lib_row.to, "0.5.1-beta.1", "the default fills the rest");
+}
+
+#[test]
+fn override_continues_the_train_while_unnamed_packages_promote() {
+    // §10.3 promotion is per package under an override map: `app`
+    // carries the override and continues its train (`rc.1` + one fix →
+    // `rc.2`), while `lib` — a prerelease manifest with no channel of
+    // its own — promotes to its stable triple.
+    let mut ws = Workspace::new();
+    push_pkg(
+        &mut ws,
+        "app",
+        Some("1.3.0-rc.1"),
+        "v{version}",
+        "Cargo.toml",
+    )
+    .expect("fixture package");
+    push_pkg(
+        &mut ws,
+        "lib",
+        Some("1.2.0-rc.3"),
+        "v{version}",
+        "lib/Cargo.toml",
+    )
+    .expect("fixture package");
+    let commits = vec![commit(1, "fix", false, "repair edge", None).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0], Vec::new()],
+        vec![
+            Some(BaseRef {
+                tag: "v1.3.0-rc.1".into(),
+                oid: oid(2).expect("fixture oid"),
+            }),
+            Some(BaseRef {
+                tag: "v1.2.0-rc.3".into(),
+                oid: oid(3).expect("fixture oid"),
+            }),
+        ],
+        &"c".repeat(40),
+    );
+    let plan = plan(&snapshot, &with_override(cfg(), "app", "rc")).unwrap();
+    let app_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "app")
+        .unwrap_or_else(|| unreachable!("the overridden train continues"));
+    assert_eq!(app_row.to, "1.3.0-rc.2", "the train absorbs the fix");
+    let lib_row = plan
+        .releases
+        .iter()
+        .find(|row| row.package == "lib")
+        .unwrap_or_else(|| unreachable!("the unnamed package promotes"));
+    assert_eq!(lib_row.to, "1.2.0", "promotion stays per package");
+}
+
+#[test]
+fn override_channel_applies_to_the_initial_release() {
+    // No release tag for the overridden package: the counter starts at
+    // one exactly like the repo-wide rule.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.0.0"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "feat", false, "first feature", None).expect("fixture commit")];
+    let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None], &"d".repeat(40));
+    let plan = plan(&snapshot, &with_override(cfg(), "app", "beta")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "1.1.0-beta.1");
+}
+
+// ---------------------------------------------------------------------
+// Maintenance-line release trains (§10.3, M5.6 / ADR-0027): a branch
+// that names its line (`1.x`, `1.2.x`) pins every non-forced target to
+// that line — a bump that would leave the line (the branch's major, or
+// the pinned minor) is refused `E-PLAN-MAINTENANCE`, never guessed
+// across it. `Release-As` stays the explicit escape hatch.
+
+/// `PlanConfig` with a branch-resolved maintenance line (§10.3).
+fn maintenance_cfg(line: &str) -> PlanConfig {
+    let mut config = cfg();
+    config.maintenance_line = MaintenanceLine::parse(line);
+    config
+}
+
+#[test]
+fn maintenance_line_parses_the_documented_grammar() {
+    // `MAJOR.x` and `MAJOR.MINOR.x` only: the same string names the
+    // branch and the line it pins.
+    assert_eq!(
+        MaintenanceLine::parse("1.x").map(|line| line.to_string()),
+        Some("1.x".to_owned())
+    );
+    assert_eq!(
+        MaintenanceLine::parse("1.2.x").map(|line| line.to_string()),
+        Some("1.2.x".to_owned())
+    );
+    assert!(MaintenanceLine::parse("1.y").is_none());
+    assert!(MaintenanceLine::parse("12x").is_none());
+    assert!(MaintenanceLine::parse("x").is_none());
+    assert!(MaintenanceLine::parse("1.x.y").is_none());
+}
+
+#[test]
+fn maintenance_line_refuses_a_cross_line_major() {
+    // A breaking commit on a `1.x` branch must not plan `2.0.0`: the
+    // line guard refuses with the package and the offending target.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "feat", true, "drop the api", None).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"a".repeat(40),
+    );
+    let err = plan(&snapshot, &maintenance_cfg("1.x"))
+        .err()
+        .unwrap_or_else(|| unreachable!("a cross-line major must refuse"));
+    assert_eq!(err.code(), "E-PLAN-MAINTENANCE");
+    let rendered = err.to_string();
+    assert!(rendered.contains("app"), "the package is named: {rendered}");
+    assert!(
+        rendered.contains("2.0.0"),
+        "the offending target is named: {rendered}"
+    );
+}
+
+#[test]
+fn maintenance_line_allows_in_line_bumps() {
+    // `fix` on `1.2.x` and on `1.x` both stay in line; `feat` (minor)
+    // stays in `1.x` but leaves `1.2.x`.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "fix", false, "backport repair", None).expect("fixture commit")];
+    let snapshot_fix = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"b".repeat(40),
+    );
+    for line in ["1.x", "1.2.x"] {
+        let plan = plan(&snapshot_fix, &maintenance_cfg(line)).unwrap();
+        assert_eq!(
+            plan.releases.first().unwrap().to,
+            "1.2.4",
+            "a patch stays in {line}"
+        );
+    }
+    let feats = vec![commit(1, "feat", false, "backport feature", None).expect("fixture commit")];
+    let snapshot_feat = snapshot(
+        &ws,
+        feats,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"c".repeat(40),
+    );
+    let minor_plan = plan(&snapshot_feat, &maintenance_cfg("1.x")).unwrap();
+    assert_eq!(
+        minor_plan.releases.first().unwrap().to,
+        "1.3.0",
+        "minor stays in 1.x"
+    );
+    let err = plan(&snapshot_feat, &maintenance_cfg("1.2.x"))
+        .err()
+        .unwrap_or_else(|| unreachable!("a cross-line minor must refuse"));
+    assert_eq!(err.code(), "E-PLAN-MAINTENANCE");
+}
+
+#[test]
+fn maintenance_line_refuses_the_pre_major_remap_escape() {
+    // The §10.2 pre-major remap applies first; the line guard is the
+    // last gate: a breaking commit on `0.1.x` remaps to `minor`
+    // (`0.2.0`) — which still leaves the line and refuses.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("0.1.2"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "feat", true, "drop the api", None).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v0.1.2".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"d".repeat(40),
+    );
+    let err = plan(&snapshot, &maintenance_cfg("0.1.x"))
+        .err()
+        .unwrap_or_else(|| unreachable!("the remapped escape must refuse"));
+    assert_eq!(err.code(), "E-PLAN-MAINTENANCE");
+    // On the major-only `0.x` line the remapped `0.2.0` is in line.
+    let plan = plan(&snapshot, &maintenance_cfg("0.x")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "0.2.0");
+}
+
+#[test]
+fn forced_release_as_target_is_exempt_from_the_line() {
+    // `Release-As` is the user's explicit version: the line never
+    // rewrites or refuses it (the ADR-0025 exemption reasoning).
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![release_as_commit(1, "2.0.0").expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"e".repeat(40),
+    );
+    let plan = plan(&snapshot, &maintenance_cfg("1.x")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "2.0.0");
+}
+
+#[test]
+fn maintenance_line_guard_sees_the_channelized_target() {
+    // The guard runs over the FINAL targets (ADR-0027): a channelized
+    // train target carries the prerelease suffix, and its stable triple
+    // is what must stay in line.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let in_line = vec![commit(1, "fix", false, "backport repair", None).expect("fixture commit")];
+    let snapshot_in = snapshot(
+        &ws,
+        in_line,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"f".repeat(40),
+    );
+    let mut config = maintenance_cfg("1.2.x");
+    config.prerelease_channel =
+        PrereleaseChannel::new("rc").or_else(|| unreachable!("fixture channel"));
+    let in_line_plan = plan(&snapshot_in, &config).unwrap();
+    assert_eq!(in_line_plan.releases.first().unwrap().to, "1.2.4-rc.1");
+    let out_of_line =
+        vec![commit(1, "feat", false, "backport feature", None).expect("fixture commit")];
+    let snapshot_out = snapshot(
+        &ws,
+        out_of_line,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(2).expect("fixture oid"),
+        })],
+        &"0".repeat(40),
+    );
+    let err = plan(&snapshot_out, &config)
+        .err()
+        .unwrap_or_else(|| unreachable!("a cross-line train target must refuse"));
+    assert_eq!(err.code(), "E-PLAN-MAINTENANCE");
+    assert!(
+        err.to_string().contains("1.3.0-rc.1"),
+        "the channelized target is named: {err}"
+    );
 }
