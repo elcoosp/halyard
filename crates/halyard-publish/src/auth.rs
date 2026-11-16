@@ -71,6 +71,26 @@ pub trait PublishAuth: Send + Sync {
     /// the scrubbing contract: a value `credentials` can resolve is a
     /// value `secrets` lists.
     fn secrets(&self) -> Vec<String>;
+
+    /// The provenance spelling for `target` — the summary's input
+    /// (M5.3 step 2): names only, never values. The default derives it
+    /// from [`PublishAuth::credentials`] (`env:<VARIABLE>` when a
+    /// token resolved, `none` when nothing did); providers whose
+    /// resolution has network side effects override it so the summary
+    /// stays a projection — the OIDC fallback (ADR-0031) spells
+    /// `oidc:<audience>` without firing the exchange.
+    ///
+    /// # Errors
+    ///
+    /// [`PublishError::Auth`] when the target's resolution fails
+    /// closed (present-but-empty); the run refuses before any spawn,
+    /// so a summary never coexists with a misconfiguration.
+    fn provenance(&self, target: &PublishTarget) -> Result<String, PublishError> {
+        match self.credentials(target)? {
+            AuthOutcome::Token(credential) => Ok(credential.to_string()),
+            AuthOutcome::Absent => Ok("none".to_owned()),
+        }
+    }
 }
 
 /// One target's resolved credentials: inject the pair, or inject
@@ -157,7 +177,7 @@ pub fn variables_for(target: &PublishTarget) -> Vec<String> {
 
 /// Whether `registry` names crates.io (both the dotted §13 spelling and
 /// Cargo's own dashed config spelling resolve to the same registry).
-fn is_crates_io(registry: &str) -> bool {
+pub(crate) fn is_crates_io(registry: &str) -> bool {
     registry == "crates.io" || registry == "crates-io"
 }
 
@@ -320,11 +340,14 @@ impl PublishAuth for EnvPublishAuth {
 // ---------------------------------------------------------------------------
 
 /// Resolves the per-registry auth provenance for a run: each target's
-/// registry name mapped to `env:<VARIABLE>` when a documented candidate
-/// resolved, or `none` when nothing will be injected (the tool's own
+/// registry name mapped through the provider's [`PublishAuth::
+/// provenance`] — `env:<VARIABLE>` when a documented candidate
+/// resolved, `oidc:<audience>` when the OIDC trusted-publishing
+/// fallback covers it (ADR-0031, projected without firing the
+/// exchange), or `none` when nothing will be injected (the tool's own
 /// credential store governs). Name-sorted by the map itself — plain
 /// deterministic data (I3) the renderers embed verbatim; **values never
-/// appear** — the provenance names the variable, never the secret.
+/// appear** — the provenance names the source, never the secret.
 ///
 /// # Errors
 ///
@@ -337,14 +360,7 @@ pub fn auth_summary(
 ) -> Result<BTreeMap<String, String>, PublishError> {
     let mut summary = BTreeMap::new();
     for target in targets {
-        match auth.credentials(target)? {
-            AuthOutcome::Token(credential) => {
-                summary.insert(target.registry.clone(), credential.to_string());
-            }
-            AuthOutcome::Absent => {
-                summary.insert(target.registry.clone(), "none".to_owned());
-            }
-        }
+        summary.insert(target.registry.clone(), auth.provenance(target)?);
     }
     Ok(summary)
 }
