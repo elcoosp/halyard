@@ -56,7 +56,13 @@ the §9.4 change-file input (M3.5 completion, ADR-0028: optional
 (`packages = { core = "minor" }`) bumps that replace the commit-derived
 level as the squash-merge escape hatch, notes merged verbatim into the
 changelog preview, the strict grammar refusing with
-`E-CHLOG-CHANGE-FILE` and unknown names with `E-PLAN-CHANGE-FILE`).** The
+`E-CHLOG-CHANGE-FILE` and unknown names with `E-PLAN-CHANGE-FILE`) — and
+the §16.1 zero-config on-ramp (`halyard init` per ADR-0029: discovery
+surveys the repo, the engine plans a create-only write — the documented
+`halyard.toml` skeleton whose commented defaults load as the built-in
+defaults exactly, plus the §16.1 one-file release workflow with
+`--github` — refusals carry `E-CFG-INIT` and never leave a
+half-scaffold).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -208,7 +214,7 @@ crates/
   xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
                          size-gate, corpus, gen-repo, bench-competitors,
                          discover-diff, git-diff, replay, bench-public, pgo
-  halyard-cli            the user shell (plan/apply/check/pr/release/publish/fetch/
+  halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
                          migrate/explain/status/graph/doctor/schema/completions)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
@@ -222,9 +228,14 @@ docs/                    architecture, ADRs, research notes, error pages
 ```bash
 cargo fmt --all --check
 # pedantic + restriction lints live in [workspace.lints]; the CLI
-# carries only -D warnings (a CLI -W would override the curated allows)
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+# carries only -D warnings (a CLI -W would override the curated allows).
+# Feature policy (ADR-0030): the gates run `--features ci-bundle` — the
+# conflict-free "all stable features" spelling — because the cache
+# crate's miri/loom pair is documented-exclusive and machine-enforced
+# (a combined build is a compile error); the pair keeps its own lanes
+# (the CI loom job, the nightly Miri job).
+cargo clippy --workspace --all-targets --features ci-bundle -- -D warnings
+cargo test --workspace --features ci-bundle
 cargo test --workspace --benches
 cargo run -p xtask -- check-layers     # §7.2 layer rules
 cargo run -p xtask -- schema-check     # M0.7 schema drift
@@ -266,6 +277,7 @@ cargo run -p halyard-changelog --example render_release_notes
 cargo run -p halyard-changelog --example render_user_template
 cargo run -p halyard-changelog --example render_check_comment
 cargo run -p halyard-changelog --example change_file
+cargo run -p halyard-config --example init_scaffold
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-publish --example publish_auth
 cargo run -p halyard-forge --example release_lifecycle
