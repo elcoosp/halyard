@@ -109,6 +109,17 @@ pub struct PlanConfig {
     pub publish_cargo_registry: String,
     /// Registry rendered for npm releases (§13).
     pub publish_npm_registry: String,
+    /// npm access level rendered into npm releases' publish contract
+    /// (ADR-0033, from `publish.npm.access`); `None` = unset — the
+    /// spawned tool's own posture governs, no `--access` flag is
+    /// invented. Cargo releases never carry it.
+    pub publish_npm_access: Option<String>,
+    /// npm provenance request rendered into npm releases' publish
+    /// contract (ADR-0033, from `publish.npm.provenance`); `None` =
+    /// unset (trusted publishing decides), `Some(true)` = the explicit
+    /// `--provenance` request, `Some(false)` = the `--no-provenance`
+    /// opt-out. Cargo releases never carry it.
+    pub publish_npm_provenance: Option<bool>,
     /// Packages that must not be released (`[[package]] release = false`).
     pub release_disabled: BTreeSet<String>,
     /// Prerelease channel (§10.3, ADR-0025): when set, every non-forced
@@ -157,6 +168,8 @@ impl PlanConfig {
             publish_enabled: false,
             publish_cargo_registry: "crates.io".to_owned(),
             publish_npm_registry: "npm".to_owned(),
+            publish_npm_access: None,
+            publish_npm_provenance: None,
             release_disabled: BTreeSet::new(),
             prerelease_channel: None,
             package_channels: BTreeMap::new(),
@@ -519,9 +532,17 @@ fn release_row(
         cfg,
         snapshot.change_files.notes_for(name),
     ));
-    let registry = match pkg.ecosystem {
-        Ecosystem::Cargo => cfg.publish_cargo_registry.clone(),
-        _ => cfg.publish_npm_registry.clone(),
+    // The npm publish options ride the npm contract only (ADR-0033): a
+    // cargo release never carries them, and an unset npm option stays
+    // `None` (the spawned tool's own posture governs — no flag is
+    // invented).
+    let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
+        Ecosystem::Cargo => (cfg.publish_cargo_registry.clone(), None, None),
+        _ => (
+            cfg.publish_npm_registry.clone(),
+            cfg.publish_npm_access.clone(),
+            cfg.publish_npm_provenance,
+        ),
     };
     let row = PlanRelease {
         package: name.to_owned(),
@@ -535,6 +556,8 @@ fn release_row(
         publish: Some(PlanPublish {
             registry,
             enabled: pkg.publishable && cfg.publish_enabled,
+            access: npm_access,
+            provenance: npm_provenance,
         }),
     };
     let edit = pkg
