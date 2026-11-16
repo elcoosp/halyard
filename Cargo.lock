@@ -1587,8 +1587,10 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "halyard-core",
+ "halyard-forge",
  "halyard-registry",
  "semver",
+ "serde_json",
 ]
 
 [[package]]
