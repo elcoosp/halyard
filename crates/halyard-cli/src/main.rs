@@ -280,6 +280,12 @@ enum Command {
         /// ref refuses `E-GIT-REF` naming it.
         #[arg(long, value_name = "REF")]
         base: Option<String>,
+        /// Render the selection in a CI system's own grammar (M10 step
+        /// 2, ADR-0034): turbo's `--filter=...pkg` dependent filters,
+        /// nx's `run-many --projects=` list, bazel's `rdeps(//…)`
+        /// query — the machine-consumer surface beside `--format`.
+        #[arg(long, value_enum, value_name = "SYSTEM")]
+        ci: Option<CiSelector>,
     },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
@@ -414,6 +420,32 @@ enum GraphFormat {
     Json,
 }
 
+/// `affected --ci` systems (§16.3/M10 step 2, ADR-0034): the closed
+/// adapter surface `halyard_core::ci_selector` speaks. The value enum
+/// refuses an unknown system before the adapter lookup runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum CiSelector {
+    /// Turborepo: one `--filter=...pkg` dependent filter per change
+    /// root (the per-root filters union on turbo's side).
+    Turbo,
+    /// Nx: one `run-many --projects=` flag over the affected closure.
+    Nx,
+    /// Bazel: one `rdeps(//..., <patterns>)` query over the changed
+    /// packages' recursive target patterns.
+    Bazel,
+}
+
+impl CiSelector {
+    /// The adapter-lookup name (the value enum's spelling).
+    fn system_name(self) -> &'static str {
+        match self {
+            Self::Turbo => "turbo",
+            Self::Nx => "nx",
+            Self::Bazel => "bazel",
+        }
+    }
+}
+
 /// `schema` targets (§16.2; the frozen documents live under `schemas/`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum SchemaKind {
@@ -503,8 +535,8 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Fetch => cmd_fetch(cli, profiler),
-        Command::Affected { base } => {
-            cmd_affected(cli, profiler, base.as_deref())?;
+        Command::Affected { base, ci } => {
+            cmd_affected(cli, profiler, base.as_deref(), *ci)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Explain { package } => {
@@ -1945,6 +1977,14 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let oidc_context = halyard_publish::gha_oidc_context(&|name| std::env::var(name).ok())
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The provenance-runtime verdict (ADR-0033): a supported cloud CI
+    // runtime is the GitHub Actions OIDC context (`id-token: write`)
+    // or the GitLab CI/CD marker — the engine's validate-then-act
+    // input for an explicit `publish.npm.provenance = true` request.
+    let provenance_runtime =
+        halyard_publish::provenance_runtime_detected(oidc_context.is_some(), &|name| {
+            std::env::var(name).ok()
+        });
     let auth = halyard_publish::OidcPublishAuth::new(
         base,
         oidc_context,
@@ -1968,7 +2008,8 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
         halyard_publish::PublishPolicy::default_visibility(),
         1,
     )
-    .in_mode(mode);
+    .in_mode(mode)
+    .in_provenance_runtime(provenance_runtime);
     // The routing resolution (ADR-0021) reads the cargo configuration
     // before any call: configured custom registries join the map, an
     // unresolvable name refuses the run closed — zero probes, zero
@@ -2226,14 +2267,52 @@ fn cmd_status(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
 /// runs — discover → git history → selection — with no network and no
 /// subprocess (I5/I6); `--base` attributes against an explicit ref
 /// (the PR-selection shape) and refuses an unresolvable ref
-/// fail-closed `E-GIT-REF`.
-fn cmd_affected(cli: &Cli, profiler: &mut Profiler, base: Option<&str>) -> Result<(), CliError> {
+/// fail-closed `E-GIT-REF`. `--ci` (M10 step 2, ADR-0034) renders the
+/// selection in a CI system's own grammar — the machine-consumer
+/// surface beside the `--format` renderings.
+fn cmd_affected(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    base: Option<&str>,
+    ci: Option<CiSelector>,
+) -> Result<(), CliError> {
     let context = context_with_base(cli, profiler, base)?;
     let selection = profiler.span("affected", || {
         let changed = halyard_core::affected::changed_from_digest(context.history.digest());
         let graph = halyard_core::WorkspaceGraph::build(&context.discovery.workspace);
         halyard_core::affected::affected_selection(&graph, &changed)
     });
+    if let Some(ci) = ci {
+        // The adapter surface: the name-sorted change roots and the
+        // name-sorted closed selection, rendered in the CI system's
+        // own grammar (one line per argv atom, I7; an empty selection
+        // prints nothing — the honest no-op, exit 0).
+        let mut changed: Vec<halyard_core::ci_selector::SelectedPackage> = selection
+            .rows()
+            .iter()
+            .filter(|row| row.reason == halyard_core::affected::AffectedReason::Changed)
+            .map(|row| halyard_core::ci_selector::SelectedPackage {
+                name: render::package_name(&context, row.package),
+                root: render::package_root(&context, row.package).to_owned(),
+            })
+            .collect();
+        changed.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut affected: Vec<halyard_core::ci_selector::SelectedPackage> = selection
+            .rows()
+            .iter()
+            .map(|row| halyard_core::ci_selector::SelectedPackage {
+                name: render::package_name(&context, row.package),
+                root: render::package_root(&context, row.package).to_owned(),
+            })
+            .collect();
+        affected.sort_by(|a, b| a.name.cmp(&b.name));
+        let adapter = halyard_core::ci_selector::ci_selector_adapter(ci.system_name())
+            .unwrap_or_else(|| unreachable!("the value enum only names known adapters"));
+        for line in adapter.render(&changed, &affected) {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     match cli.format {
         Format::Json => {
             print_pretty_json(&render::affected_report_json(&context, &selection, base))?;
