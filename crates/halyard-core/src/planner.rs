@@ -36,6 +36,7 @@ use crate::bump::{
     PreMajorPolicy, PrereleaseChannel, advance_prerelease, apply_bump, promote_to_stable,
     same_triple,
 };
+use crate::change_file::{ChangeFiles, ChangeNote};
 use crate::graph::WorkspaceGraph;
 use crate::history::{HistoryDigest, HistoryProvider, ReleaseRefs};
 use crate::id::PkgId;
@@ -287,6 +288,17 @@ pub enum PlanError {
         /// The offending target.
         target: String,
     },
+    /// A change file (§9.4, ADR-0028) names a package the workspace
+    /// does not know (`E-PLAN-CHANGE-FILE`) — the strict input
+    /// discipline of `E-CFG-UNKNOWN-KEY` applied to the change-file
+    /// layer: a typo'd name refuses the plan instead of silently
+    /// dropping the file's bump and note.
+    ChangeFilePackage {
+        /// The change file carrying the unknown name.
+        file: String,
+        /// The unknown package name.
+        package: String,
+    },
 }
 
 impl PlanError {
@@ -297,6 +309,7 @@ impl PlanError {
             Self::ReleaseAsVersion { .. } => "E-PLAN-RELEASE-AS",
             Self::Unrewritable { .. } => "E-PLAN-UNREWRITABLE",
             Self::MaintenanceLine { .. } => "E-PLAN-MAINTENANCE",
+            Self::ChangeFilePackage { .. } => "E-PLAN-CHANGE-FILE",
         }
     }
 }
@@ -333,15 +346,38 @@ impl std::fmt::Display for PlanError {
                  breaking work on the default branch or force it with `Release-As` (the \
                  explicit escape hatch)"
             ),
+            Self::ChangeFilePackage { file, package } => write!(
+                f,
+                "[E-PLAN-CHANGE-FILE] change file `{file}` names `{package}`, which this \
+                 workspace does not know — change files may only name discovered packages; \
+                 check the name against `halyard plan --format json`'s release and skip rows"
+            ),
         }
     }
 }
 
-impl std::error::Error for PlanError {}
+impl std::error::Error for PlanError {
+    /// The structured cause chain, where one exists (the
+    /// `EditFailure`/`LockfileFailure` convention): the
+    /// [`PlanError::Unrewritable`] rewriter detail is a real inner
+    /// error and is surfaced for programmatic consumers instead of
+    /// living only in the flattened Display text.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unrewritable { detail, .. } => Some(detail),
+            Self::Cycle { .. }
+            | Self::ReleaseAsVersion { .. }
+            | Self::MaintenanceLine { .. }
+            | Self::ChangeFilePackage { .. } => None,
+        }
+    }
+}
 
 /// The planner's immutable input (§4): discovered workspace, the
 /// materialized history between HEAD and every package's release base,
-/// and the resolved per-package release refs.
+/// the resolved per-package release refs and the parsed change files
+/// (§9.4, ADR-0028 — pure data like the refs; the shell parses
+/// `.halyard/changes/*.md`, the planner reads it).
 #[derive(Clone, Copy)]
 pub struct Snapshot<'a> {
     /// The discovered workspace (packages, groups, links).
@@ -351,6 +387,10 @@ pub struct Snapshot<'a> {
     pub history: &'a dyn HistoryProvider,
     /// Per-package release bases (§8.2); `None` = initial release.
     pub refs: &'a ReleaseRefs,
+    /// The parsed change files (§9.4, ADR-0028): per-package explicit
+    /// bumps and notes. Empty input plans exactly as a repo without
+    /// change files.
+    pub change_files: &'a ChangeFiles,
 }
 
 /// Plans one release (§4, appendix A.1).
@@ -360,7 +400,9 @@ pub struct Snapshot<'a> {
 /// [`PlanError::Cycle`] when the workspace has a non-dev dependency
 /// cycle, [`PlanError::ReleaseAsVersion`] for unusable `Release-As`
 /// footers, [`PlanError::Unrewritable`] when a crossed requirement
-/// cannot be rewritten under the configured policy.
+/// cannot be rewritten under the configured policy,
+/// [`PlanError::ChangeFilePackage`] when a change file names a package
+/// the workspace does not know.
 pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError> {
     let ws = snapshot.workspace;
     let digest = snapshot.history.digest();
@@ -368,6 +410,8 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     let order = graph.topo_order().map_err(|e| match e {
         crate::graph::GraphError::Cycle { rendered, .. } => PlanError::Cycle { rendered },
     })?;
+
+    validate_change_files(ws, snapshot)?;
 
     let mut state = State {
         bumps: vec![Bump::None; ws.packages().len()],
@@ -398,40 +442,11 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
             });
             continue;
         };
-        let from = pkg.version.clone().unwrap_or_else(zero_version);
-        let bump = release_bump(&from, target, state.bump(pkg.id));
-        let tag = effective_template(ws, pkg, cfg).render(
-            name,
-            target,
-            pkg.ecosystem.resolve(ws.interner()),
-        );
-        let raw_reasons = state.reasons(pkg.id);
-        let reasons: Vec<PlanReason> = raw_reasons
-            .iter()
-            .map(|reason| wire_reason(reason, ws))
-            .collect();
-        let changelog = Some(release_changelog(pkg, target, raw_reasons, digest, cfg));
-        let registry = match pkg.ecosystem {
-            Ecosystem::Cargo => cfg.publish_cargo_registry.clone(),
-            _ => cfg.publish_npm_registry.clone(),
-        };
-        releases.push(PlanRelease {
-            package: name.to_owned(),
-            ecosystem: pkg.ecosystem.resolve(ws.interner()).to_owned(),
-            from: from.to_string(),
-            to: target.to_string(),
-            bump,
-            tag,
-            reasons,
-            changelog,
-            publish: Some(PlanPublish {
-                registry,
-                enabled: pkg.publishable && cfg.publish_enabled,
-            }),
-        });
+        let (row, version_edit) = release_row(ws, pkg, target, &state, digest, cfg, snapshot);
+        releases.push(row);
         // Own version site (inherited sites dedupe through the keyed map).
-        if let Some(site) = &pkg.version_site {
-            add_edit(&mut edits, site, target.to_string());
+        if let Some((site, text)) = version_edit {
+            add_edit(&mut edits, &site, text);
         }
     }
     for (site, text) in rewrites {
@@ -472,6 +487,63 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     Ok(doc)
 }
 
+/// Assembles one release row (§5.8): version pair, bump, tag, wire
+/// reasons, the merged changelog preview (the package's change-file
+/// notes included) and the publish decision — plus the package's own
+/// version-site edit, returned separately so the caller keeps the edit
+/// map (inherited sites dedupe through the keyed map).
+fn release_row(
+    ws: &Workspace,
+    pkg: &Package,
+    target: &Version,
+    state: &State,
+    digest: &HistoryDigest,
+    cfg: &PlanConfig,
+    snapshot: &Snapshot<'_>,
+) -> (PlanRelease, Option<(ManifestSite, String)>) {
+    let name = pkg_name(ws, pkg);
+    let from = pkg.version.clone().unwrap_or_else(zero_version);
+    let bump = release_bump(&from, target, state.bump(pkg.id));
+    let tag =
+        effective_template(ws, pkg, cfg).render(name, target, pkg.ecosystem.resolve(ws.interner()));
+    let raw_reasons = state.reasons(pkg.id);
+    let reasons: Vec<PlanReason> = raw_reasons
+        .iter()
+        .map(|reason| wire_reason(reason, ws))
+        .collect();
+    let changelog = Some(release_changelog(
+        pkg,
+        target,
+        raw_reasons,
+        digest,
+        cfg,
+        snapshot.change_files.notes_for(name),
+    ));
+    let registry = match pkg.ecosystem {
+        Ecosystem::Cargo => cfg.publish_cargo_registry.clone(),
+        _ => cfg.publish_npm_registry.clone(),
+    };
+    let row = PlanRelease {
+        package: name.to_owned(),
+        ecosystem: pkg.ecosystem.resolve(ws.interner()).to_owned(),
+        from: from.to_string(),
+        to: target.to_string(),
+        bump,
+        tag,
+        reasons,
+        changelog,
+        publish: Some(PlanPublish {
+            registry,
+            enabled: pkg.publishable && cfg.publish_enabled,
+        }),
+    };
+    let edit = pkg
+        .version_site
+        .clone()
+        .map(|site| (site, target.to_string()));
+    (row, edit)
+}
+
 /// Per-package planning state (bumps, forced versions, reason chains).
 /// All slots are addressed by [`PkgId`] through checked accessors — the
 /// vectors are sized to the package count at construction, so an
@@ -510,6 +582,15 @@ impl State {
     fn set_forced(&mut self, id: PkgId, version: Version) {
         if let Some(slot) = self.forced.get_mut(id.to_usize()) {
             *slot = Some(version);
+        }
+    }
+
+    /// Overwrites the bump of `id` with the change-file explicit level
+    /// (§9.4, ADR-0028) — a replacement, not a raise: the explicit
+    /// input wins over the commit-derived level in both directions.
+    fn set_explicit(&mut self, id: PkgId, bump: Bump) {
+        if let Some(slot) = self.bumps.get_mut(id.to_usize()) {
+            *slot = bump;
         }
     }
 
@@ -597,6 +678,46 @@ fn direct_bumps(
         if initial && released_commits > 0 {
             state.push_reason(id, Reason::InitialRelease);
         }
+        // The §9.4 change-file explicit bump (ADR-0028) replaces the
+        // commit-derived level outright (the precedence: `Release-As` >
+        // change file > conventional commits > cascade) — the escape
+        // hatch for squash-merge repos whose titles carry no signal.
+        // The reason stays in the chain (it documents the explicit
+        // input); the cascade exempts the package on its own (the
+        // monotone guard reads the replaced slot, and every explicit
+        // level is at least `Patch`).
+        if let Some(entry) = snapshot.change_files.bump_of(name) {
+            state.set_explicit(id, entry.bump);
+            state.push_reason(
+                id,
+                Reason::Changeset {
+                    file: entry.file.clone().into(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// §9.4 input validation (ADR-0028): every package a change file names
+/// must exist in the workspace — the strict-input discipline of
+/// `E-CFG-UNKNOWN-KEY` applied to the change-file layer. Known but
+/// release-disabled names skip silently (the skip wins over every bump
+/// source); only a name the workspace never heard of refuses.
+fn validate_change_files(ws: &Workspace, snapshot: &Snapshot<'_>) -> Result<(), PlanError> {
+    let names: BTreeSet<&str> = ws.packages().iter().map(|p| pkg_name(ws, p)).collect();
+    for name in snapshot.change_files.names() {
+        if names.contains(name) {
+            continue;
+        }
+        let file = snapshot
+            .change_files
+            .bump_of(name)
+            .map_or(String::new(), |entry| entry.file.clone());
+        return Err(PlanError::ChangeFilePackage {
+            file,
+            package: name.to_owned(),
+        });
     }
     Ok(())
 }
@@ -1176,31 +1297,40 @@ fn default_changelog_file(pkg: &Package) -> String {
 /// One release's changelog contract (§5.8): the configured file, or the
 /// §6.1 single-package default — the adapters leave `changelog` unset
 /// today, so the default keeps the §9.4 chain fed on zero-config repos.
+/// The package's change-file notes (ADR-0028) merge into the preview so
+/// every downstream consumer (the §11.3 PR body, the CHANGELOG.md write,
+/// the §11.1 `create_release` payload through
+/// `render_release_notes_for_version`) sees the same merged text.
 fn release_changelog(
     pkg: &Package,
     target: &Version,
     reasons: &[Reason],
     digest: &HistoryDigest,
     cfg: &PlanConfig,
+    notes: &[ChangeNote],
 ) -> PlanChangelog {
     PlanChangelog {
         file: pkg
             .changelog
             .as_ref()
             .map_or_else(|| default_changelog_file(pkg), ToString::to_string),
-        entry_md: render_entry(target, reasons, digest, cfg),
+        entry_md: render_entry(target, reasons, digest, cfg, notes),
     }
 }
 
 /// Renders one release's changelog preview (§9.4 keep-a-changelog subset):
-/// breaking changes first, then features, fixes and performance notes.
-/// Hidden types (per config) are dropped; output is deterministic (§5.6
-/// reason order is the emit order).
+/// breaking changes first, then features, fixes and performance notes,
+/// then the change-file notes (ADR-0028) verbatim — one blank-line
+/// separated block per note, in path order, no invented headings (no
+/// fabrication). Hidden types (per config) are dropped; output is
+/// deterministic (§5.6 reason order is the emit order, notes are the
+/// record order).
 fn render_entry(
     version: &Version,
     reasons: &[Reason],
     digest: &HistoryDigest,
     cfg: &PlanConfig,
+    notes: &[ChangeNote],
 ) -> String {
     let by_oid: BTreeMap<&str, usize> = digest
         .commits
@@ -1262,6 +1392,11 @@ fn render_entry(
             out.push_str(line);
             out.push('\n');
         }
+    }
+    for note in notes {
+        out.push('\n');
+        out.push_str(&note.body);
+        out.push('\n');
     }
     out
 }
