@@ -53,6 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry: "crates.io".to_owned(),
         manifest_dir: "crates/demo".to_owned(),
         manifest: "crates/demo/Cargo.toml".to_owned(),
+        access: None,
+        provenance: None,
     };
 
     // The live resolution: the exchange fires once, the credential
