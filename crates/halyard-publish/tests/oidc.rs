@@ -34,6 +34,8 @@ fn crates_io() -> PublishTarget {
         registry: "crates.io".to_owned(),
         manifest_dir: "crates/p1".to_owned(),
         manifest: "crates/p1/Cargo.toml".to_owned(),
+        access: None,
+        provenance: None,
     }
 }
 
@@ -46,6 +48,8 @@ fn npm() -> PublishTarget {
         registry: "npm".to_owned(),
         manifest_dir: "packages/pkg".to_owned(),
         manifest: "packages/pkg/package.json".to_owned(),
+        access: None,
+        provenance: None,
     }
 }
 
@@ -59,6 +63,8 @@ fn custom_registry() -> PublishTarget {
         registry: "corp".to_owned(),
         manifest_dir: "crates/p2".to_owned(),
         manifest: "crates/p2/Cargo.toml".to_owned(),
+        access: None,
+        provenance: None,
     }
 }
 
