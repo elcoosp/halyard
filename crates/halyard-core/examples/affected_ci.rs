@@ -1,8 +1,9 @@
-//! The CI-selector adapters (M10 step 2, ADR-0034): the affected
-//! selection rendered in the three CI systems' own grammars — offline,
-//! over a hand-built `lib ← app` workspace (no git, no network). Each
-//! adapter's output is the exact argv/one-line expression the CI step
-//! consumes; an empty selection renders nothing (the honest no-op).
+//! The CI-selector adapters (M10 step 2, ADR-0034; the matrix-jobs
+//! adapters per ADR-0035): the affected selection rendered in the five
+//! CI systems' own grammars — offline, over a hand-built `lib ← app`
+//! workspace (no git, no network). Each adapter's output is the exact
+//! argv/one-line expression the CI step consumes; an empty selection
+//! renders nothing (the honest no-op).
 //!
 //! Run: `cargo run -p halyard-core --example affected_ci`
 
@@ -26,7 +27,7 @@ fn main() {
         },
     ];
 
-    for system in ["turbo", "nx", "bazel"] {
+    for system in ["turbo", "nx", "bazel", "gha", "gitlab"] {
         if let Some(adapter) = ci_selector_adapter(system) {
             println!(
                 "{} → {}",
@@ -40,6 +41,6 @@ fn main() {
     let empty_render =
         ci_selector_adapter("turbo").is_none_or(|adapter| adapter.render(&[], &[]).is_empty());
     println!(
-        "empty selection → renders nothing: {empty_render} (no output, exit 0 — the CI step          skips itself)"
+        "empty selection → renders nothing: {empty_render} (no output, exit 0 — the CI step skips itself)"
     );
 }
