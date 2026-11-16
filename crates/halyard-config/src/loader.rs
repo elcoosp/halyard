@@ -62,7 +62,13 @@ fn section_keys(path: &str) -> Option<&'static [&'static str]> {
     match path {
         "" => Some(ROOT_KEYS),
         "repo" => Some(&["base_branch", "tag_style"]),
-        "versioning" => Some(&["policy", "pre_major", "cascade"]),
+        "versioning" => Some(&[
+            "policy",
+            "pre_major",
+            "cascade",
+            "channel",
+            "channel_branches",
+        ]),
         "versioning.pre_major" => Some(&["breaking", "feat"]),
         "commits" => Some(&["types", "merge_policy", "initial_release"]),
         "commits.initial_release" => Some(&["max_commits"]),
