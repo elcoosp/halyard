@@ -124,6 +124,12 @@ pub fn check(
     // `E-PUB-AUTH` diagnosis before any run does.
     checks.push(publish_auth_check());
     checks.push(publish_oidc_check());
+    // The npm provenance-runtime verdict (ADR-0033): which supported
+    // cloud CI runtime was detected — the gate an explicit
+    // `publish.npm.provenance = true` live npm publish runs under.
+    // Detection is information, never a failure: absence is `ok` with
+    // the consequence named.
+    checks.push(publish_provenance_check());
 
     // History engine smoke check: the walk must succeed on this repo
     // (this is the doctor's cheapest "will plan() work" signal).
@@ -313,6 +319,8 @@ fn publish_auth_check() -> Check {
             registry: "crates.io".to_owned(),
             manifest_dir: String::new(),
             manifest: String::new(),
+            access: None,
+            provenance: None,
         },
         halyard_publish::PublishTarget {
             package: String::new(),
@@ -321,6 +329,8 @@ fn publish_auth_check() -> Check {
             registry: "npm".to_owned(),
             manifest_dir: String::new(),
             manifest: String::new(),
+            access: None,
+            provenance: None,
         },
     ];
     match halyard_publish::auth_summary(&auth, &targets) {
@@ -390,6 +400,46 @@ fn publish_oidc_check() -> Check {
             name: "publish-oidc".to_owned(),
             ok: false,
             detail: error.to_string(),
+        },
+    }
+}
+
+/// The npm provenance-runtime check (ADR-0033): which supported cloud
+/// CI runtime was detected — the GitHub Actions OIDC context (npm's
+/// documented `id-token: write` must) or the GitLab CI/CD marker
+/// (`GITLAB_CI`, VERIFIED) — versus the laptop shape. Detection is
+/// information, never a failure: absence is `ok` with the gate's
+/// consequence named, so a `publish.npm.provenance = true` workspace
+/// sees the refusal before the run does.
+fn publish_provenance_check() -> Check {
+    let reader = |name: &str| std::env::var(name).ok();
+    let oidc_present =
+        halyard_publish::gha_oidc_context(&reader).is_ok_and(|context| context.is_some());
+    let runtime = halyard_publish::provenance_runtime_detected(oidc_present, &reader);
+    match runtime {
+        halyard_publish::ProvenanceRuntime::CloudDetected => {
+            let source = if oidc_present {
+                "GitHub Actions OIDC context"
+            } else {
+                "GitLab CI/CD markers"
+            };
+            Check {
+                name: "publish-provenance".to_owned(),
+                ok: true,
+                detail: format!(
+                    "supported cloud runtime detected ({source}) — an explicit \
+                     `publish.npm.provenance = true` live npm publish may run"
+                ),
+            }
+        }
+        halyard_publish::ProvenanceRuntime::NotDetected => Check {
+            name: "publish-provenance".to_owned(),
+            ok: true,
+            detail: "no supported cloud runtime detected (the laptop shape) — an explicit \
+                     `publish.npm.provenance = true` live npm publish refuses (E-PUB-AUTH); run \
+                     on a hosted runner with `id-token: write`, set `provenance = false`, or \
+                     leave the key unset to let trusted publishing decide"
+                .to_owned(),
         },
     }
 }
