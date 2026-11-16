@@ -250,3 +250,53 @@ fn affected_ci_bazel_renders_the_rdeps_query() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_gha_renders_the_matrix_json_array() -> Result<(), BoxError> {
+    // docs.github.com (VERIFIED): the documented matrix-consumption
+    // shape is the JSON array written to a job output and fed to
+    // `fromJSON` inside the downstream `strategy.matrix`. The closure
+    // is name-sorted; the consumer names the dimension.
+    let fx = two_package_fixture("cli-affected-ci-gha")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "gha"])?;
+    assert!(ok, "the gha adapter renders: {text}");
+    assert!(
+        text.contains(r#"["app","lib"]"#),
+        "the affected closure as the one-line JSON array: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn affected_ci_gha_empty_selection_prints_nothing() -> Result<(), BoxError> {
+    // The honest no-op carries over: a fully-tagged repo renders no
+    // adapter lines (exit 0) in every CI grammar.
+    let mut fx = two_package_fixture("cli-affected-ci-gha-empty")?;
+    fx.tag_annotated("lib-v0.1.1", "lib 0.1.1")?;
+    fx.tag_annotated("app-v0.1.1", "app 0.1.1")?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "gha"])?;
+    assert!(ok, "an empty selection is still a successful run: {text}");
+    assert_eq!(text.trim(), "", "no output — the CI step skips itself");
+    Ok(())
+}
+
+#[test]
+fn affected_ci_gitlab_renders_the_matrix_hashes() -> Result<(), BoxError> {
+    // docs.gitlab.com/ci/yaml (VERIFIED): `parallel:matrix` is "an
+    // array of hashes of variables" — "each instance of the job" runs
+    // "with different variable values". One `- HALYARD_PKG: <name>`
+    // hash per affected package; the consumer pastes the lines under
+    // `parallel: matrix:` and reads `$HALYARD_PKG` in the script.
+    let fx = two_package_fixture("cli-affected-ci-gitlab")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "gitlab"])?;
+    assert!(ok, "the gitlab adapter renders: {text}");
+    assert!(
+        text.contains("- HALYARD_PKG: app") && text.contains("- HALYARD_PKG: lib"),
+        "one matrix hash per affected package, name-sorted: {text}"
+    );
+    Ok(())
+}
