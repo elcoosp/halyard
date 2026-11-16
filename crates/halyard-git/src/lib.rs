@@ -219,6 +219,16 @@ pub struct GitHistoryOptions {
     pub layout_hash: String,
     /// Config hash (`halyard-config`) — a cache-key component (§8.7).
     pub config_hash: String,
+    /// Walk every package from one **explicit ref** instead of its
+    /// release base (§16.3/M10, the affected-package selector's
+    /// `halyard affected --base origin/main` shape). The ref resolves
+    /// through gix's reference-search rules (branch, remote-tracking
+    /// ref, tag — annotated tags peel) and fails closed `E-GIT-REF`
+    /// when it cannot be resolved; the digest's bases carry the ref
+    /// name so the report can show what was selected against. Per-commit
+    /// cache entries stay valid: the tree diff of a commit does not
+    /// depend on where a walk starts.
+    pub base_override: Option<String>,
 }
 
 /// The materialized history of one repository (M2): head, per-package
@@ -315,6 +325,21 @@ impl GitHistory {
         };
         let mut generations = refs::Generations::new(&repo);
         let (base_refs, tags) = refs::resolve_bases(&repo, head, ws, &mut generations)?;
+        // The §16.3/M10 base override: one explicit ref replaces every
+        // package's release base for this walk (the affected-package
+        // selector's `--base` shape). Fail-closed on an unresolvable
+        // ref — a guessed base would misattribute the pending work.
+        let base_refs: Vec<Option<BaseRef>> = match options.base_override.as_deref() {
+            Some(name) => {
+                let oid = resolve_named_ref(&repo, name)?;
+                let base = BaseRef {
+                    tag: halyard_core::BString::from(name.as_bytes().to_vec()),
+                    oid: core_oid_of(oid),
+                };
+                vec![Some(base); ws.packages().len()]
+            }
+            None => base_refs,
+        };
         let base_oids: Vec<Option<ObjectId>> = base_refs
             .iter()
             .map(|base| {
@@ -410,6 +435,39 @@ fn core_oid_of(oid: ObjectId) -> Oid {
         Oid::from_hex(b"0000000000000000000000000000000000000000")
             .unwrap_or_else(|| unreachable!("static fallback hex is valid"))
     })
+}
+
+/// Resolves one explicitly named ref (the `--base` override) to its
+/// peeled commit. The lookup follows gix's reference-search rules
+/// (branch, remote-tracking ref, tag), so `main`, `origin/main` and a
+/// release tag all resolve; annotated tags peel to the commit.
+///
+/// # Errors
+///
+/// [`GitError::RefScan`] when no reference of that name exists (the
+/// message names the ref — the refusal must teach the fix), or
+/// [`GitError::Object`] when the target cannot be peeled or read.
+fn resolve_named_ref(repo: &gix::Repository, name: &str) -> Result<ObjectId, GitError> {
+    let Some(mut reference) = repo
+        .try_find_reference(name)
+        .map_err(|e| GitError::RefScan {
+            message: format!("the reference database cannot be read while resolving {name}: {e}"),
+        })?
+    else {
+        return Err(GitError::RefScan {
+            message: format!(
+                "the requested --base ref `{name}` cannot be resolved in this repository; \
+                 pass a branch, a remote-tracking ref (`origin/main`) or a tag that exists \
+                 locally (a shallow clone may need `halyard fetch` first)"
+            ),
+        });
+    };
+    reference
+        .peel_to_id()
+        .map_err(|e| GitError::Object {
+            message: format!("the --base ref {name} cannot be peeled to a commit: {e}"),
+        })
+        .map(gix::Id::detach)
 }
 
 /// The tree oid of one commit.
