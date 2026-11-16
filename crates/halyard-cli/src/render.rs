@@ -904,6 +904,75 @@ pub fn check_pending_human(plan: &Plan) -> String {
     out
 }
 
+/// The lint finding's human wording (one line, the verdict plus its
+/// did-you-mean or its ignore reason).
+fn check_commit_finding_text(finding: &check::CommitFinding) -> String {
+    match finding {
+        check::CommitFinding::Drives { bump } => {
+            format!("drives {}", check::bump_str(*bump))
+        }
+        check::CommitFinding::MappedNone => "ignored (mapped to no bump)".to_owned(),
+        check::CommitFinding::Typo { kind, closest } => {
+            format!("TYPO: {kind:?} is not a known type — did you mean {closest:?}? (E-CLI-COMMIT)")
+        }
+        check::CommitFinding::NotConventional { reason } => {
+            format!("ignored (not conventional: {reason})")
+        }
+    }
+}
+
+/// The `check --commits` findings as a human table (§16.2's commits
+/// half): one row per (package, pending commit), discovery order with
+/// walk order inside a package.
+pub fn check_commits_human(rows: &[check::CommitRow], pending: bool) -> String {
+    let mut out = String::new();
+    if rows.is_empty() {
+        let _ = writeln!(
+            out,
+            "no pending commits (every package sits at its release base)"
+        );
+        return out;
+    }
+    let _ = writeln!(out, "pending commits: {} row(s)", rows.len());
+    for row in rows {
+        let short = row.oid.get(..7).unwrap_or(row.oid.as_str());
+        let _ = writeln!(
+            out,
+            "  {p} {short} {s:?}: {f}",
+            p = row.package,
+            s = row.subject,
+            f = check_commit_finding_text(&row.finding)
+        );
+    }
+    if pending {
+        let _ = writeln!(out, "pending: yes (the driving rows above plan a release)");
+    } else {
+        let _ = writeln!(out, "pending: no");
+    }
+    out
+}
+
+/// The `check --commits` findings as a GHA job summary.
+pub fn check_commits_gha(rows: &[check::CommitRow], pending: bool) -> String {
+    let mut out = String::from("## halyard check (commits)\n\n");
+    if rows.is_empty() {
+        let _ = writeln!(out, "- no pending commits");
+        return out;
+    }
+    for row in rows {
+        let short = row.oid.get(..7).unwrap_or(row.oid.as_str());
+        let _ = writeln!(
+            out,
+            "- {p} `{short}` `{s}`: {f}",
+            p = row.package,
+            s = row.subject,
+            f = check_commit_finding_text(&row.finding)
+        );
+    }
+    let _ = writeln!(out, "- pending: {}", if pending { "yes" } else { "no" });
+    out
+}
+
 /// The `check --pr-title` verdict as a GHA job summary.
 pub fn check_gha(title: &str, lint: &TitleLint, predictions: &[check::Prediction]) -> String {
     let mut out = String::from("## halyard check\n\n");
