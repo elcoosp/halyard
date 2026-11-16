@@ -20,7 +20,9 @@ use clap_complete::{Shell, generate};
 use miette::Diagnostic;
 
 use crate::profile::Profiler;
+use halyard_changelog::load_change_files;
 use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, resolve};
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::planner::{PlanConfig, Snapshot, plan as core_plan};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
@@ -2484,14 +2486,49 @@ fn plan_from_context(
     profiler.span("plan", || {
         let bases = context.history.digest().bases.clone();
         let refs = ReleaseRefs::from_bases(bases);
+        let changes = change_files()?;
         let snapshot = Snapshot {
             workspace: &context.discovery.workspace,
             history: &context.history,
             refs: &refs,
+            change_files: &changes,
         };
         let plan_config: PlanConfig = context.config.plan_config();
         core_plan(&snapshot, &plan_config).map_err(|e| CliError::new(e.code(), e.to_string()))
     })
+}
+
+/// Scans `.halyard/changes/*.md` under the repo root (§9.4, ADR-0028):
+/// the shell owns the directory scan and the file reads, the changelog
+/// grammar owns the parse, and the result rides [`Snapshot`] into the
+/// pure planner. No directory (or an empty one) is the zero-config
+/// shape — an empty input plans exactly as before; any malformed file
+/// refuses the run (`E-CHLOG-CHANGE-FILE`, fail closed).
+fn change_files() -> Result<ChangeFiles, CliError> {
+    let mut paths: Vec<PathBuf> = match std::fs::read_dir(".halyard/changes") {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+            .collect(),
+        // No change-file directory is the normal zero-config repo.
+        Err(_) => Vec::new(),
+    };
+    paths.sort();
+    let mut files = Vec::new();
+    for path in &paths {
+        let bytes = std::fs::read(path).map_err(|e| {
+            CliError::new(
+                "E-CHLOG-CHANGE-FILE",
+                format!(
+                    "[E-CHLOG-CHANGE-FILE] change file {} cannot be read: {e}",
+                    path.display()
+                ),
+            )
+        })?;
+        files.push((path.to_string_lossy().into_owned(), bytes));
+    }
+    load_change_files(files).map_err(|e| CliError::new(e.code(), e.to_string()))
 }
 
 /// The `apply` command (M3.6): plan → edit set → adapter patchers →
