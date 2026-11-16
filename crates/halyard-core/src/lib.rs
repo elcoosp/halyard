@@ -83,7 +83,7 @@ pub use plan::{
     Bump, PLAN_SCHEMA_V1, Plan, PlanChangelog, PlanEdit, PlanPatch, PlanPublish, PlanReason,
     PlanRelease, PlanSkip,
 };
-pub use planner::{CascadeMode, GroupMode, PlanConfig, PlanError, Snapshot, plan};
+pub use planner::{CascadeMode, GroupMode, MaintenanceLine, PlanConfig, PlanError, Snapshot, plan};
 pub use reason::{CascadeWhy, Oid, Reason, ReasonChain, VersionResolution};
 pub use release_state::{
     PackageTagState, PendingRelease, TagState, pending_releases, reconcile_tags,
