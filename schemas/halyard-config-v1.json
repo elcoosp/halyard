@@ -462,6 +462,23 @@
           ],
           "description": "Cascade policy for dependents of bumped packages (§10.4)."
         },
+        "channel": {
+          "description": "Prerelease channel (§10.3, ADR-0025): one semver identifier\n(`rc`, `beta`, `next-1`); every planned release becomes\n`{version}-{channel}.{n}` until the key is removed, which\npromotes the prerelease manifest to its own stable triple.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channel_branches": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Branch-bound channels (§10.3 \"next branch ⇒ rc\", ADR-0025):\nbranch name → channel; when HEAD is on the branch, its binding\nwins over the unbound `channel` default.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "policy": {
           "anyOf": [
             {
