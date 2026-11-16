@@ -215,7 +215,8 @@ crates/
                          size-gate, corpus, gen-repo, bench-competitors,
                          discover-diff, git-diff, replay, bench-public, pgo
   halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
-                         migrate/explain/status/graph/doctor/schema/completions)
+                         migrate/explain/status/graph/doctor/schema/completions/
+                         forge-smoke)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
@@ -280,6 +281,7 @@ cargo run -p halyard-changelog --example change_file
 cargo run -p halyard-config --example init_scaffold
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-publish --example publish_auth
+cargo run -p halyard-publish --example publish_oidc
 cargo run -p halyard-forge --example release_lifecycle
 cargo run -p halyard-forge --example release_machine
 cargo run -p halyard-forge --example pr_preview
