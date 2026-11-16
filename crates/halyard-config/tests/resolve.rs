@@ -203,3 +203,209 @@ fn resolved_types_are_exported() -> Result<(), Box<dyn Error>> {
     assert_eq!(resolved.forge_kind, halyard_config::ForgeKind::Github);
     Ok(())
 }
+
+// ---------------------------------------------------------------------
+// Prerelease channel (§10.3, M5.6 step 1): `[versioning].channel` is
+// validated at resolve time, merges low→high, feeds the plan config and
+// the cache hash.
+
+fn versioning_with_channel(channel: Option<&str>) -> HalyardConfig {
+    HalyardConfig {
+        versioning: Some(halyard_config::model::VersioningCfg {
+            policy: None,
+            pre_major: None,
+            cascade: None,
+            channel: channel.map(str::to_owned),
+            channel_branches: None,
+        }),
+        ..HalyardConfig::default()
+    }
+}
+
+#[test]
+fn channel_resolves_into_the_plan_config() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_channel(Some("rc"))),
+    ])?;
+    let channel = resolved
+        .prerelease_channel
+        .as_ref()
+        .unwrap_or_else(|| unreachable!("channel resolves"));
+    assert_eq!(channel.as_str(), "rc");
+    let plan_config = resolved.plan_config();
+    assert!(plan_config.prerelease_channel.is_some());
+    // Absence stays absence: the default plan config has no channel.
+    let plain = resolve(&[])?;
+    assert!(plain.prerelease_channel.is_none());
+    assert!(plain.plan_config().prerelease_channel.is_none());
+    Ok(())
+}
+
+#[test]
+fn invalid_channel_value_is_rejected_at_resolve() {
+    let err = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_channel(Some("rc."))),
+    ])
+    .err()
+    .unwrap_or_else(|| unreachable!("invalid channel must fail"));
+    assert_eq!(err.code(), "E-CFG-CHANNEL");
+    assert_eq!(err.code(), ConfigError::CHANNEL_CODE);
+}
+
+#[test]
+fn channel_merges_low_to_high() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_channel(Some("beta"))),
+        Layer::PackageMetadata(versioning_with_channel(Some("rc"))),
+    ])?;
+    assert_eq!(
+        resolved
+            .prerelease_channel
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("rc"),
+        "the higher layer wins"
+    );
+    // A lower-layer channel survives a higher layer that does not set one.
+    let survivor = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_channel(Some("beta"))),
+        Layer::PackageMetadata(HalyardConfig::default()),
+    ])?;
+    assert_eq!(
+        survivor
+            .prerelease_channel
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("beta")
+    );
+    Ok(())
+}
+
+#[test]
+fn config_hash_includes_the_channel() -> Result<(), Box<dyn Error>> {
+    let plain = config_hash(&resolve(&[])?);
+    let with_channel = config_hash(&resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_channel(Some("rc"))),
+    ])?);
+    assert_ne!(
+        plain, with_channel,
+        "a channel change invalidates the cache key (§8.7)"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Branch-bound channels (§10.3 "next branch ⇒ rc", ADR-0025 step 2):
+// `channel_branches` binds channels to branch names; the resolution is
+// a pure function of the checked-out branch.
+
+fn versioning_with_bindings(bindings: &[(&str, &str)]) -> HalyardConfig {
+    HalyardConfig {
+        versioning: Some(halyard_config::model::VersioningCfg {
+            policy: None,
+            pre_major: None,
+            cascade: None,
+            channel: None,
+            channel_branches: Some(
+                bindings
+                    .iter()
+                    .map(|(b, c)| ((*b).to_owned(), (*c).to_owned()))
+                    .collect(),
+            ),
+        }),
+        ..HalyardConfig::default()
+    }
+}
+
+#[test]
+fn branch_binding_resolves_and_validates() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_bindings(&[("next", "rc")])),
+    ])?;
+    let channel = resolved
+        .channel_for_branch(Some("next"))
+        .unwrap_or_else(|| unreachable!("the branch binding resolves"));
+    assert_eq!(channel.as_str(), "rc");
+    // Other branches have no binding.
+    assert!(resolved.channel_for_branch(Some("main")).is_none());
+    // A detached/unborn HEAD has none either.
+    assert!(resolved.channel_for_branch(None).is_none());
+    Ok(())
+}
+
+#[test]
+fn branch_binding_wins_over_the_default_channel() -> Result<(), Box<dyn Error>> {
+    let mut cfg = versioning_with_bindings(&[("next", "rc")]);
+    if let Some(versioning) = &mut cfg.versioning {
+        versioning.channel = Some("beta".to_owned());
+    }
+    let resolved = resolve(&[Layer::Defaults, Layer::File(cfg)])?;
+    assert_eq!(
+        resolved
+            .channel_for_branch(Some("next"))
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("rc"),
+        "the branch binding wins on its branch"
+    );
+    assert_eq!(
+        resolved
+            .channel_for_branch(Some("main"))
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("beta"),
+        "the unbound default fills the rest"
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_branch_binding_value_is_rejected_at_resolve() {
+    let err = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_bindings(&[("next", "rc.")])),
+    ])
+    .err()
+    .unwrap_or_else(|| unreachable!("invalid bound channel must fail"));
+    assert_eq!(err.code(), "E-CFG-CHANNEL");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("next"),
+        "the failing branch is named: {rendered}"
+    );
+}
+
+#[test]
+fn branch_bindings_merge_per_key_low_to_high() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_bindings(&[
+            ("next", "beta"),
+            ("lts", "alpha"),
+        ])),
+        Layer::PackageMetadata(versioning_with_bindings(&[("next", "rc")])),
+    ])?;
+    assert_eq!(
+        resolved
+            .channel_for_branch(Some("next"))
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("rc"),
+        "the higher layer's binding wins per key"
+    );
+    assert_eq!(
+        resolved
+            .channel_for_branch(Some("lts"))
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("alpha"),
+        "untouched keys survive the merge"
+    );
+    Ok(())
+}
