@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Changelog rendering (M3.5): keep-a-changelog style over a Plan, idempotent Unreleased insertion; Release-PR body rendering (M4.3a, §11.3)"
+description = "Changelog rendering (M3.5): keep-a-changelog style over a Plan, idempotent Unreleased insertion; Release-PR body rendering (M4.3a, §11.3); change-file grammar (ADR-0028, §9.4)"
 
 [dependencies]
 halyard-core = { workspace = true }
