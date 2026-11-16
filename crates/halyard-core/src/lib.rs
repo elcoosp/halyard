@@ -38,6 +38,8 @@
 //!   with the dev-cycle exemption (§6.6, M1.7).
 //! * [`affected`] — the affected-package selector: the pure
 //!   transitive-dependent closure over the reverse edges (§16.3, M10).
+//! * [`ci_selector`] — the CI-selector adapters: the selection rendered
+//!   in Turborepo/Nx/Bazel's own grammars (§16.3/M10 step 2, ADR-0034).
 //! * [`link`] — polyglot link rules (§6.5, M1.7).
 #![forbid(unsafe_code)]
 
@@ -46,6 +48,7 @@ pub mod bitset;
 pub mod bump;
 pub mod canonical;
 pub mod change_file;
+pub mod ci_selector;
 pub mod discover;
 pub mod edit;
 pub mod glob;
