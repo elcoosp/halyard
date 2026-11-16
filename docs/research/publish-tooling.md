@@ -260,6 +260,31 @@ shell identifier characters, so the variable is set through CI env
 maps (or `env -i`), never through `VAR=… cmd` — the probe used Python's
 environ.
 
+## npm-side provenance (M5.3-later candidate, VERIFIED 2026-11-16)
+
+The deferred ADR-0031 inventory item ("npm-side OIDC/provenance") was
+verified against pnpm's publish docs (pnpm.io/cli/publish, fetched
+2026-11-16, quotes verbatim):
+
+- *"Under trusted publishing, pnpm attaches provenance to a public
+  package from a public repository on its own."*
+- *"Use --no-provenance (or --provenance=false) to publish without it,
+  for example from a self-hosted runner."*
+- The `provenance` setting: *"Default: undefined"* / *"When unset,
+  trusted publishing decides"*; `PNPM_CONFIG_PROVENANCE` overrides the
+  configuration files, *"The command-line option takes precedence over
+  both."*
+
+Decision recorded: modern pnpm decides provenance itself under trusted
+publishing — the tool's own policy, gated on the workflow's
+`id-token: write` permission. halyard's spawn passes **neither**
+`--provenance` nor `--no-provenance` (I7: halyard injects no policy the
+tool already owns; forcing the flag would break private-package
+publishes, whose failure mode is the tool's own documented error). The
+npm-side candidate therefore closes as *resolved by upstream
+automation*, not as an halyard argv feature; the ADR-0031 inventory
+note is satisfied by this record.
+
 ## Remaining VERIFY items (open, like ADR-0017's)
 
 - `cargo publish --dry-run` without `--offline` reaches the network for
