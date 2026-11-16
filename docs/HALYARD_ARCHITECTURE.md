@@ -452,6 +452,31 @@ Conventional mapping (configurable): `feat`→minor, `fix`/`perf`→patch, any `
 ### 10.3 Prerelease channels
 `1.2.0-rc.3`, `-beta.n`, `-alpha.n`; promotion `rc → stable` drops suffix. Branch-bound channels (`next` branch ⇒ `rc`). Counter derived from existing tags — no state file.
 
+*(As-built note, 2026-11 (ADR-0025, M5.6 step 1): the channel policy ships
+as `[versioning].channel` — one semver identifier, validated at resolve
+time (`E-CFG-CHANNEL`) — and the planner applies it end-to-end:
+`materialize_versions` is train-aware (an active train = the release
+base tag is a prerelease; non-breaking steps are absorbed into the
+train's committed triple, a breaking step opens a new base),
+`promote_pending_stable` fills the promotion gap when the key is
+removed with nothing new landed, and `channelize_targets` derives the
+counter from the release base's and the manifest's own versions before
+requirement rewrites (dependent manifests carry the exact prerelease
+triple). `Release-As` targets are exempt; channels are parallel tracks,
+not an order (`rc.1` → `beta.1` is a legal switch); `config_hash`
+includes the channel. The tag phase and §11.1 reconciliation needed no
+changes — they already compare full semver versions. The algebra moved
+to `halyard-core::bump` (ADR-0008 precedent) with `halyard-version`
+re-exporting unchanged. Step 2 (same ADR): branch-bound channels ship
+as `[versioning].channel_branches = { next = "rc" }` — branch name →
+channel, validated at resolve time, merged per-key low→high; the shell
+resolves the checked-out branch (`GITHUB_HEAD_REF` wins, detached HEAD
+plans with the default) in `context()` *before* the cache key is
+computed, so the §8.7 `config_hash` carries the effective channel and
+`next` (bound `rc`) and `main` (stable) never share attributions. The
+`ResolvedConfig::channel_for_branch` resolution is pure — the caller
+owns the branch lookup.)*
+
 ### 10.4 Cascade (dependency-aware)
 Processed in **reverse topological order** with SCC handling:
 - Dependent `D` of bumped `U` is bumped (`patch` default) iff **(a)** `D`'s requirement on `U` no longer admits `U.new` (e.g. `^0.4` and `U` → `0.5.0`), or **(b)** `cascade = "always"` for normal deps of publishable crates (released artifact would otherwise embed a stale internal dep), or **(c)** group policy requires it.
@@ -719,6 +744,7 @@ tag_style   = "auto"                    # auto | "{name}-v{version}" | "v{versio
 policy      = "independent"             # independent | fixed | linked
 pre_major   = { breaking = "minor", feat = "patch" }   # (cargo-compatible)
 cascade     = "when-unsatisfied"        # always | when-unsatisfied | never
+channel     = "rc"                      # (unset) §10.3 prerelease channel; removing it promotes
 
 [commits]
 types.feat  = "minor"
