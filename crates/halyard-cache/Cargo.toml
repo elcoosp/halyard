@@ -35,10 +35,17 @@ criterion = { workspace = true }
 # Miri-only test scaffolding (tests/miri.rs): the real mmap syscalls are
 # outside Miri's isolated execution model, so the miri feature switches
 # tests (not the implementation) to the read()-backed path. Never
-# combined with `loom` in one build.
+# combined with `loom` in one build — machine-enforced by the
+# `compile_error!` guard in `src/lib.rs` (ADR-0030): run them as
+# separate builds, never `--features miri,loom`.
 miri = []
 # Loom model checking of the record/lock state machine (tests/loom.rs).
 loom = []
+# The CI gate feature (ADR-0030): the stable feature set this crate
+# contributes to `--features ci-bundle` workspace runs — deliberately
+# empty, because the crate's own features (`miri`, `loom`) are the
+# documented-exclusive manual/nightly lanes the bundle must exclude.
+ci-bundle = []
 
 [[bench]]
 name = "roundtrip"
