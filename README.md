@@ -63,10 +63,13 @@ surveys the repo, the engine plans a create-only write — the documented
 defaults exactly, plus the §16.1 one-file release workflow with
 `--github` — refusals carry `E-CFG-INIT` and never leave a
 half-scaffold)** — and the §16.3/M10 affected-package selector (`halyard
-affected [--base <ref>]`, ADR-0032: the CI question — which packages
-must rebuild and test? — answered as the pending-commit attribution
-closed over the workspace's reverse dependency edges, dev edges
-included, with an explicit-ref base for the PR-selection shape).** The
+affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 + ADR-0034/0035: the
+CI question — which packages must rebuild and test? — answered as the
+pending-commit attribution closed over the workspace's reverse
+dependency edges, dev edges included, with an explicit-ref base for
+the PR-selection shape and the selection rendered in the CI systems'
+own grammars — turbo, nx, bazel, GitHub Actions' matrix-output JSON
+array and GitLab's `parallel:matrix` hashes).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -253,6 +256,7 @@ cargo run -p halyard-core --example pending_releases
 cargo run -p halyard-core --example prerelease_channel
 cargo run -p halyard-core --example maintenance_line
 cargo run -p halyard-core --example affected_selection
+cargo run -p halyard-core --example affected_ci
 cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-conventional --example lint_title
 cargo run -p halyard-version --example bump_algebra
@@ -287,6 +291,7 @@ cargo run -p halyard-config --example init_scaffold
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-publish --example publish_auth
 cargo run -p halyard-publish --example publish_oidc
+cargo run -p halyard-publish --example publish_npm_options
 cargo run -p halyard-forge --example release_lifecycle
 cargo run -p halyard-forge --example release_machine
 cargo run -p halyard-forge --example pr_preview
