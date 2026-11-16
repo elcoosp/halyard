@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use miette::Diagnostic;
 
@@ -37,6 +37,8 @@ mod doctor;
 mod profile;
 mod publish_effect;
 mod render;
+
+use halyard_cli::man;
 
 /// Output format (§16.2 global flags).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -107,16 +109,18 @@ struct Cli {
     command: Command,
 }
 
-/// The v1 command surface (§16.2; the remaining commands —
-/// `action` — land with their
-/// milestones M4.x/M5 and are absent rather than stubbed; `apply` joined
+/// The v1 command surface (§16.2; the remaining commands — `bench`
+/// and the `action` glue — land with their milestones M4.x/M10+
+/// and are absent rather than stubbed; `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
 /// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
 /// (§8.8) in the smart-minimal-fetch slice, `publish` (§13, the
 /// M5.2 engine + the verified-argv spawn) in the publish slice,
 /// `migrate` (report, and with `--write` the §16.2 draft write) in the
-/// M4.7 slices and `init` (the §16.1 zero-config scaffold) in the
-/// ADR-0029 slice).
+/// M4.7 slices, `init` (the §16.1 zero-config scaffold) in the
+/// ADR-0029 slice, `affected` (the §16.3/M10 CI selector) in the
+/// ADR-0032 slice and `man` (the §16.2 shell-integration pages) in
+/// its session).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -263,13 +267,31 @@ enum Command {
         #[arg(long)]
         exit_code: bool,
     },
+    /// The affected-package selector (§16.3, M10 step 1, ADR-0032): the
+    /// packages a change touches — directly (pending commits since the
+    /// base) and transitively (dependents, dev-dependents included: the
+    /// CI selector counts every edge kind, unlike the §10.4 publish
+    /// order). The base is each package's release base; `--base`
+    /// selects against one explicit ref instead — the PR/CI selection
+    /// shape (`halyard affected --base origin/main`). Offline (I5).
+    Affected {
+        /// Attribute against an explicit ref (branch, remote-tracking
+        /// ref or tag) instead of the release bases; an unresolvable
+        /// ref refuses `E-GIT-REF` naming it.
+        #[arg(long, value_name = "REF")]
+        base: Option<String>,
+    },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
-    /// Print the dependency graph in the given format.
+    /// Print the dependency graph in the given rendering (`--graph-format`:
+    /// the rendering vocabulary lives on its own flag — the global
+    /// `--format` owns the output-format vocabulary `human|json|gha`,
+    /// and sharing one flag between two value sets made `halyard
+    /// graph` panic on every invocation at HEAD).
     Graph {
         /// Rendering: text | mermaid | dot | json.
-        #[arg(long, value_enum, default_value = "text")]
-        format: GraphFormat,
+        #[arg(long = "graph-format", value_enum, default_value = "text")]
+        graph_format: GraphFormat,
     },
     /// Environment diagnostics (shallow clone? commit-graph? tags?).
     /// `--registries` adds the opt-in §13 registry reachability probe
@@ -308,9 +330,78 @@ enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Render man pages (§16.2 shell integration): `halyard man` the
+    /// `halyard(1)` page, `halyard man <command>` one subcommand's
+    /// page — roff, derived from the clap definition itself, so a flag
+    /// added to the parser appears on the page without a second edit.
+    /// Deterministic (I3); pages print to stdout (the `schema` and
+    /// `completions` convention).
+    Man {
+        /// Which command's page to render (omit for the top page).
+        #[arg(value_enum, default_value = "top")]
+        what: ManTopic,
+    },
 }
 
-/// `graph --format` targets (§16.2).
+/// `man` page topics (§16.2): the top page plus one page per
+/// subcommand — the closed command surface, so an unknown topic is
+/// clap's own usage error naming the valid values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum ManTopic {
+    /// The `halyard(1)` top page.
+    Top,
+    /// The `halyard plan` page.
+    Plan,
+    /// The `halyard apply` page.
+    Apply,
+    /// The `halyard pr` page.
+    Pr,
+    /// The `halyard release` page.
+    Release,
+    /// The `halyard publish` page.
+    Publish,
+    /// The `halyard migrate` page.
+    Migrate,
+    /// The `halyard init` page.
+    Init,
+    /// The `halyard explain` page.
+    Explain,
+    /// The `halyard check` page.
+    Check,
+    /// The `halyard affected` page.
+    Affected,
+    /// The `halyard fetch` page.
+    Fetch,
+    /// The `halyard status` page.
+    Status,
+    /// The `halyard graph` page.
+    Graph,
+    /// The `halyard doctor` page.
+    Doctor,
+    /// The `halyard forge-smoke` page.
+    ForgeSmoke,
+    /// The `halyard schema` page.
+    Schema,
+    /// The `halyard completions` page.
+    Completions,
+    /// The `halyard man` page.
+    Man,
+}
+
+impl ManTopic {
+    /// The subcommand name this topic renders (`top` = the root
+    /// command; the value-enum spelling is the kebab-case form).
+    fn command_name(self) -> Option<String> {
+        match self {
+            Self::Top => None,
+            other => other
+                .to_possible_value()
+                .map(|value| value.get_name().to_owned()),
+        }
+    }
+}
+
+/// `graph --graph-format` targets (§16.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum GraphFormat {
     /// Indented dependency listing.
@@ -412,6 +503,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Fetch => cmd_fetch(cli, profiler),
+        Command::Affected { base } => {
+            cmd_affected(cli, profiler, base.as_deref())?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Explain { package } => {
             cmd_explain(cli, profiler, package)?;
             Ok(ExitCode::SUCCESS)
@@ -433,8 +528,8 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_status(cli, profiler)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Graph { format } => {
-            cmd_graph(cli, profiler, *format)?;
+        Command::Graph { graph_format } => {
+            cmd_graph(cli, profiler, *graph_format)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Doctor { registries } => {
@@ -452,6 +547,19 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         Command::Completions { shell } => {
             let mut command = Cli::command();
             generate(*shell, &mut command, "halyard", &mut std::io::stdout());
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Man { what } => {
+            let root = Cli::command();
+            let page = match what.command_name() {
+                None => man::top_page(&root),
+                // Unreachable through the closed value enum; the
+                // fallback keeps the shell total over any name.
+                Some(name) => {
+                    man::command_page(&root, &name).unwrap_or_else(|| man::top_page(&root))
+                }
+            };
+            print!("{page}");
             Ok(ExitCode::SUCCESS)
         }
     }
@@ -2111,6 +2219,31 @@ fn cmd_status(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
     Ok(())
 }
 
+/// The `affected` command (§16.3, M10 step 1, ADR-0032): the CI
+/// selector — the packages a change touches directly (pending commits
+/// since the base) closed over the workspace's reverse dependency
+/// edges (dependents, dev-edges included). The same pipeline `plan`
+/// runs — discover → git history → selection — with no network and no
+/// subprocess (I5/I6); `--base` attributes against an explicit ref
+/// (the PR-selection shape) and refuses an unresolvable ref
+/// fail-closed `E-GIT-REF`.
+fn cmd_affected(cli: &Cli, profiler: &mut Profiler, base: Option<&str>) -> Result<(), CliError> {
+    let context = context_with_base(cli, profiler, base)?;
+    let selection = profiler.span("affected", || {
+        let changed = halyard_core::affected::changed_from_digest(context.history.digest());
+        let graph = halyard_core::WorkspaceGraph::build(&context.discovery.workspace);
+        halyard_core::affected::affected_selection(&graph, &changed)
+    });
+    match cli.format {
+        Format::Json => {
+            print_pretty_json(&render::affected_report_json(&context, &selection, base))?;
+        }
+        Format::Gha => print!("{}", render::affected_gha(&context, &selection, base)),
+        Format::Human => print!("{}", render::affected_human(&context, &selection, base)),
+    }
+    Ok(())
+}
+
 /// The `graph` command.
 fn cmd_graph(cli: &Cli, profiler: &mut Profiler, format: GraphFormat) -> Result<(), CliError> {
     let context = context(cli, profiler)?;
@@ -2566,6 +2699,20 @@ struct Context {
 /// config hash) ride along so a layout or policy change invalidates the
 /// cached attributions cleanly (§8.7).
 fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
+    context_with_base(cli, profiler, None)
+}
+
+/// The shared pipeline with the affected-selector's base override: the
+/// walk starts at one explicit ref instead of the release bases (§16.3,
+/// M10 — `halyard affected --base origin/main`). Every other command
+/// passes `None`, which resolves the bases exactly as before; the
+/// per-commit cache stays valid either way, because a commit's tree
+/// diff does not depend on where a walk starts.
+fn context_with_base(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    base_override: Option<&str>,
+) -> Result<Context, CliError> {
     let discovery = profiler
         .span("discover", || {
             discover_repo(std::path::Path::new("."), &DiscoverInput::default())
@@ -2621,6 +2768,7 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
                     cache,
                     layout_hash: halyard_core::trie::layout_hash(&discovery.workspace, &filters),
                     config_hash: halyard_config::config_hash(&config),
+                    base_override: base_override.map(str::to_owned),
                     ..halyard_git::GitHistoryOptions::default()
                 },
             )
