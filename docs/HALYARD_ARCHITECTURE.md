@@ -475,7 +475,32 @@ plans with the default) in `context()` *before* the cache key is
 computed, so the §8.7 `config_hash` carries the effective channel and
 `next` (bound `rc`) and `main` (stable) never share attributions. The
 `ResolvedConfig::channel_for_branch` resolution is pure — the caller
-owns the branch lookup.)*
+owns the branch lookup. Step 3 (ADR-0026, M5.6 continued): the
+per-package override ships as `[[package]] channel = "rc"` — exact-name
+matched like `release = false`, validated at resolve time into
+`ResolvedConfig::package_channels` (an invalid value or a name-less
+override is `E-CFG-CHANNEL` naming the package), merged low→high with
+later entries winning. `PlanConfig::channel_for_package` is the one
+resolution point (override > branch binding > default); the three
+channel decision points — the active-train absorption rule, promotion
+(now per package: a trained package continues its train while a
+channel-less package promotes) and `channelize_targets` — consult it,
+so a mixed repo plans each package on its own policy in one pass. The
+override rides `config_hash`; the frozen wire format needed no change.
+Step 4 (ADR-0027, M5.6 completion): the maintenance-branch half ships as
+`[versioning].maintenance_branches = ["1.x", "1.2.x"]` — each entry is
+the literal branch name AND the pinned line (`MAJOR.x` /
+`MAJOR.MINOR.x`), validated at resolve time (`E-CFG-MAINTENANCE`),
+merged per-key low→high. `ResolvedConfig::maintenance_line_for(branch)`
+is pure; the shell resolves the checked-out branch in `context()` and
+applies the pin *before* the cache key, so a pinned branch and the
+default branch never share attributions. The planner's guard
+(`enforce_maintenance_line`) runs ONCE over the final targets — the
+channelized triple is what is checked — and refuses a target that
+leaves the line (`E-PLAN-MAINTENANCE`, the package, line and target
+named) instead of clamping; `Release-As` stays exempt; the §10.2
+pre-major remap applies first (on `0.1.x` the remapped `0.2.0` still
+leaves the line and refuses).)*
 
 ### 10.4 Cascade (dependency-aware)
 Processed in **reverse topological order** with SCC handling:
@@ -745,6 +770,7 @@ policy      = "independent"             # independent | fixed | linked
 pre_major   = { breaking = "minor", feat = "patch" }   # (cargo-compatible)
 cascade     = "when-unsatisfied"        # always | when-unsatisfied | never
 channel     = "rc"                      # (unset) §10.3 prerelease channel; removing it promotes
+maintenance_branches = ["1.x"]          # (unset) ADR-0027: entry = branch name AND the line it pins
 
 [commits]
 types.feat  = "minor"
@@ -770,6 +796,7 @@ commit_mode = "auto"                    # git | api
 [[package]]                             # per-package override (match by name or path glob)
 name = "internal-tool"
 release = false
+channel = "rc"                          # (unset) per-package §10.3 train; wins over [versioning] (ADR-0026)
 include = ["src/**", "Cargo.toml"]
 exclude = ["**/*.md"]
 
