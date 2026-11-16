@@ -53,6 +53,93 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | §9.4 change-file input slice (M3.5 completion, ADR-0028) | done | (tree left dirty; no commits) | M1: the pre-wired-but-unproduced `Reason::Changeset` seam finally fed — `halyard-core::change_file`: the pure `ChangeFiles` input type (bumps + notes per package name, strongest-wins `record`, 4 inline tests) carried by `Snapshot::change_files`; `halyard-changelog::change_files`: the strict TOML-style grammar (`parse_change_file`: `---` delimiters, one `packages = { name = "bump" }` inline table, quoted `major`/`minor`/`patch`, npm scoped-name charset, `ChangelogError::ChangeFile` = `E-CHLOG-CHANGE-FILE` + page + index) + `load_change_files` (path-order merge, fail-closed on any bad file); planner: `direct_bumps` applies the explicit bump after the commit loop (overwrite — replaces the commit-derived level in both directions, the ADR-0028 escape-hatch reading; the monotone cascade guard exempts explicit packages for free), `validate_change_files` refuses unknown names (`PlanError::ChangeFilePackage` = `E-PLAN-CHANGE-FILE` + page + index), `render_entry` merges the notes verbatim (one merge point feeding the §11.3 body, the CHANGELOG.md write and the `create_release` payload); CLI `plan_from_context` scans `.halyard/changes/*.md` (missing directory = zero-config); `Release-As` stays above the change file (both reasons ride the chain when both present); 8 planner tests + golden `plan__change_file` snapshot + 15 parser tests + 3 CLI gates (red→green on record: E0432/E0560/E0599 across the three suites) + bench `planner_changes` (baseline ≈10.2 µs, explicit-bump ≈13 µs, note-merge) + example `change_file` + ADR-0028; every `Snapshot` construction site updated (tests ×3, benches ×3, examples ×2, xtask replay/bench, CLI). Micro-debt + drift fixed (additive, not milestone substitutes): `PlanError` now exposes its structured cause through `Error::source()` (`Unrewritable`'s `VersionError` — the `EditFailure`/`LockfileFailure` convention extended to the planner), the retired `E-CLI-RELEASE` page marked retired (no producer since the live release shell; index row annotated), the §9.4 as-built note rewritten (it still claimed the user-template path was open — it shipped with M4.1b) and now records the change-file completion + the consumed-on-release maintainer contract, README status/layout/commands rows, changelog crate description row | M2 candidate identified but deferred, inventory recorded: `halyard init` (§16.1 — zero-config draft `halyard.toml` create-only + `--github` workflow scaffold, reusing the ADR-0023 `DraftSink` machinery); M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-16; session log below |
 
+| §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) | done | (tree left dirty; no commits) | M1: `halyard-config::init` — `InitSurvey` (plain data; the shell's discovery fills it, the engine stays pure) → `plan_init` (refuses a zero-package survey with the new `ConfigError::Init` = `E-CFG-INIT` + page + index; renders the deterministic shape line keyed on the same count-based rule the planner's `auto` tag template applies — `effective_template` — so the shape and the tag names can never disagree; renders the comment-only `halyard.toml` skeleton whose defaults load as the built-in defaults EXACTLY — the key-free invariant re-checked at plan time by re-loading the rendered draft) → `InitPlan` (shape + ordered `ScaffoldFile`s) → `run_init` (gates EVERY target's existence through the injected `DraftSink` before the first write — a refusal never leaves a half-scaffold — then writes in plan order) → `InitReport`; `AtomicScaffoldSink` = the §9.1 atomic protocol with the one scaffold-specific difference: the target's parent directories are created (`.github/workflows/` does not exist yet — the migration's `AtomicDraftSink` deliberately never mkdirs, hence two types, the trait doc now says "the sink's stable code"); `--github` appends the §16.1 one-file release workflow VERBATIM (`halyard/action@v1` referenced per the architecture's finished surface — the human render says the glue lands with its milestone); CLI `init [--github]` (needs no git repo, reads no config): the `.config/halyard.toml` shadow footgun refuses first (resolve_config prefers the root file), then survey → plan → effect → three-format render (`init_report`/`_json`/`_gha`); 11 engine tests + 9 CLI gates (red→green on record: E0432 on the missing `halyard_config::init` API + E0599 on `INIT_CODE`, 9 CLI fails on `unrecognized subcommand`; one test-side correction during green — the npm fixture had a stray Cargo.toml, discovery was honestly reporting 2 packages) + bench group `init` (plan_single_package ≈3.4 µs, plan_workspace_40 ≈3.8 µs, plan_and_run over the memory sink ≈3.9 µs — the loader round-trip stays cheap) + example `init_scaffold` (MemoryDraftSink — nothing touches the disk) + ADR-0029. Micro-debt + drift fixed (additive, not milestone substitutes): the halyard-cache process-global hit/miss statics removed (`global_stats`/`reset_stats` had zero callers — the per-instance counters the header round-trips were the live surface), `halyard-changelog::releases_by_version` removed (its doc claimed the idempotence tests used it — they never did), the xtask member-guard test list now names all 18 members (`halyard-config` was missing), arch §7.1 rewritten (the phantom `halyard-action`/`halyard-plugin-host` rows and the nonexistent `docs/spec/` + `action/` paths replaced by an as-built note; `halyard-forge-github` added to the tree), arch §15.1 fuzz row as-built (3 real targets, not 5 aspirational) + the `shuttle` row corrected (loom only, documented-exclusive with miri, the manual invocation spelled), the errors-README intro's `include_str!` claim replaced with the actual linkage (rustdoc `code()` + pages), README status/layout/commands rows, CLI README row + a Zero-config scaffold section, CLI crate description | M2 (M1 green end-to-end first, same session, ADR-0030): the documented miri/loom exclusion is now a `compile_error!` guard in `halyard-cache/src/lib.rs` (a combined build fails loudly with the two documented invocations in the message — verified: `cargo check -p halyard-cache --features miri,loom` exits 101 with the guard, each lane alone passes); `ci-bundle` as the CI gate feature (core/config map it to `schema-gen`, cache's is deliberately empty — the exclusive pair stays out; workspace-wide `--features ci-bundle` enables per member, skips the rest); CI's clippy/test/nextest/doc jobs moved off `--all-features` onto `--features ci-bundle` and a new `loom` job runs the suite's own documented invocation on stable (the suite previously compiled only as an `--all-features` side effect — it gains a spelled lane instead of losing one); arch §15.1 rows + cache manifest notes + README daily-commands updated to the ci-bundle spelling; gates re-run under the new spelling (the guard makes `--all-features` an invalid gate invocation by design). M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-16; session log below |
+
+### 2026-11-16 — §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `299cf47` (the
+  change-file session): fresh stable toolchain 1.100.0,
+  `cargo check --workspace --all-features --all-targets --locked` exit 0
+  as the baseline. The survey (three parallel read-only agents + hand
+  verification) classified the tree: zero `todo!`/`unimplemented!`/
+  `#[allow]` anywhere; the error taxonomy bidirectionally exact (69
+  pages ↔ 69 index rows ↔ 68 producers, `E-CLI-RELEASE` explicitly
+  retired); 17/18 crates carry consumer examples (xtask is the only
+  one without); the declared start point from the previous session was
+  `halyard init` (§16.1) with the ADR-0023 `DraftSink` machinery named
+  as the reuse surface. Verified open debt: arch §7.1 still listed the
+  phantom `halyard-action`/`halyard-plugin-host` crates and omitted
+  `halyard-forge-github`; three public items with consumer-claiming
+  doc comments and zero callers (`halyard-cache::global_stats`/
+  `reset_stats`, `halyard-changelog::releases_by_version`); the xtask
+  member-guard test list named 17 members and omitted
+  `halyard-config`; arch §15.1 claimed five fuzz targets and a
+  `shuttle` lane that do not exist; the errors-README intro claimed a
+  `#[doc = include_str!(…)]` linkage no error page uses. Feature
+  surface: `miri`/`loom` documented-exclusive but not
+  machine-enforced, `--all-features` CI combines them, no `ci-bundle`
+  feature, no bench requires nightly.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing API itself (`E0432` on the `halyard_config::init` exports,
+  `E0599` on `ConfigError::INIT_CODE`, 9/9 CLI gates failing on
+  `unrecognized subcommand 'init'`), captured on both suites before any
+  implementation. The green landed the ADR-0029 design: pure engine in
+  `halyard-config`, gate-before-write in `run_init`, the skeleton's
+  key-free invariant checked at plan time (the rendered draft is
+  re-loaded and must equal the built-in defaults), the workflow
+  verbatim from §16.1. One test-side correction during green (the red
+  phase corrects the tests, not the design): the npm-mix CLI fixture
+  carried a stray `Cargo.toml`, and discovery was honestly reporting
+  two packages — the fixture lost the manifest, not the engine its
+  count.
+- **M2 implemented (M1 green end-to-end first), one red→green cycle.**
+  The red was the guard itself: `cargo check -p halyard-cache
+  --features miri,loom` exits 101 on the `compile_error!` once the
+  exclusion is expressed in code — the failing build is the test, and
+  each lane alone still compiles. The green landed ADR-0030: the
+  `ci-bundle` gate feature (core/config → `schema-gen`, cache → empty,
+  the exclusive pair out), CI's clippy/test/nextest/doc jobs on
+  `--features ci-bundle`, and a new loom CI job running the suite's
+  own documented invocation — the model check gains a spelled lane
+  where `--all-features` used to switch it on as a side effect.
+- **Tests/bench/example totals.** 11 engine contract tests (`tests/
+  init.rs`: shapes, determinism, the key-free skeleton, the §16.1
+  workflow bytes, the gate-before-write refusals over the memory sink,
+  the atomic sink's mkdir + create-only), 9 CLI end-to-end gates
+  (`tests/cli_init.rs`: scaffold → zero-config `plan` in one fixture,
+  create-only rerun with the stable code, the workflow gate, the
+  shadow refusal, the empty-tree refusal, npm survey, human + gha
+  renders), bench group `init` (3 shapes), example `init_scaffold`.
+- **Docs.** ADR-0029; `E-CFG-INIT` page + index row (69 → 70 codes,
+  pages and producers exact); arch §16.1 as-built note + §16.2
+  wired-commands note (`init` moved from the absent list to the wired
+  list); README status/layout/commands rows; CLI README row + a
+  Zero-config scaffold section; the `Command` enum doc and the CLI
+  crate description.
+- **Micro-debt + drift (additive).** The dead cache statics and
+  `releases_by_version` removed with their now-unused imports; the
+  xtask guard list completed to 18 members; arch §7.1/§15.1 rewritten
+  as-built; the errors-README intro corrected.
+- **Gates on the final tree.** fmt ✓, clippy `--workspace --all-targets
+  --features ci-bundle -- -D warnings` ✓ (0 findings), tests
+  `--features ci-bundle --locked` ✓ (113 suites, 1006 tests, 0 failed),
+  benches ✓ (compiled and run, 0 errors; the `init` group ≈3.4-3.9 µs),
+  the lint-hygiene grep empty, rustdoc `-D warnings` ✓, `xtask
+  check-layers` (18 crates) + `schema-check` ✓, the loom lane ✓ (`cargo
+  test -p halyard-cache --features loom --release`: 2 model checks + 9
+  cache tests), the example ✓, and the conflict guard's two-sided proof
+  (combined build exits 101 on the guard, each lane alone passes).
+- **Honest state at cut-off.** The tree is dirty by protocol; every
+  gate re-run on the final tree. The scaffolded workflow references
+  `halyard/action@v1` per §16.1's finished surface — the action glue
+  is its own future milestone and the render says so. The live
+  `--github` write is exercised through the atomic-sink tests and the
+  CLI gates; a real GitHub Actions run of the generated workflow
+  belongs to the action milestone's lane.
+- **Next session start point.** (1) the M4.7 corpus-lane acceptance,
+  (2) the `halyard/action` glue (§12) so the scaffolded workflow
+  resolves, (3) M5.3's OIDC half (live-CI lane).
+
 ### 2026-11-16 — §9.4 change-file input (M3.5 completion, ADR-0028) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `38b8873` (the
