@@ -1031,3 +1031,104 @@ fn maintenance_line_guard_sees_the_channelized_target() {
         "the channelized target is named: {err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The npm publish contract (ADR-0033): `publish.npm.access`/`provenance`
+// ride the plan's per-release `PlanPublish` — publish consumes the plan
+// only (I8), so the spawn-side options must be part of the verified
+// contract, not re-read from the shell. Written first (red), implemented
+// second.
+// ---------------------------------------------------------------------------
+
+/// An npm-package variant of [`push_pkg`] (the same fixture shape, the
+/// npm ecosystem, `package.json`).
+fn push_npm_pkg(
+    ws: &mut Workspace,
+    name: &str,
+    version: Option<&str>,
+    template: &str,
+    manifest: &str,
+) -> Option<PkgId> {
+    let parsed_version = match version {
+        Some(v) => Some(Version::parse(v).ok()?),
+        None => None,
+    };
+    let pkg = Package {
+        id: PkgId::FIRST,
+        name: ws.intern(name),
+        ecosystem: Ecosystem::Npm,
+        root: RelPath::new("pkgs/app")?,
+        manifest: RelPath::new(manifest)?,
+        version: parsed_version,
+        version_source: VersionSource::Local,
+        publishable: true,
+        deps: Vec::new(),
+        tag_template: TagTemplate::parse(template).ok()?,
+        changelog: None,
+        version_site: Some(ManifestSite {
+            file: RelPath::new(manifest)?,
+            spans: vec![Span { start: 40, end: 45 }],
+        }),
+        include: PathFilter::new(Vec::new(), Vec::new()),
+        group: GroupId::new(0),
+        facets: halyard_core::Facets::default(),
+    };
+    Some(ws.push_package(pkg))
+}
+
+#[test]
+fn npm_releases_carry_the_publish_options() {
+    let mut ws = Workspace::new();
+    push_npm_pkg(&mut ws, "app", Some("0.1.0"), "v{version}", "package.json")
+        .expect("fixture package");
+    let commits = vec![commit(1, "feat", false, "grow surface", Some(12)).expect("fixture commit")];
+    let head = &"b".repeat(40);
+    let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None], head);
+    let cfg = PlanConfig {
+        publish_enabled: true,
+        publish_npm_access: Some("public".to_owned()),
+        publish_npm_provenance: Some(true),
+        ..PlanConfig::default_values()
+    };
+    let plan = plan(&snapshot, &cfg).unwrap();
+    let release = plan
+        .releases
+        .first()
+        .unwrap_or_else(|| unreachable!("a release exists"));
+    let publish = release
+        .publish
+        .as_ref()
+        .unwrap_or_else(|| unreachable!("the contract is present"));
+    assert_eq!(publish.registry, "npm");
+    assert!(publish.enabled, "publishable npm package is enabled");
+    assert_eq!(publish.access.as_deref(), Some("public"));
+    assert_eq!(publish.provenance, Some(true));
+}
+
+#[test]
+fn unset_npm_options_leave_the_contract_optional() {
+    // Without `publish.npm` config the contract carries `None` both
+    // ways — the spawned tool's own posture governs, and the plan never
+    // invents an option the user did not set.
+    let mut ws = Workspace::new();
+    push_npm_pkg(&mut ws, "app", Some("0.1.0"), "v{version}", "package.json")
+        .expect("fixture package");
+    let commits = vec![commit(1, "feat", false, "grow surface", Some(12)).expect("fixture commit")];
+    let head = &"b".repeat(40);
+    let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None], head);
+    let cfg = PlanConfig {
+        publish_enabled: true,
+        ..PlanConfig::default_values()
+    };
+    let plan = plan(&snapshot, &cfg).unwrap();
+    let release = plan
+        .releases
+        .first()
+        .unwrap_or_else(|| unreachable!("a release exists"));
+    let publish = release
+        .publish
+        .as_ref()
+        .unwrap_or_else(|| unreachable!("the contract is present"));
+    assert_eq!(publish.access, None);
+    assert_eq!(publish.provenance, None);
+}
