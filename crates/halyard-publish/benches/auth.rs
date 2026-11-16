@@ -34,6 +34,8 @@ fn targets() -> Vec<PublishTarget> {
             registry: if index % 2 == 0 { "crates.io" } else { "npm" }.to_owned(),
             manifest_dir: format!("crates/p{index}"),
             manifest: format!("crates/p{index}/Cargo.toml"),
+            access: None,
+            provenance: None,
         });
     }
     targets
