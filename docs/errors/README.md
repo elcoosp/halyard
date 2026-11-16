@@ -9,8 +9,10 @@ of the form `E-<AREA>-<NAME>` and gets a page in this directory with:
 4. **Command** — a copy-pasteable command to diagnose or recover.
 
 The rendered output goes through `miette` with the code as the report code;
-the page is linked from the variant's rustdoc (`#[doc = include_str!(…)]`
-pattern from M1 onward where useful).
+the variant's rustdoc carries the stable code in its `code()` impl and the
+module docs name the family's page directory — the pages are the human
+surface, the codes the machine one (no `include_str!` linkage; a rustdoc
+link would rot with the page paths).
 
 ## Index
 
@@ -51,6 +53,7 @@ pattern from M1 onward where useful).
 | `E-PLAN-MAINTENANCE` | [E-PLAN-MAINTENANCE.md](E-PLAN-MAINTENANCE.md) | planner maintenance-line guard (§10.3, ADR-0027) |
 | `E-PLAN-CHANGE-FILE` | [E-PLAN-CHANGE-FILE.md](E-PLAN-CHANGE-FILE.md) | planner change-file unknown package (§9.4, ADR-0028) |
 | `E-CFG-MAINTENANCE` | [E-CFG-MAINTENANCE.md](E-CFG-MAINTENANCE.md) | config maintenance-branch entry (§10.3, ADR-0027) |
+| `E-CFG-INIT` | [E-CFG-INIT.md](E-CFG-INIT.md) | the `halyard init` zero-config scaffold refusals (§16.1/§16.2, ADR-0029) |
 | `E-LOCK-PARSE` | [E-LOCK-PARSE.md](E-LOCK-PARSE.md) | lockfile patch seam (M3.2, §9.2 · M3.4, §9.3) |
 | `E-LOCK-NATIVE` | [E-LOCK-NATIVE.md](E-LOCK-NATIVE.md) | native lockfile refresh fallback (M3.2, §9.2 rule 4 · M3.4, §9.3) |
 | `E-CACHE-OPEN` | [E-CACHE-OPEN.md](E-CACHE-OPEN.md) | cache open (M2.5) |
