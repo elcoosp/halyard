@@ -103,6 +103,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     let Some(bazel) = ci_selector_adapter("bazel") else {
         return;
     };
+    let Some(gha) = ci_selector_adapter("gha") else {
+        return;
+    };
+    let Some(gitlab) = ci_selector_adapter("gitlab") else {
+        return;
+    };
     let mut group = c.benchmark_group("core");
     group.bench_function("ci_selector_turbo_40chain", |b| {
         b.iter(|| black_box(turbo.render(black_box(&changed), black_box(&affected))));
@@ -112,6 +118,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     });
     group.bench_function("ci_selector_bazel_40chain", |b| {
         b.iter(|| black_box(bazel.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_gha_40chain", |b| {
+        b.iter(|| black_box(gha.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_gitlab_40chain", |b| {
+        b.iter(|| black_box(gitlab.render(black_box(&changed), black_box(&affected))));
     });
     group.finish();
 }
