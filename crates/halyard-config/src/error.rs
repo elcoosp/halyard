@@ -58,6 +58,15 @@ pub enum ConfigError {
         /// What is wrong with the name.
         reason: String,
     },
+    /// A `[versioning].maintenance_branches` entry (§10.3, ADR-0027) is
+    /// not a `MAJOR.x` / `MAJOR.MINOR.x` line — the entry names the
+    /// branch and pins its line, so both roles must parse.
+    MaintenanceLine {
+        /// The offending entry.
+        value: String,
+        /// What is wrong with the entry.
+        reason: String,
+    },
 }
 
 impl ConfigError {
@@ -73,6 +82,8 @@ impl ConfigError {
     pub const MIGRATE_CODE: &'static str = "E-CFG-MIGRATE";
     /// Stable code for [`ConfigError::Channel`].
     pub const CHANNEL_CODE: &'static str = "E-CFG-CHANNEL";
+    /// Stable code for [`ConfigError::MaintenanceLine`].
+    pub const MAINTENANCE_CODE: &'static str = "E-CFG-MAINTENANCE";
 
     /// Stable error code for this variant.
     pub fn code(&self) -> &'static str {
@@ -83,6 +94,7 @@ impl ConfigError {
             Self::Env { .. } => Self::ENV_CODE,
             Self::Migrate { .. } => Self::MIGRATE_CODE,
             Self::Channel { .. } => Self::CHANNEL_CODE,
+            Self::MaintenanceLine { .. } => Self::MAINTENANCE_CODE,
         }
     }
 }
@@ -132,6 +144,12 @@ impl std::fmt::Display for ConfigError {
                 "[{}] invalid prerelease channel {value:?}: {reason} — a channel is one \
                  semver identifier: alphanumerics and hyphens, no leading or trailing hyphen",
                 Self::CHANNEL_CODE
+            ),
+            Self::MaintenanceLine { value, reason } => write!(
+                f,
+                "[{}] invalid maintenance branch {value:?}: {reason} — an entry names the \
+                 branch and pins its line, e.g. `1.x` or `1.2.x`",
+                Self::MAINTENANCE_CODE
             ),
         }
     }
