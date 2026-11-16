@@ -2,7 +2,8 @@
 //! train through its whole lifecycle — first prerelease, counter
 //! advance, promotion to stable — planned purely through
 //! [`halyard_core::planner::plan`] with the `[versioning].channel`
-//! policy set and cleared.
+//! policy set and cleared, plus the per-package `[[package]] channel`
+//! override (ADR-0026) beating the repo-wide default.
 //!
 //! Run: `cargo run -p halyard-core --example prerelease_channel`
 
@@ -37,6 +38,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let snapshot = fixture("1.3.0-rc.2", Some("v1.3.0-rc.2"), Vec::new())?;
     let cfg = PlanConfig::default_values();
     print_pass("channel off, promotion", &plan(&snapshot, &cfg)?);
+
+    // Pass 4 — per-package override (§10.3, ADR-0026): the repo-wide
+    // default stays `beta`, but `[[package]] name = "app" channel = "rc"`
+    // names this package's train — the most explicit policy wins →
+    // `1.3.0-rc.1`, not a beta.
+    let snapshot = fixture("1.3.0-rc.2", Some("v1.3.0-rc.2"), vec![commit("fix")])?;
+    let mut cfg = PlanConfig::default_values();
+    cfg.prerelease_channel = PrereleaseChannel::new("beta");
+    if let Some(channel) = PrereleaseChannel::new("rc") {
+        cfg.package_channels.insert("app".to_owned(), channel);
+    }
+    print_pass("override beats the default", &plan(&snapshot, &cfg)?);
 
     Ok(())
 }
