@@ -50,6 +50,10 @@ name = "affected"
 harness = false
 
 [[bench]]
+name = "affected_ci"
+harness = false
+
+[[bench]]
 name = "release_state"
 harness = false
 
