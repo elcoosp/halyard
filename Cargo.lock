@@ -1419,6 +1419,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "criterion",
  "halyard-cache",
  "halyard-changelog",
  "halyard-config",
