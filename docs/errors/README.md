@@ -49,6 +49,7 @@ pattern from M1 onward where useful).
 | `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
 | `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
 | `E-PLAN-MAINTENANCE` | [E-PLAN-MAINTENANCE.md](E-PLAN-MAINTENANCE.md) | planner maintenance-line guard (§10.3, ADR-0027) |
+| `E-PLAN-CHANGE-FILE` | [E-PLAN-CHANGE-FILE.md](E-PLAN-CHANGE-FILE.md) | planner change-file unknown package (§9.4, ADR-0028) |
 | `E-CFG-MAINTENANCE` | [E-CFG-MAINTENANCE.md](E-CFG-MAINTENANCE.md) | config maintenance-branch entry (§10.3, ADR-0027) |
 | `E-LOCK-PARSE` | [E-LOCK-PARSE.md](E-LOCK-PARSE.md) | lockfile patch seam (M3.2, §9.2 · M3.4, §9.3) |
 | `E-LOCK-NATIVE` | [E-LOCK-NATIVE.md](E-LOCK-NATIVE.md) | native lockfile refresh fallback (M3.2, §9.2 rule 4 · M3.4, §9.3) |
@@ -60,13 +61,14 @@ pattern from M1 onward where useful).
 | `E-CHLOG-TEMPLATE` | [E-CHLOG-TEMPLATE.md](E-CHLOG-TEMPLATE.md) | changelog user template (M3.5) |
 | `E-CHLOG-FILE` | [E-CHLOG-FILE.md](E-CHLOG-FILE.md) | changelog existing file (M3.x) |
 | `E-CHLOG-PRBODY` | [E-CHLOG-PRBODY.md](E-CHLOG-PRBODY.md) | Release-PR body / embedded plan (M4.3a, §11.3) |
+| `E-CHLOG-CHANGE-FILE` | [E-CHLOG-CHANGE-FILE.md](E-CHLOG-CHANGE-FILE.md) | change-file front-matter grammar (§9.4, ADR-0028) |
 | `E-CLI-CWD` | [E-CLI-CWD.md](E-CLI-CWD.md) | CLI -C handling (M1.10) |
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
 | `E-CLI-COMMENT` | [E-CLI-COMMENT.md](E-CLI-COMMENT.md) | CLI check-comment mode (M4.5 step 1, §11.6) |
 | `E-CLI-PR` | [E-CLI-PR.md](E-CLI-PR.md) | CLI live Release-PR decline (M4.2b `pr --dry`) |
-| `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | CLI live release decline (§11.1 tag-phase `release --dry`) |
+| `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | **retired** — the live release shell reports tag/push rows through their engine codes (`E-GIT-*`, `E-FORGE-*`); no code emits this since M4.2b landed, kept for history |
 | `E-FORGE-AUTH` | [E-FORGE-AUTH.md](E-FORGE-AUTH.md) | forge credentials (M4.1a, §11.4; token + App modes since M4.1c) |
 | `E-FORGE-TRANSPORT` | [E-FORGE-TRANSPORT.md](E-FORGE-TRANSPORT.md) | Forge transport failure — connection, 5xx, unreadable response (M4.1b) |
 | `E-FORGE-RATE-LIMIT` | [E-FORGE-RATE-LIMIT.md](E-FORGE-RATE-LIMIT.md) | forge throttling (M4.1a, exit code 5) |
