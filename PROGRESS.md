@@ -49,6 +49,74 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | §10.3 prerelease channels — planner integration (M5.6 step 1, ADR-0025) + branch-bound channels (step 2) | done | (tree left dirty; no commits) | M1 (M5.6 step 1): the M1.3 algebra's channel half consumed at last — `advance_prerelease`/`PrereleaseChannel`/`promote_to_stable` moved to `halyard-core::bump` (the ADR-0008 canonical home; `halyard-version` re-exports unchanged, its public API + tests untouched); `PlanConfig.prerelease_channel` + the train-aware `materialize_versions` (an active train = the release base tag is a prerelease; a non-breaking step is absorbed into the train's committed triple — `1.3.0-rc.1` + fix → `1.3.0-rc.2`, never `1.3.1`; a breaking step opens a new base), `promote_pending_stable` (removing the key with nothing new landed plans the manifest's own stable triple — the §10.3 promotion rule; skipped when the manifest is behind the latest tag), `channelize_targets` (the counter witnesses = the base tag's parsed version + the manifest version, applied before requirement rewrites so dependent manifests carry the exact prerelease triple; `Release-As` targets exempt; channels are parallel tracks — the skip guard is equality, not `<=`), the release row's `bump` reports the derived bump on a same-triple advance (an owed release never renders `none`); `halyard-config`: `[versioning].channel` validated at resolve time (`ConfigError::Channel` = `E-CFG-CHANNEL` + page + index row), merged low→high, carried in `ResolvedConfig::prerelease_channel`, `plan_config`, and `config_hash` (a channel change invalidates the §8.7 cache key); schema regenerated (`xtask schema-check --write`); 7 planner tests + 4 config tests + 3 CLI gates (red→green on record: E0609/E0560/E0599 on the missing seam, then the train semantics surfaced by failing expectations — the red phase corrected the design, not the tests); bench `planner_channel` (fresh-train ≈9.5 µs, active-train counter ≈10.7 µs, stable baseline — the channel overhead ≈1 µs); example `prerelease_channel` (the full lifecycle: rc.1 → rc.2 → promotion); existing goldens byte-identical (no channel ⇒ the stable planner unchanged); M2 (step 2, same ADR): `[versioning].channel_branches = { next = "rc" }` — branch→channel bindings validated per key at resolve time (E-CFG-CHANNEL names the branch), merged per-key low→high, the pure `ResolvedConfig::channel_for_branch` (binding wins, detached/unborn HEAD plans the default); CLI `checked_out_branch()` (`GITHUB_HEAD_REF` wins, lenient `None` otherwise) applied in `context()` before the `config_hash` is computed (planning `next` and `main` never share attributions); 4 config tests + 2 CLI gates (branch-binding red→green: E0560/E0599); bench `channel_branch` in halyard-config (hit ≈36 ns, fallback ≈17 ns); arch §10.3 as-built + §16.4 key + ADR-0025 (both steps) + E-CFG-CHANNEL page + README/CLI-README rows + example row | Per-package `[[package]] channel` overrides deferred (the policy is repo-wide like `pre_major` — one train definition per repo); the M5.6 maintenance-branch *backport* flows (planning against `1.x` histories) stay their own slice; the M4.7 corpus-lane acceptance, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; session log below |
 
 
+| §10.3 channels completed — per-package overrides (M5.6 step 3, ADR-0026) + maintenance-line trains (M5.6 completion, ADR-0027) | done | (tree left dirty; no commits) | M1 (step 3): `[[package]] channel = "rc"` — `PackageOverride.channel` (loader `package.element` keys + regenerated `halyard-config-v1` schema), validated at resolve time into `ResolvedConfig::package_channels` (E-CFG-CHANNEL names the package; a name-less path-glob override fails closed), merged low→high with later entries winning; `PlanConfig.package_channels` + `channel_for_package` as the ONE resolution point (override > branch binding > unbound default) consulted at all three channel decision points — the active-train absorption rule, promotion (now per package: a trained package continues its train while a channel-less package promotes) and `channelize_targets`; rides `config_hash`; migrate drafts keep `channel: None` (ADR-0022); 4 planner tests + 6 config tests + 3 CLI gates (red→green on record: E0609/E0560 on the missing seam); bench `plan_channel_override` (override hit ≈9.3 µs, mixed two-package ≈18.7 µs vs stable ≈16.4 µs — one pass, no re-planning); `prerelease_channel` example gains the override pass; ADR-0026 + arch §10.3/§16.4 + README/CLI-README + E-CFG-CHANNEL page/index. M2 (M1 green first, same session): the maintenance-branch half of M5.6 — `MaintenanceLine` (parse `MAJOR.x`/`MAJOR.MINOR.x`, matches the final target, renders back), `PlanConfig.maintenance_line` (branch-resolved, shell-applied before the cache key like the channel), `enforce_maintenance_line` as ONE guard pass over the final targets (the channelized triple is what is checked; `Release-As` exempt; the §10.2 remap applies first — on `0.1.x` the remapped `0.2.0` still refuses), `[versioning].maintenance_branches` validated at resolve (`E-CFG-MAINTENANCE` + page + index) and merged per-key low→high; `PlanError::MaintenanceLine` (`E-PLAN-MAINTENANCE` + page + index) refuses with the package, line and target named; 6 planner tests + 4 config tests + 3 CLI gates (red→green on record: E0433/E0609/E0560/E0599, plus two test-side shadowing corrections and a fixture reshaped to a `chore` scaffold so the gates assert the line semantics under either base behavior); bench `plan_maintenance` (in-line patch ≈9.0 µs, unpinned baseline ≈9.9 µs, refusal ≈0.9 µs — the guard exits before rewrites); example `maintenance_line` (backport → refusal → unpinned free); ADR-0027 + arch §10.3/§16.4 + README/CLI-README rows + example row. Micro-debt + drift cleaned en passant: the dead `path` parameter in `halyard-cache::load_locked` removed (`let _ = path;` gone), the CLI README absent-commands row now names `bench`/`man` per §16.2, the versioning did-you-mean snapshot regenerated for both new keys | M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit — all unchanged; recorded quirk: CLI git fixtures plan from the initial release when no base tag is selected (the repo's single-feat-after-tag shapes make base-derived and initial targets coincide; the maintenance gates shape around it) | 2026-11-16; session log below |
+
+### 2026-11-16 — §10.3 channels completed: per-package overrides (M5.6 step 3, ADR-0026) + maintenance-line trains (M5.6 completion, ADR-0027) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `e08b5cc` (the
+  prerelease-channel session): baseline re-verified with a fresh
+  stable toolchain installed in-sandbox (1.100.0; rustfmt/clippy
+  components added — the minimal profile ships neither),
+  `RUSTFLAGS="-C debuginfo=0"`, `CARGO_INCREMENTAL=0`. Baseline gates
+  green: `test --workspace --all-features --locked` exit 0,
+  check-layers (18 crates), schema-check, the rustdoc `-D warnings`
+  gate, the lint-hygiene grep empty. The declared start points were
+  (1) the M4.7 corpus-lane acceptance, (2) the M2.6 dhat re-audit,
+  (3) M5.3 OIDC (needs a live CI runtime), (4) per-package channel
+  overrides — (1) is an acceptance run, (2) is perf, (3) is
+  environment-blocked; picked (4) as M1 (it closes the known shape gap
+  ADR-0025 recorded) and the M5.6 row's other open half — the
+  maintenance-branch trains — as M2. The session survived a sandbox
+  recycle: the tree was wiped mid-flight and every edit replayed from
+  the session record onto a fresh clone of the same base commit
+  (verified per-suite green before proceeding; no re-survey needed).
+- **M1 implemented (no stubs), one full red→green cycle** (the
+  planner/config/CLI tests written first — red on E0609
+  `package_channels` and E0560 `PackageOverride.channel`, then
+  implemented):
+  - Design decisions (ADR-0026): exact-name matching like
+    `release = false` (path-glob overrides refine include/exclude, and
+    a channel on a name-less override fails closed); precedence
+    override > binding > default (explicit user intent beats
+    environment-derived policy — the `Release-As` reasoning); one
+    resolution point (`channel_for_package`) consumed by the three
+    channel decision points, so promotion becomes per package instead
+    of the wholesale "channel ⇒ no promotion" early return.
+  - clippy surfaced two corrections during the cycle: `or_else` →
+    `or` (`unnecessary_lazy_evaluations`), and `materialize` crossed
+    the `too_many_lines` budget (101/100) — the validation extracted
+    into the documented `package_channels_of` helper, matching the
+    ADR-0025 session's extraction precedent.
+- **M2 implemented (M1 green end-to-end first), one red→green cycle**
+  (the planner/config/CLI tests written first — red on E0433
+  `MaintenanceLine`, E0609 `maintenance_line`, E0560/E0599 on the
+  config seam, then implemented):
+  - Design decisions (ADR-0027): the entry string is both the branch
+    name and the pinned line (one token, no glob to keep in sync);
+    fail closed instead of clamping (a clamp would publish a version
+    the commits do not justify); ONE guard pass over the final targets
+    (the channelized triple is checked) instead of threading Results
+    through three derivation stages; branch-resolved pin applied in
+    `context()` before the cache key, the ADR-0025 step-2 shape.
+  - Two test-side corrections the cycle surfaced (test bugs, not
+    design): a `let snapshot = ...` value shadowed the helper in the
+    same scope (E0618 — bindings renamed), and the CLI fixture's
+    `feat:` scaffold made the initial-release path coincide with the
+    base path — the scaffold became a `chore`, so the gates assert the
+    line semantics themselves.
+  - Pre-existing quirk pinned while shaping that fixture: CLI git
+    fixtures plan from the initial release when no base tag is
+    selected — verified against a pristine `e08b5cc` worktree (same
+    `1.1.0`) before concluding it is not a regression; the repo's
+    single-feat-after-tag shapes make base-derived and initial targets
+    coincide numerically, which is why the existing suites stayed
+    green. Recorded in ADR-0027's consequences and the milestone row.
+- **Gates at session end.** fmt `--all --check` green; clippy
+  `--workspace --all-targets --all-features --locked -- -D warnings`
+  green (zero findings across the two milestones' code); the full
+  battery re-run on the complete tree — suites/tests/fmt/clippy/doc/
+  layers/schema/loom — all green (numbers in the final report).
+
 ### 2026-11-15 — §10.3 prerelease channels: the planner integration (M5.6 step 1, ADR-0025) + branch-bound channels (step 2) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `de9b663` (the
