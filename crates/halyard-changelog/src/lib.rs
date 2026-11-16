@@ -19,6 +19,14 @@
 //! plan-in/markdown-out shape as the changelog styles — and its output
 //! is consumed by the §11.1 state machine's `PrSpec` (M4.2a). The
 //! embedded-plan inverse [`extract_embedded_plan`] is the I8 verifier.
+//!
+//! The §9.4 change-file input (ADR-0028) also lives here: the strict
+//! front-matter grammar for `.halyard/changes/*.md`
+//! ([`change_files::parse_change_file`]) and the deterministic
+//! path-order merge into the planner's
+//! [`halyard_core::change_file::ChangeFiles`] input
+//! ([`change_files::load_change_files`]). The planner owns the bump
+//! precedence and the note merge; this crate owns the grammar.
 
 #![forbid(unsafe_code)]
 
@@ -28,10 +36,12 @@ use std::fmt::Write as _;
 use halyard_core::plan::{Plan, PlanRelease};
 use minijinja::{Environment, context};
 
+pub mod change_files;
 pub mod check_comment;
 pub mod pr_body;
 pub mod release_notes;
 
+pub use change_files::{load_change_files, parse_change_file};
 pub use check_comment::{
     CHECK_MARKER, CheckComment, CheckPrediction, CheckVerdict, render_check_comment,
 };
@@ -212,6 +222,18 @@ pub enum ChangelogError {
         /// What is wrong with the body or its embedded plan.
         reason: String,
     },
+    /// A change file (§9.4, ADR-0028, `.halyard/changes/*.md`) violates
+    /// the documented front-matter grammar (`E-CHLOG-CHANGE-FILE`): no
+    /// `---` delimiters, an unknown key, an unknown bump value, an empty
+    /// or malformed `packages` table or non-UTF-8 bytes. The grammar is
+    /// strict — one bad file refuses the whole plan instead of silently
+    /// dropping input.
+    ChangeFile {
+        /// The repo-relative path of the offending change file.
+        path: String,
+        /// What is wrong and how to fix it.
+        reason: String,
+    },
 }
 
 impl ChangelogError {
@@ -222,6 +244,7 @@ impl ChangelogError {
             Self::Template { .. } => "E-CHLOG-TEMPLATE",
             Self::File { .. } => "E-CHLOG-FILE",
             Self::PrBody { .. } => "E-CHLOG-PRBODY",
+            Self::ChangeFile { .. } => "E-CHLOG-CHANGE-FILE",
         }
     }
 
@@ -229,6 +252,15 @@ impl ChangelogError {
     /// failure constructor).
     pub fn pr_body(reason: impl Into<String>) -> Self {
         Self::PrBody {
+            reason: reason.into(),
+        }
+    }
+
+    /// Builds an [`ChangelogError::ChangeFile`] (the §9.4 change-file
+    /// grammar constructor).
+    pub fn change_file(path: &str, reason: impl Into<String>) -> Self {
+        Self::ChangeFile {
+            path: path.to_owned(),
             reason: reason.into(),
         }
     }
@@ -259,6 +291,12 @@ impl std::fmt::Display for ChangelogError {
                 "[E-CHLOG-PRBODY] Release-PR body is not usable: {reason} (re-run \
                  `halyard pr` to re-render the body from a fresh plan instead of \
                  editing it by hand)"
+            ),
+            Self::ChangeFile { path, reason } => write!(
+                f,
+                "[E-CHLOG-CHANGE-FILE] change file {path:?} is unusable: {reason} (the \
+                 documented grammar is `---` / `packages = {{ name = \"bump\" }}` / `---` \
+                 then the note; see docs/errors/E-CHLOG-CHANGE-FILE.md)"
             ),
         }
     }
