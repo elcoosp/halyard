@@ -1,0 +1,5 @@
+---
+source: crates/halyard-config/tests/loader.rs
+expression: err.to_string()
+---
+[E-CFG-UNKNOWN-KEY] unknown key `chaennel` in halyard.toml in `versioning` — did you mean `channel`?; valid keys: policy, pre_major, cascade, channel, channel_branches
