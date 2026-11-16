@@ -2317,6 +2317,26 @@ fn comment_head_branch() -> Result<String, CliError> {
         })
 }
 
+/// The checked-out branch name, when HEAD names one (`GITHUB_HEAD_REF`
+/// wins — the §11.5 workflow view of "the branch being planned").
+/// Lenient by design: a detached or unborn HEAD, an unopenable repo or a
+/// non-UTF-8 name is `None` — the §10.3 branch-bound channels (ADR-0025)
+/// are an optimization of the unbound default, never a failure surface.
+fn checked_out_branch() -> Option<String> {
+    if let Some(branch) = std::env::var("GITHUB_HEAD_REF")
+        .ok()
+        .filter(|b| !b.is_empty())
+    {
+        return Some(branch);
+    }
+    let repo = halyard_git::gix::open(std::path::Path::new(".")).ok()?;
+    let head = repo.head().ok()?;
+    let referent = head.try_into_referent()?;
+    std::str::from_utf8(referent.name().shorten())
+        .ok()
+        .map(str::to_owned)
+}
+
 /// The shared pipeline context: discovery + resolved config + git history.
 struct Context {
     config: ResolvedConfig,
@@ -2338,7 +2358,15 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
             discover_repo(std::path::Path::new("."), &DiscoverInput::default())
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let config = profiler.span("config", || resolve_config(cli))?;
+    let mut config = profiler.span("config", || resolve_config(cli))?;
+    // §10.3 branch-bound channels (ADR-0025): the checked-out branch
+    // picks the channel — a binding wins, the unbound default fills the
+    // rest. Applied before the cache key is computed, so the §8.7
+    // `config_hash` carries the effective channel: planning `next`
+    // (bound `rc`) and `main` (stable) never share attributions.
+    if let Some(branch) = checked_out_branch() {
+        config.prerelease_channel = config.channel_for_branch(Some(&branch));
+    }
     let history = profiler
         .span("history", || {
             // §8.7 cache-key component: the trie layout hash over the
