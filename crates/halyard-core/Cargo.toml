@@ -28,6 +28,12 @@ schemars = { workspace = true, optional = true }
 [features]
 default = []
 schema-gen = ["dep:schemars"]
+# The CI gate feature (ADR-0030): `--features ci-bundle` is the
+# conflict-free spelling of "all stable features" for workspace-wide
+# gate runs — every feature-carrying crate contributes its stable
+# features here and keeps its manual/nightly lanes (e.g. the cache
+# crate's `miri`/`loom`, documented-exclusive) out of the bundle.
+ci-bundle = ["schema-gen"]
 
 [dev-dependencies]
 proptest = { workspace = true }
