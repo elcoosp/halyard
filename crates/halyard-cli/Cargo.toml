@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `halyard` command line: plan, apply, pr, check, explain, status, graph, doctor, schema, completions"
+description = "The `halyard` command line: init, plan, apply, pr, check, explain, status, graph, doctor, schema, completions"
 
 [[bin]]
 name = "halyard"
