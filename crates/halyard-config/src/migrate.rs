@@ -2387,8 +2387,9 @@ pub trait DraftSink: std::fmt::Debug {
 
     /// Creates `path` with `contents`, atomically (temp sibling →
     /// fsync → rename) and create-only: an existing target is refused
-    /// with [`ConfigError::Migrate`], never overwritten. A refused or
-    /// failed write leaves no partial file behind.
+    /// (the sink's stable code — `E-CFG-MIGRATE` for the migration
+    /// sinks, `E-CFG-INIT` for the scaffold sink), never overwritten.
+    /// A refused or failed write leaves no partial file behind.
     fn write(&self, path: &str, contents: &str) -> Result<(), ConfigError>;
 }
 
