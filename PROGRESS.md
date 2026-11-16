@@ -46,6 +46,114 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M4.7 continued: knope + release-plz migration sources slice (ADR-0024) | done | (tree left dirty; no commits) | M1: the §16.2 row's remaining two `MigrationSource` impls over the ADR-0022 seam — `KnopeSource` (`knope.toml`: the documented `[package]`/`[packages."<name>"]` shapes, the Release step's tag rules `v{version}` / `{name}/v{version}` composed into one appendix-A.3 template per shape, `versioned_files` as provenance notes, workflows/scopes/extra_changelog_sections/assets/github/jira/variables as unmapped rows with reasons, both package shapes together a fail-closed `E-CFG-MIGRATE`, packageless configs an honest advisory row) and `ReleasePlzSource` (`release-plz.toml` / `.release-plz.toml` / `.config/release-plz.toml` in the documented top-down search order, first-match-only; the Tera `git_tag_name` translated onto the appendix-A.3 grammar by placeholder substitution with any other Tera variable an honest unmapped row — never half-translated; the documented workspace default mapped with the `auto`-equivalence note; per-package `release = false` → the exact `[[package]].release` override; `changelog.style = "keep-a-changelog"` pinned from the documented default; `publish` always unmapped with the I7 opt-in reason; `version_group` a review row; per-package tag disagreements reported, never guessed; `[[package]]` without `name` fail-closed) — both wired into `default_sources()` (the registry is four), no renderer changes (the report is data), the write path untouched (empty drafts are not candidates, the ADR-0023 rule); 21 engine tests + 1 new CLI gate + the `tools.len()` pin moved 2→4 (one red→green cycle, red on `unreachable!("knope survey present")` + the pin); bench groups `knope_survey_2_packages` (≈6.5 µs) + `release_plz_survey_2_packages` (≈9.5 µs) + the empty-tree pin moved to four sources; example `migrate_report` extended with a release-plz survey; the two grammars VERIFIED (knope config/packages/Release-step pages, release-plz config reference — verbatim quotes in `docs/research/migrate-config-grammars.md`) + ADR-0024 + E-CFG-MIGRATE page/index + module doc as-built + README/arch/CLI-README rows | M2 (the corpus-lane acceptance, 20 real-world foreign configs) deferred with the inventory recorded — never half-shipped; the changesets tag-grammar VERIFY, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; session log below |
 
 
+| §10.3 prerelease channels — planner integration (M5.6 step 1, ADR-0025) + branch-bound channels (step 2) | done | (tree left dirty; no commits) | M1 (M5.6 step 1): the M1.3 algebra's channel half consumed at last — `advance_prerelease`/`PrereleaseChannel`/`promote_to_stable` moved to `halyard-core::bump` (the ADR-0008 canonical home; `halyard-version` re-exports unchanged, its public API + tests untouched); `PlanConfig.prerelease_channel` + the train-aware `materialize_versions` (an active train = the release base tag is a prerelease; a non-breaking step is absorbed into the train's committed triple — `1.3.0-rc.1` + fix → `1.3.0-rc.2`, never `1.3.1`; a breaking step opens a new base), `promote_pending_stable` (removing the key with nothing new landed plans the manifest's own stable triple — the §10.3 promotion rule; skipped when the manifest is behind the latest tag), `channelize_targets` (the counter witnesses = the base tag's parsed version + the manifest version, applied before requirement rewrites so dependent manifests carry the exact prerelease triple; `Release-As` targets exempt; channels are parallel tracks — the skip guard is equality, not `<=`), the release row's `bump` reports the derived bump on a same-triple advance (an owed release never renders `none`); `halyard-config`: `[versioning].channel` validated at resolve time (`ConfigError::Channel` = `E-CFG-CHANNEL` + page + index row), merged low→high, carried in `ResolvedConfig::prerelease_channel`, `plan_config`, and `config_hash` (a channel change invalidates the §8.7 cache key); schema regenerated (`xtask schema-check --write`); 7 planner tests + 4 config tests + 3 CLI gates (red→green on record: E0609/E0560/E0599 on the missing seam, then the train semantics surfaced by failing expectations — the red phase corrected the design, not the tests); bench `planner_channel` (fresh-train ≈9.5 µs, active-train counter ≈10.7 µs, stable baseline — the channel overhead ≈1 µs); example `prerelease_channel` (the full lifecycle: rc.1 → rc.2 → promotion); existing goldens byte-identical (no channel ⇒ the stable planner unchanged); M2 (step 2, same ADR): `[versioning].channel_branches = { next = "rc" }` — branch→channel bindings validated per key at resolve time (E-CFG-CHANNEL names the branch), merged per-key low→high, the pure `ResolvedConfig::channel_for_branch` (binding wins, detached/unborn HEAD plans the default); CLI `checked_out_branch()` (`GITHUB_HEAD_REF` wins, lenient `None` otherwise) applied in `context()` before the `config_hash` is computed (planning `next` and `main` never share attributions); 4 config tests + 2 CLI gates (branch-binding red→green: E0560/E0599); bench `channel_branch` in halyard-config (hit ≈36 ns, fallback ≈17 ns); arch §10.3 as-built + §16.4 key + ADR-0025 (both steps) + E-CFG-CHANNEL page + README/CLI-README rows + example row | Per-package `[[package]] channel` overrides deferred (the policy is repo-wide like `pre_major` — one train definition per repo); the M5.6 maintenance-branch *backport* flows (planning against `1.x` histories) stay their own slice; the M4.7 corpus-lane acceptance, M5.3 OIDC (live-CI lane), the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-15; session log below |
+
+
+### 2026-11-15 — §10.3 prerelease channels: the planner integration (M5.6 step 1, ADR-0025) + branch-bound channels (step 2) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `de9b663` (the
+  knope/release-plz slice): baseline re-verified with a fresh stable
+  toolchain installed in-sandbox (`RUSTFLAGS="-C debuginfo=0"`,
+  `CARGO_INCREMENTAL=0` — the disk-ceiling lesson applied: the first
+  full test build filled the rootfs to 100 % once and the incremental
+  dirs had to be dropped). The declared start points were (1) the
+  M4.7 corpus-lane acceptance, (2) the M2.6 dhat re-audit, (3) M5.3
+  OIDC (needs a live CI runtime), (4) the corpus-wide pnpm
+  differential (needs a pnpm binary the sandbox lacks). Picked none of
+  them as the milestone: (1) is an acceptance run, not net-new
+  capability, (2) is perf, (3)/(4) are environment-blocked — and the
+  roadmap's own M5.6 row ("prerelease channels + maintenance-branch
+  release trains; fixtures: `next`/`rc`, `1.x` backports") is fully
+  offline-verifiable and entirely unstarted: the M1.3 algebra shipped
+  `advance_prerelease` with **zero planner integration** (only its
+  tests and the bump example called it). M1 = the channel planner
+  integration; M2 = the branch-bound channels §10.3 names in the same
+  sentence.
+- **M1 implemented (no stubs), one full red→green cycle** (the 7
+  planner tests written first — red on E0609/E0560 (`PlanConfig` had
+  no `prerelease_channel`), E0422 (`PrereleaseChannel` not in core) —
+  the config tests red on E0560/E0599 (`VersioningCfg.channel`,
+  `ResolvedConfig.prerelease_channel`, `E-CFG-CHANNEL` missing) — the
+  3 CLI gates red at runtime (the binary ignored the key); then
+  implemented. Two of the first green-run failures were **design
+  corrections the tests surfaced, not test bugs**: applying the
+  channel over `apply_bump`'s output produced `1.3.0-rc.1 + fix →
+  1.3.1-rc.1` (the fix double-bumped the train's triple) and the
+  counter dropped a channel *switch* to a semver-lower tier
+  (`rc.1 → beta.1`) — the shipped semantics absorb non-breaking steps
+  into the train's committed triple and guard only equality:
+  - Design decisions (ADR-0025): the counter witnesses are exactly the
+    §10.3 stateless inputs — the release base's parsed version (the
+    resolver already picked the newest train tag) and the manifest
+    version (which witnesses the applied-but-untagged case); the
+    channel half of the algebra moved to `halyard-core::bump` per the
+    ADR-0008 precedent with `halyard-version` re-exporting unchanged;
+    `Release-As` targets are exempt (explicit user intent); promotion
+    is a lifecycle act (removing the key with nothing new landed plans
+    the manifest's own stable triple, skipped when the manifest is
+    behind the latest tag — the reconciliation owns that state); a
+    migration never sets the key (ADR-0022); the release row's `bump`
+    reports the derived bump on a same-triple advance.
+  - `config_hash` includes the channel (a channel change invalidates
+    the §8.7 cache key) — pinned by test; the frozen
+    `halyard-plan/v1` wire format needed no change (the plan's `to`
+    carries the prerelease string); the §11.1 reconciliation and tag
+    phase needed no change (they already compare full semver versions)
+    — pinned by the existing suites.
+- **M2 implemented (M1 green first), one red→green cycle** (the 4
+  config tests + 2 CLI gates written first — red on E0560/E0599, then
+  green): `[versioning].channel_branches` validated per key at resolve
+  time (the error names the branch), merged per-key low→high, the pure
+  `ResolvedConfig::channel_for_branch` (binding wins over the unbound
+  default; `None` = detached/unborn HEAD plans the default); the CLI
+  resolves the checked-out branch once in `context()` —
+  `GITHUB_HEAD_REF` wins (the §11.5 workflow view), else the gix HEAD
+  referent, lenient `None` — **before** the `config_hash` is computed,
+  so planning `next` (bound `rc`) and `main` (stable) never share
+  attributions. The branch test drives one fixture through two
+  checkouts (`next` → `rc.1`, `main` → stable) over the same config.
+- **Tests/bench/example totals.** +11 planner/config engine tests + 5
+  CLI gates over base (7 channel planner tests, 4+4 config tests, 3+2
+  CLI gates; the did-you-mean snapshot for `[versioning]` regenerated
+  with `channel`/`channel_branches` in the valid list); bench groups
+  `plan_channel` (fresh-train ≈9.5 µs, active-train ≈10.7 µs, stable
+  baseline — channel overhead ≈1 µs) and `channel_branch` (bound hit
+  ≈36 ns, fallback ≈17 ns); example `prerelease_channel` (the whole
+  lifecycle: rc.1 → rc.2 → promotion to 1.3.0).
+- **Docs.** ADR-0025 (both steps, the tradeoffs on record), the
+  `E-CFG-CHANNEL` page + index row, arch §10.3 as-built + the §16.4
+  `channel` key, root README status paragraph + example row, CLI
+  README channel + branch-binding notes, PROGRESS row above.
+- **Gates on the final tree.** fmt green; clippy
+  `--workspace --all-targets --all-features --locked -- -D warnings`
+  0 findings (three real findings surfaced en route and were fixed in
+  code, not suppressed: two `too_many_lines` (the bump display and the
+  release-please draft assembly extracted into documented helpers),
+  plus bench/example-side `redundant_closure`/`field_reassign`/
+  semicolon findings); the lint-hygiene grep empty; the full
+  `test --workspace --all-features --locked` green; `--benches`
+  compiled and run; `check-layers` ✓ 18 crates; `schema-check` ✓ (the
+  schema regenerated for the two new keys). Gate notes: the literal
+  `-W pedantic` appended to the clippy CLI is (a) a deprecated lint
+  name on this toolchain (denied by `-D warnings` itself) and (b) when
+  properly qualified `-W clippy::pedantic`, overrides the two curated
+  `[workspace.lints.clippy]` allows (`must_use_candidate`,
+  `missing_errors_doc`, each with its rationale) — 95+8 findings that
+  are the documented curation, not regressions; the pedantic
+  enforcement this repo ships is `pedantic = deny` in the lints table
+  (README documents exactly this: "a CLI -W would override the curated
+  allows"). The cache conflict-feature lane (`miri`/`loom` never
+  combined) ran as documented: `--features loom --release`.
+- **Honest state at cut-off.** Per-package `[[package]] channel`
+  overrides deferred (repo-wide like `pre_major`); the M5.6
+  maintenance-branch *backport* flows stay their own slice; the M4.7
+  corpus-lane acceptance, M2.6 dhat re-audit, M5.3 OIDC, the
+  corpus-wide pnpm differential and the two p50 perf-budget misses are
+  unchanged. Tree left dirty (no commits).
+- **Next session start point.** (1) the M4.7 corpus-lane acceptance,
+  (2) the M2.6 dhat re-audit with the cache warm, (3) M5.3 OIDC on a
+  live CI runtime, (4) per-package channel overrides.
+
 ### 2026-11-15 — M4.7 continued: the knope + release-plz migration sources (ADR-0024) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `4a701c0` (the
