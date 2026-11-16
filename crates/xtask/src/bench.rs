@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use serde::Deserialize;
 
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::planner::{PlanConfig, Snapshot};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
@@ -209,10 +210,14 @@ fn measure_pipeline(dir: &Path, runs: usize) -> Result<ScenarioSamples, String> 
         let history = GitHistory::build(dir, &discovery.workspace, 10_000)
             .map_err(|e| format!("history: {e}"))?;
         let refs = ReleaseRefs::from_bases(history.digest().bases.clone());
+        // The §14.1 scenarios measure the planning pipeline as shipped
+        // on a bare repo — no `.halyard/changes/` input is scanned.
+        let changes = ChangeFiles::new();
         let snapshot = Snapshot {
             workspace: &discovery.workspace,
             history: &history,
             refs: &refs,
+            change_files: &changes,
         };
         let plan = halyard_core::planner::plan(&snapshot, &PlanConfig::default_values())
             .map_err(|e| format!("plan: {e}"))?;
