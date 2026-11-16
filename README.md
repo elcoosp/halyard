@@ -38,7 +38,14 @@ release-please/changesets/knope/release-plz configs surveyed into
 mapped rows, semantic differences and a validated draft `halyard.toml`;
 `migrate --write` lands the reviewed draft atomically, create-only — an
 existing config is never clobbered and two configured tools are a
-refusal, not a guess; ADR-0022 + ADR-0023 + ADR-0024).** The
+refusal, not a guess; ADR-0022 + ADR-0023 + ADR-0024) — and the
+§10.3 prerelease-channel planner integration (M5.6 step 1, ADR-0025:
+`[versioning].channel = "rc"` turns every planned release into
+`{target}-{channel}.{n}` with the counter derived from the tags the
+repo already carries — no state file — and removing the key promotes a
+leftover prerelease manifest to its own stable triple; step 2 binds
+channels to branches (`channel_branches = { next = "rc" }` — the
+§10.3 `next`-branch trains)).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -215,6 +222,7 @@ cargo run -p xtask -- git-diff         # tree-diff attribution vs git ground tru
 cargo run -p halyard-test-support --example fixture_tour
 cargo run -p halyard-core --example workspace_demo
 cargo run -p halyard-core --example pending_releases
+cargo run -p halyard-core --example prerelease_channel
 cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-conventional --example lint_title
 cargo run -p halyard-version --example bump_algebra
