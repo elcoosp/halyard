@@ -270,6 +270,7 @@ fn publish_dry_gated_rows_follow_a_broken_tool() -> Result<(), BoxError> {
 /// fail-closed and the scrubbing contracts, the seam's observable
 /// surface).
 const TOKEN: &str = "hunter2-secret-token-value";
+const OIDC_REQUEST_TOKEN: &str = "oidc-request-token-secret-value";
 
 #[test]
 fn publish_failure_message_scrubs_the_resolved_token() -> Result<(), BoxError> {
@@ -919,6 +920,84 @@ fn publish_refuses_an_npm_package_with_a_non_http_registry() -> Result<(), BoxEr
     assert!(
         !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
         "zero side effects — the tool never spawned: {text}"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The OIDC trusted-publishing wire-up (M5.3 step 3, ADR-0031): the
+// context detection rides the shell's fail-closed refusal point (a
+// half-configured GitHub Actions OIDC context refuses before any plan,
+// probe or spawn — offline testable, the exchange itself is
+// contract-tested in halyard-publish over the scripted transport), and
+// `doctor` reports the detected context.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn oidc_half_context_refuses_before_any_spawn() -> Result<(), BoxError> {
+    let fx = build_workspace("oidc-half", publish_enabled_config())?;
+    let shim = write_cargo_shim("shim-oidc-half")?;
+    let log = fixture_dir("shim-log-oidc-half")?.join("argv.log");
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+        &[(
+            "ACTIONS_ID_TOKEN_REQUEST_URL",
+            "https://actions.example.test/oidc?audience=",
+        )],
+    )?;
+    assert!(!out.status.success(), "the half context refuses: {text}");
+    assert!(
+        text.contains("E-PUB-AUTH"),
+        "the refusal carries the seam's stable code: {text}"
+    );
+    assert!(
+        text.contains("ACTIONS_ID_TOKEN_REQUEST_TOKEN"),
+        "the message names the missing variable (the fix): {text}"
+    );
+    assert!(
+        std::fs::read_to_string(&log).is_err() || std::fs::read_to_string(&log)?.trim().is_empty(),
+        "no tool spawn may fire after the refusal"
+    );
+    Ok(())
+}
+
+#[test]
+fn doctor_reports_the_publish_oidc_row() -> Result<(), BoxError> {
+    let fx = build_workspace("doctor-oidc", publish_enabled_config())?;
+    // A detected context: the row reports it, names never values.
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["doctor", "--format", "json"],
+        None,
+        None,
+        &[
+            (
+                "ACTIONS_ID_TOKEN_REQUEST_URL",
+                "https://actions.example.test/oidc?audience=",
+            ),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", OIDC_REQUEST_TOKEN),
+        ],
+    )?;
+    assert!(out.status.success(), "doctor failed: {text}");
+    assert!(text.contains("publish-oidc"), "the check row: {text}");
+    assert!(
+        text.contains("gha-oidc("),
+        "the detected context is named: {text}"
+    );
+    assert!(
+        !text.contains(OIDC_REQUEST_TOKEN),
+        "the request token never reaches doctor: {text}"
+    );
+    // Absence (outside GitHub Actions): the normal shape, still ok.
+    let (out, text) =
+        halyard_env_with(fx.root(), &["doctor", "--format", "json"], None, None, &[])?;
+    assert!(out.status.success(), "doctor failed: {text}");
+    assert!(
+        text.contains("no GitHub Actions OIDC context"),
+        "absence is honest: {text}"
     );
     Ok(())
 }
