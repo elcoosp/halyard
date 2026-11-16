@@ -1,7 +1,7 @@
 //! The CI-selector adapters (§16.3/M10 step 2, ADR-0034): the affected
 //! selection rendered in a CI system's **own** grammar — the
 //! machine-consumer surface beside the human/json/gha renderings (the
-//! CLI's `affected --ci turbo|nx|bazel`).
+//! CLI's `affected --ci turbo|nx|bazel|gha|gitlab`).
 //!
 //! Each adapter is a pure projection over two name-sorted inputs (the
 //! change roots and the closed selection, both as [`SelectedPackage`])
@@ -24,6 +24,24 @@
 //!   (`//pkg/root/...` — "all rules in every package recursively
 //!   beneath the foo directory"), unioned with the documented `+`
 //!   alias.
+//! - **GitHub Actions** (docs.github.com, "Running variations of jobs
+//!   in a workflow"): "You can use the output from one job to define
+//!   matrices for multiple jobs" — the documented output value is the
+//!   JSON array (`colors=["red", "green", "blue"]` written to
+//!   `$GITHUB_OUTPUT`, fed to `fromJSON(needs.…outputs.…)` inside the
+//!   downstream `strategy.matrix`). Actions computes no dependency
+//!   closure, so the array encodes the full affected closure; the
+//!   consumer names the matrix dimension on its side.
+//! - **GitLab** (docs.gitlab.com/ci/yaml, "parallel:matrix"): "Use
+//!   parallel:matrix to run a job multiple times in parallel in a
+//!   single pipeline, but with different variable values for each
+//!   instance of the job" — "Supported values: An array of hashes of
+//!   variables … The matrix identifiers, which become the variable
+//!   names, can use only numbers, letters, and underscores". One
+//!   `- HALYARD_PKG: <name>` hash per affected package — the
+//!   halyard-owned identifier (namespaced so it cannot collide with
+//!   the job's own variables) the consumer reads as `$HALYARD_PKG` in
+//!   the script.
 //!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
@@ -125,15 +143,69 @@ impl CiSelectorAdapter for BazelSelector {
     }
 }
 
-/// The closed adapter lookup: `turbo`, `nx`, `bazel` — anything else is
-/// `None` (an unknown system is a caller bug the CLI's value enum
-/// refuses before this point).
+/// The GitHub Actions adapter: one compact JSON array over the
+/// affected closure, name-sorted — the documented matrix-output value
+/// ("You can use the output from one job to define matrices for
+/// multiple jobs"; the `colors=["red", "green", "blue"]` output fed to
+/// `fromJSON(...)` inside the downstream `strategy.matrix`). Actions
+/// computes no dependency closure of its own, so the array encodes the
+/// full affected selection, and the consumer names the matrix
+/// dimension on its side — no key policy is encoded here.
+pub struct GhaSelector;
+
+impl CiSelectorAdapter for GhaSelector {
+    fn system(&self) -> &'static str {
+        "gha"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let names = affected
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<&str>>();
+        let array = serde_json::to_string(&names)
+            .unwrap_or_else(|_| unreachable!("a string array serializes without error"));
+        vec![array]
+    }
+}
+
+/// The GitLab adapter: one `- HALYARD_PKG: <name>` hash per affected
+/// package, name-sorted — the `parallel:matrix` "array of hashes of
+/// variables" ("each instance of the job" runs "with different
+/// variable values"). `HALYARD_PKG` is the halyard-owned matrix
+/// identifier (identifiers "can use only numbers, letters, and
+/// underscores"; the namespaced spelling cannot collide with the
+/// job's own variables), and the consumer pastes the lines under
+/// `parallel: matrix:` and reads `$HALYARD_PKG` in the script.
+pub struct GitlabSelector;
+
+impl CiSelectorAdapter for GitlabSelector {
+    fn system(&self) -> &'static str {
+        "gitlab"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        affected
+            .iter()
+            .map(|package| format!("- HALYARD_PKG: {}", package.name))
+            .collect()
+    }
+}
+
+/// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`
+/// — anything else is `None` (an unknown system is a caller bug the
+/// CLI's value enum refuses before this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
         "turbo" => Some(&TurboSelector),
         "nx" => Some(&NxSelector),
         "bazel" => Some(&BazelSelector),
+        "gha" => Some(&GhaSelector),
+        "gitlab" => Some(&GitlabSelector),
         _ => None,
     }
 }
