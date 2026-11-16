@@ -10,6 +10,13 @@ description = "Topological publish engine (M5.2, §13): layers over the workspac
 [dependencies]
 halyard-core = { workspace = true }
 halyard-registry = { workspace = true }
+# The OIDC trusted-publishing exchange rides the forge transport
+# vocabulary (ADR-0031): the same plain-data `HttpTransport` seam the
+# registry clients inject — the scripted `MemoryTransport` offline, the
+# blocking `UreqTransport` at runtime. The crate still owns no HTTP
+# client.
+halyard-forge = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
