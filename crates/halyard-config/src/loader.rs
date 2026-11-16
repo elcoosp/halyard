@@ -68,6 +68,7 @@ fn section_keys(path: &str) -> Option<&'static [&'static str]> {
             "cascade",
             "channel",
             "channel_branches",
+            "maintenance_branches",
         ]),
         "versioning.pre_major" => Some(&["breaking", "feat"]),
         "commits" => Some(&["types", "merge_policy", "initial_release"]),
@@ -77,7 +78,7 @@ fn section_keys(path: &str) -> Option<&'static [&'static str]> {
         "publish.cargo" => Some(&["registry", "wait_for_index"]),
         "publish.npm" => Some(&["access", "provenance"]),
         "forge" => Some(&["kind", "commit_mode"]),
-        "package.element" => Some(&["name", "release", "include", "exclude"]),
+        "package.element" => Some(&["name", "release", "include", "exclude", "channel"]),
         "link.element" => Some(&["from", "to", "mode"]),
         // `package` / `link` are array-of-tables: their elements are
         // validated against the `<path>.element` keys instead.
