@@ -29,15 +29,15 @@
 //! itself is outside loom's model and documented there).
 //!
 //! Feature interaction (worth knowing when reading gate output): the
-//! `miri` and `loom` features are mutually exclusive by contract ("never
-//! combined in one build", `Cargo.toml`), and because the `miri`
-//! feature's shim switches `Mmap::open` to return `None`, a
-//! `--all-features` gate run silently exercises this crate through the
-//! `read()`-backed fallback — the real-`mmap` syscalls are covered only
-//! by the default-feature lane (`cargo test -p halyard-cache`) and the
-//! Miri lane. A `--all-features` failure here therefore reproduces with
-//! default features too; a default-feature failure does not reproduce
-//! under `--all-features`.
+//! `miri` and `loom` features are mutually exclusive — documented in the
+//! manifest and machine-enforced (ADR-0030: a build combining them is a
+//! compile error, never a silent contract). Because the `miri` feature's
+//! shim switches `Mmap::open` to return `None`, an `--all-features` gate
+//! run would silently exercise this crate through the `read()`-backed
+//! fallback — the real-`mmap` syscalls are covered only by the
+//! default-feature lane (`cargo test -p halyard-cache`) and the Miri
+//! lane, which is why the CI gates run `--features ci-bundle` (ADR-0030)
+//! instead of `--all-features`.
 //!
 //! Layer note: this crate depends on `halyard-core` only (the record
 //! payload is a [`SmallBitset`]); it is consumed by `halyard-git` *before*
@@ -49,12 +49,22 @@
 //! carries no allow attributes; the `unsafe` surface is confined to the
 //! private `mmap` module with its own SAFETY rationale.
 
+// ADR-0030: the manifest documents `miri` and `loom` as never-combined;
+// the contract is a compile error so no build can silently violate it
+// (run them as separate builds — the two lanes' documented invocations).
+#[cfg(all(feature = "miri", feature = "loom"))]
+compile_error!(
+    "the `miri` and `loom` features are mutually exclusive by contract \
+     (crates/halyard-cache/Cargo.toml, docs/HALYARD_ARCHITECTURE.md §15.1, ADR-0030): \
+     run them as separate builds — `cargo test -p halyard-cache --features miri` \
+     and `cargo test -p halyard-cache --features loom --release`"
+);
+
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use halyard_core::SmallBitset;
 use tracing::trace;
@@ -278,24 +288,6 @@ impl std::fmt::Display for CacheError {
 }
 
 impl std::error::Error for CacheError {}
-
-/// Process-global hit/miss counters (`tracing`-adjacent; read by the
-/// profiler and `doctor`). These are the *current run's* counters; the
-/// cross-run hit-rate lives in the file header (reset at flush).
-static HITS: AtomicU64 = AtomicU64::new(0);
-static MISSES: AtomicU64 = AtomicU64::new(0);
-
-/// The current process's cache hit/miss counters (`(hits, misses)`).
-#[must_use]
-pub fn global_stats() -> (u64, u64) {
-    (HITS.load(Ordering::Relaxed), MISSES.load(Ordering::Relaxed))
-}
-
-/// Resets the process-global counters (test/doctor hook).
-pub fn reset_stats() {
-    HITS.store(0, Ordering::Relaxed);
-    MISSES.store(0, Ordering::Relaxed);
-}
 
 /// An open cache (§8.7). The in-memory index maps keys onto
 /// `(offset, length)` inside the valid prefix; iteration order of the
@@ -629,11 +621,9 @@ impl Cache {
             None => None,
         };
         if found.is_some() {
-            HITS.fetch_add(1, Ordering::Relaxed);
             self.hits.set(self.hits.get() + 1);
             trace!(hit = true, "cache get");
         } else {
-            MISSES.fetch_add(1, Ordering::Relaxed);
             self.misses.set(self.misses.get() + 1);
             trace!(hit = false, "cache get");
         }
