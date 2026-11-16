@@ -40,7 +40,8 @@ unused = { level = "deny", priority = -1 }
 # Pedantic + restriction enforcement lives HERE, not on the clippy CLI
 # (`-W clippy::pedantic` on the command line would override the allow-listed
 # entries below). The gate remains `cargo clippy --workspace --all-targets
-# --all-features -- -D warnings`.
+# --features ci-bundle -- -D warnings` (ADR-0030: the conflict-free spelling;
+# `--all-features` combines the machine-enforced-exclusive miri/loom pair).
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 # §15.3 restriction set; the test allowances (`allow-unwrap-in-tests` & co.)
