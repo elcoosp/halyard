@@ -9,6 +9,7 @@
 use std::hint::black_box;
 
 use criterion::Criterion;
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::history::{
     AuthorRef, BaseRef, FixedHistory, HistoryDigest, ParsedCommit, ReleaseRefs, RelevantCommit,
 };
@@ -88,10 +89,12 @@ fn fixture(
     let history = Box::leak(Box::new(FixedHistory::new(Some(head), digest)));
     let refs = Box::leak(Box::new(ReleaseRefs::from_bases(vec![base])));
     let leaked_ws: &'static Workspace = Box::leak(Box::new(ws));
+    let changes: &'static ChangeFiles = Box::leak(Box::new(ChangeFiles::new()));
     Snapshot {
         workspace: leaked_ws,
         history,
         refs,
+        change_files: changes,
     }
 }
 
@@ -181,10 +184,12 @@ fn fixture_two(
     let history = Box::leak(Box::new(FixedHistory::new(Some(head), digest)));
     let refs = Box::leak(Box::new(ReleaseRefs::from_bases(bases)));
     let leaked_ws: &'static Workspace = Box::leak(Box::new(ws));
+    let changes: &'static ChangeFiles = Box::leak(Box::new(ChangeFiles::new()));
     Snapshot {
         workspace: leaked_ws,
         history,
         refs,
+        change_files: changes,
     }
 }
 
