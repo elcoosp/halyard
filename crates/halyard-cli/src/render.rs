@@ -288,12 +288,37 @@ pub fn publish_report(
         };
         let _ = writeln!(
             out,
-            "  layer {} {}@{} ({}): {}",
-            row.layer, row.package, row.version, row.registry, what,
+            "  layer {} {}@{} ({}): {}{}",
+            row.layer,
+            row.package,
+            row.version,
+            row.registry,
+            what,
+            npm_options_suffix(row)
         );
     }
     let _ = writeln!(out, "{}", publish_auth_line(auth));
     out
+}
+
+/// The npm publish options as a bracketed human suffix (ADR-0033): only
+/// when the contract carries at least one option — unset stays absent,
+/// so cargo-only and unset-npm lines keep the byte-stable shape (I3).
+fn npm_options_suffix(row: &halyard_publish::PublishRow) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(access) = &row.access {
+        parts.push(format!("access {access}"));
+    }
+    match row.provenance {
+        Some(true) => parts.push("provenance".to_owned()),
+        Some(false) => parts.push("no-provenance".to_owned()),
+        None => {}
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [npm: {}]", parts.join(", "))
+    }
 }
 
 /// The publish-auth provenance as a one-line human/gha tail (M5.3 step
@@ -337,7 +362,10 @@ pub fn publish_report_json(
 }
 
 /// One row's machine shape: the outcome is tagged by `kind` (the error
-/// taxonomy convention — a stable discriminator).
+/// taxonomy convention — a stable discriminator). The npm publish
+/// options (ADR-0033) ride the row only when the contract carries them
+/// — unset stays absent, so cargo-only and unset-npm reports keep the
+/// byte-stable shape (I3).
 pub fn publish_row_json(row: &halyard_publish::PublishRow) -> serde_json::Value {
     let outcome = match &row.outcome {
         halyard_publish::PublishOutcome::Published {
@@ -366,7 +394,7 @@ pub fn publish_row_json(row: &halyard_publish::PublishRow) -> serde_json::Value 
             "retryable": retryable,
         }),
     };
-    serde_json::json!({
+    let mut row_json = serde_json::json!({
         "package": row.package,
         "version": row.version,
         "ecosystem": row.ecosystem,
@@ -375,7 +403,19 @@ pub fn publish_row_json(row: &halyard_publish::PublishRow) -> serde_json::Value 
         "manifest_dir": row.manifest_dir,
         "layer": row.layer,
         "outcome": outcome,
-    })
+    });
+    if let Some(object) = row_json.as_object_mut() {
+        if let Some(access) = &row.access {
+            object.insert(
+                "access".to_owned(),
+                serde_json::Value::String(access.clone()),
+            );
+        }
+        if let Some(provenance) = row.provenance {
+            object.insert("provenance".to_owned(), serde_json::Value::Bool(provenance));
+        }
+    }
+    row_json
 }
 
 /// One not-target's machine shape (§16.3: what was ignored and why).
@@ -840,7 +880,7 @@ pub fn status_gha(context: &Context) -> String {
 
 /// The name of one workspace package (empty for a foreign id — the
 /// renderers stay total over stale selections).
-fn package_name(context: &Context, pkg: PkgId) -> String {
+pub(crate) fn package_name(context: &Context, pkg: PkgId) -> String {
     context
         .discovery
         .workspace
@@ -853,6 +893,18 @@ fn package_name(context: &Context, pkg: PkgId) -> String {
                 .get(p.name)
                 .map(str::to_owned)
         })
+        .unwrap_or_default()
+}
+
+/// The repo-relative root of one workspace package (empty for a
+/// foreign id — the renderers stay total over stale selections). The
+/// CI-selector adapters' Bazel patterns read it (M10 step 2, ADR-0034).
+pub(crate) fn package_root(context: &Context, pkg: PkgId) -> &str {
+    context
+        .discovery
+        .workspace
+        .package(pkg)
+        .map(|p| p.root.as_str())
         .unwrap_or_default()
 }
 
