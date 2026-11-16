@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `halyard` command line: init, plan, apply, pr, check, explain, status, graph, doctor, schema, completions"
+description = "The `halyard` command line: init, plan, apply, pr, check, affected, explain, status, graph, doctor, schema, completions, man"
 
 [[bin]]
 name = "halyard"
@@ -64,7 +64,12 @@ halyard-test-support = { workspace = true }
 insta = { workspace = true }
 # The `release_pipeline` example holds the fixture repo in a temp dir.
 tempfile = { workspace = true }
+# The `man` bench (§16.2): the page render's throughput.
+criterion = { workspace = true }
 
+[[bench]]
+name = "man"
+harness = false
 
 [lints]
 workspace = true
