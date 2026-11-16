@@ -76,8 +76,8 @@ use halyard_registry::{
 pub mod auth;
 
 pub use auth::{
-    AuthOutcome, CredentialEnv, EnvPublishAuth, PublishAuth, auth_summary, scrub_secrets,
-    variables_for,
+    AuthOutcome, CredentialEnv, EnvPublishAuth, PublishAuth, auth_summary,
+    provenance_runtime_detected, scrub_secrets, variables_for,
 };
 
 pub mod oidc;
@@ -218,6 +218,16 @@ pub struct PublishTarget {
     /// `crates/a/Cargo.toml`) — the cargo `--manifest-path` argument
     /// (M5.2 step 2: the spawn effect needs the file, not only the dir).
     pub manifest: String,
+    /// npm access level from the plan contract (`public` |
+    /// `restricted`) — `None` = unset, the tool's own posture governs
+    /// (ADR-0033). Cargo targets carry `None`.
+    pub access: Option<String>,
+    /// npm provenance request from the plan contract — `None` = unset
+    /// (trusted publishing decides, ADR-0033), `Some(true)` = the
+    /// explicit `--provenance` request the runtime gate guards,
+    /// `Some(false)` = the documented opt-out. Cargo targets carry
+    /// `None`.
+    pub provenance: Option<bool>,
 }
 
 /// A release the engine will not publish, reported for observability
@@ -366,6 +376,8 @@ fn join_targets(
             registry: publish.registry.clone(),
             manifest_dir: package.root.as_str().to_owned(),
             manifest: package.manifest.as_str().to_owned(),
+            access: publish.access.clone(),
+            provenance: publish.provenance,
         });
     }
     targets.sort_unstable_by(|a, b| a.package.cmp(&b.package));
@@ -1029,10 +1041,29 @@ pub enum PublishMode {
     Dry,
 }
 
+/// Whether a supported cloud CI runtime was detected for this run
+/// (ADR-0033): the npm provenance attestations are documented for
+/// cloud-hosted runners only — GitHub Actions (`id-token: write`, the
+/// OIDC context the runner exposes) and GitLab CI/CD (the `GITLAB_CI`
+/// marker, VERIFIED: docs.gitlab.com predefined variables — "true when
+/// available"). The shell resolves the detection from the process
+/// environment; the engine consumes the verdict as plain data (the
+/// validate-then-act input, §15.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProvenanceRuntime {
+    /// A supported cloud CI runtime was detected (a GitHub Actions OIDC
+    /// context, or GitLab CI/CD markers): an explicit `provenance =
+    /// true` request may run.
+    CloudDetected,
+    /// No supported cloud runtime was detected (the laptop shape): a
+    /// live `provenance = true` npm target refuses before any call.
+    NotDetected,
+}
+
 /// The run policy: the mode (§13.8), the visibility-wait bounds (§13
-/// step 3, "max wait configurable") and the within-layer parallelism
+/// step 3, "max wait configurable"), the within-layer parallelism
 /// bound (§13 step 1, "packages within a layer publish concurrently
-/// (bounded)").
+/// (bounded)") and the provenance-runtime verdict (ADR-0033).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PublishPolicy {
     /// Live or dry (§13.8). Routing validation is identical in both —
@@ -1047,17 +1078,26 @@ pub struct PublishPolicy {
     /// deterministic sequential run. The report is name-sorted either
     /// way (I3).
     pub max_parallel: usize,
+    /// The provenance-runtime verdict the shell resolved (ADR-0033).
+    /// The conservative default is [`ProvenanceRuntime::NotDetected`] —
+    /// a live `provenance = true` npm target refuses unless the caller
+    /// detected a supported cloud runtime and said so.
+    pub provenance_runtime: ProvenanceRuntime,
 }
 
 impl PublishPolicy {
     /// A policy with explicit bounds (live mode); `max_parallel` of `0`
-    /// normalizes to `1`.
+    /// normalizes to `1`. The provenance runtime defaults to
+    /// [`ProvenanceRuntime::NotDetected`] — override it with
+    /// [`PublishPolicy::in_provenance_runtime`] when the shell detected
+    /// a supported cloud CI.
     #[must_use]
     pub fn new(visibility: VisibilityPolicy, max_parallel: usize) -> Self {
         Self {
             mode: PublishMode::Live,
             visibility,
             max_parallel: max_parallel.max(1),
+            provenance_runtime: ProvenanceRuntime::NotDetected,
         }
     }
 
@@ -1065,6 +1105,14 @@ impl PublishPolicy {
     #[must_use]
     pub fn in_mode(mut self, mode: PublishMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Overrides the provenance-runtime verdict (builder style — the
+    /// shell's ADR-0033 detection).
+    #[must_use]
+    pub fn in_provenance_runtime(mut self, runtime: ProvenanceRuntime) -> Self {
+        self.provenance_runtime = runtime;
         self
     }
 
@@ -1142,6 +1190,14 @@ pub struct PublishRow {
     /// Package root directory relative to the repo root (the spawn
     /// cwd).
     pub manifest_dir: String,
+    /// npm access level the spawn carried (from the plan contract;
+    /// `None` = unset — the tool's own posture governs, ADR-0033).
+    pub access: Option<String>,
+    /// npm provenance request the spawn carried (`None` = unset —
+    /// trusted publishing decides, ADR-0033; `Some(true)` = the
+    /// explicit request the runtime gate guards; `Some(false)` = the
+    /// documented opt-out).
+    pub provenance: Option<bool>,
     /// The layer the target executed in (0 = no target dependencies).
     pub layer: usize,
     /// What happened.
@@ -1209,6 +1265,13 @@ pub fn run_publication(
     policy: &PublishPolicy,
     sleeper: &dyn RegistrySleeper,
 ) -> Result<PublishReport, PublishError> {
+    // The provenance posture (ADR-0033) validates first: a live
+    // `provenance = true` npm target without a detected supported cloud
+    // runtime refuses before any routing, probe or spawn — zero side
+    // effects (validate-then-act, §15.3). The dry forecast never
+    // refuses: the attestation is publish-time semantics, and an
+    // offline forecast cannot have the runtime context (I5).
+    validate_provenance_posture(&publication.targets, policy)?;
     // Route every target first: no probe, no spawn before the whole
     // run's routing is known-good (validate-then-act, §15.3).
     let by_name: BTreeMap<&str, &PublishTarget> = publication
@@ -1304,6 +1367,56 @@ pub fn run_publication(
     })
 }
 
+/// The provenance-runtime posture check (ADR-0033): a **live** npm
+/// target with an explicit `provenance = true` request refuses unless
+/// the shell detected a supported cloud CI runtime — npm's provenance
+/// attestations are documented for cloud-hosted runners only (the
+/// verified musts: `id-token: write` + a hosted runner; GitHub Actions
+/// and GitLab CI/CD), and the attestations are generated at publish
+/// time, never from a laptop. Unset (`None`) and the explicit opt-out
+/// (`Some(false)`) never refuse — the tool's own posture governs — and
+/// the gate scopes to npm targets (the argv grammar is npm's; a cargo
+/// contract that somehow carries `provenance` is not its subject).
+///
+/// # Errors
+///
+/// [`PublishError::Auth`] naming the offending packages (sorted,
+/// comma-joined), the verified must and the escape hatch — refused
+/// before any call, so the run has zero side effects.
+fn validate_provenance_posture(
+    targets: &[PublishTarget],
+    policy: &PublishPolicy,
+) -> Result<(), PublishError> {
+    if policy.mode != PublishMode::Live
+        || policy.provenance_runtime == ProvenanceRuntime::CloudDetected
+    {
+        return Ok(());
+    }
+    let mut offenders: Vec<&str> = targets
+        .iter()
+        .filter(|target| target.ecosystem == "npm" && target.provenance == Some(true))
+        .map(|target| target.package.as_str())
+        .collect();
+    if offenders.is_empty() {
+        return Ok(());
+    }
+    offenders.sort_unstable();
+    let names = offenders.join(", ");
+    Err(PublishError::Auth {
+        registry: "npm".to_owned(),
+        message: format!(
+            "the npm packages {names} request provenance attestations \
+             (`publish.npm.provenance = true`) but no supported cloud CI runtime was detected — \
+             npm provenance requires a supported cloud-hosted runner with the workflow permission \
+             `id-token: write` (GitHub Actions exposes the OIDC context only then; GitLab CI/CD is \
+             also documented) and attestations are generated at publish time, never from a laptop; \
+             add the `id-token: write` permission and run on a hosted runner, or set \
+             `publish.npm.provenance = false` (the `--no-provenance` opt-out) or remove the key to \
+             let trusted publishing decide (see E-PUB-AUTH)"
+        ),
+    })
+}
+
 /// Executes one target inside its layer and appends the row (shared by
 /// the sequential and the parallel path). `states` is frozen for the
 /// layer's duration — upstream rows come from earlier layers only.
@@ -1393,6 +1506,8 @@ fn execute_target(
             registry: target.registry.clone(),
             manifest: target.manifest.clone(),
             manifest_dir: target.manifest_dir.clone(),
+            access: target.access.clone(),
+            provenance: target.provenance,
             layer,
             outcome,
         });
