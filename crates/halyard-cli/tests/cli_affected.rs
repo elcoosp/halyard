@@ -200,3 +200,53 @@ fn affected_renders_are_stable_across_runs() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The CI-selector adapters (§16.3/M10 step 2, ADR-0034): `affected --ci
+// turbo|nx|bazel` renders the selection in the CI system's own grammar
+// (the VERIFIED quotes live in `docs/research/ci-selector-grammars.md`).
+// The three formats stay untouched; `--ci` is the machine-consumer
+// surface. Written first (red), implemented second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn affected_ci_turbo_renders_the_dependent_filters() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-affected-ci-turbo")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "turbo"])?;
+    assert!(ok, "the turbo adapter renders: {text}");
+    assert!(
+        text.contains("--filter=...lib"),
+        "the changed root's dependent filter: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn affected_ci_nx_renders_the_projects_flag() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-affected-ci-nx")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "nx"])?;
+    assert!(ok, "the nx adapter renders: {text}");
+    assert!(
+        text.contains("--projects=app,lib"),
+        "the affected closure name-sorted: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn affected_ci_bazel_renders_the_rdeps_query() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-affected-ci-bazel")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "bazel"])?;
+    assert!(ok, "the bazel adapter renders: {text}");
+    assert!(
+        text.contains("rdeps(//..., //crates/lib/...)"),
+        "the rdeps query over the changed package's recursive pattern: {text}"
+    );
+    Ok(())
+}
