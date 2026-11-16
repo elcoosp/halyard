@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::planner::{PlanConfig, Snapshot};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
@@ -224,10 +225,15 @@ fn replay_repo(repo: &ReplayRepo, clone: &Path) -> Result<RepoOutcome, String> {
         let history = GitHistory::build(&work, &discovery.workspace, 10_000)
             .map_err(|e| format!("history at {tag}~1: {e}"))?;
         let refs = ReleaseRefs::from_bases(history.digest().bases.clone());
+        // The replay corpus pins the pure planner against tagged
+        // history only — no `.halyard/changes/` input is scanned (the
+        // corpus repos carry none).
+        let changes = ChangeFiles::new();
         let snapshot = Snapshot {
             workspace: &discovery.workspace,
             history: &history,
             refs: &refs,
+            change_files: &changes,
         };
         // Policy (docs/replay.md): a tag the planner declines wholesale
         // (fail-closed on unrewritable requirement text, §11) is outside
