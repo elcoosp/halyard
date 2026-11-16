@@ -16,9 +16,9 @@ use halyard_core::{PkgId, plan_hash};
 use halyard_registry::{RegistryError, RegistrySleeper, VisibilityPolicy};
 
 use halyard_publish::{
-    MapRouter, MemoryPublishEffect, MemoryRegistry, Publication, PublishError, PublishMode,
-    PublishOutcome, PublishPolicy, PublishReport, RegistryRouter, TargetRouter, plan_publication,
-    run_publication,
+    MapRouter, MemoryPublishEffect, MemoryRegistry, ProvenanceRuntime, Publication, PublishError,
+    PublishMode, PublishOutcome, PublishPolicy, PublishReport, RegistryRouter, TargetRouter,
+    plan_publication, run_publication,
 };
 
 /// Registers one package with sane defaults (the planner-test fixture
@@ -159,6 +159,8 @@ fn plan_ab(order: Vec<String>) -> Plan {
                 Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             ),
             release(
@@ -169,6 +171,8 @@ fn plan_ab(order: Vec<String>) -> Plan {
                 Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             ),
         ],
@@ -244,6 +248,8 @@ fn publication_targets_join_the_plan_with_the_workspace() {
                 Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             ),
             release(
@@ -254,6 +260,8 @@ fn publication_targets_join_the_plan_with_the_workspace() {
                 Some(PlanPublish {
                     registry: "npm".to_owned(),
                     enabled: false,
+                    access: None,
+                    provenance: None,
                 }),
             ),
             release("c", "cargo", "0.3.0", "0.4.0", None),
@@ -323,6 +331,8 @@ fn unknown_release_package_fails_closed() {
             Some(PlanPublish {
                 registry: "crates.io".to_owned(),
                 enabled: true,
+                access: None,
+                provenance: None,
             }),
         )],
         vec!["ghost".to_owned()],
@@ -358,6 +368,8 @@ fn unpublishable_member_with_enabled_publish_fails_closed() {
             Some(PlanPublish {
                 registry: "crates.io".to_owned(),
                 enabled: true,
+                access: None,
+                provenance: None,
             }),
         )],
         vec!["a".to_owned()],
@@ -421,6 +433,8 @@ fn layers_follow_non_dev_edges_dependencies_first() {
                     Some(PlanPublish {
                         registry: "crates.io".to_owned(),
                         enabled: true,
+                        access: None,
+                        provenance: None,
                     }),
                 )
             })
@@ -876,6 +890,8 @@ fn max_parallel_greater_than_one_preserves_the_report() {
                     Some(PlanPublish {
                         registry: "crates.io".to_owned(),
                         enabled: true,
+                        access: None,
+                        provenance: None,
                     }),
                 )
             })
@@ -1100,6 +1116,8 @@ fn skip_propagates_down_the_chain() {
                     Some(PlanPublish {
                         registry: "crates.io".to_owned(),
                         enabled: true,
+                        access: None,
+                        provenance: None,
                     }),
                 )
             })
@@ -1272,6 +1290,8 @@ fn dry_mode_keeps_the_upstream_gate() {
                 Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             ),
             release(
@@ -1282,6 +1302,8 @@ fn dry_mode_keeps_the_upstream_gate() {
                 Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             ),
         ],
@@ -1494,4 +1516,267 @@ fn map_router_registry_for_delegates_to_the_by_name_route() {
         registry.probe_log().is_empty(),
         "routing itself never probes"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The npm publish options (M5.3 step 6's npm half, ADR-0033): the plan
+// contract carries `access`/`provenance` for npm releases, the report
+// rows surface them, and a live `provenance = true` run refuses outside
+// a supported cloud runtime **before any call** (validate-then-act,
+// §15.3). Written first (red on the unresolved API), implemented second.
+// ---------------------------------------------------------------------------
+
+/// Two-npm-package workspace: `a` and `b`, `b` depends on `a` (mirrors
+/// `ws_ab` for the npm ecosystem).
+fn ws_npm_ab() -> Workspace {
+    let mut ws = Workspace::new();
+    let a = push_pkg(
+        &mut ws,
+        "a",
+        Some("0.1.0"),
+        Ecosystem::Npm,
+        "pkgs/a",
+        "pkgs/a/package.json",
+        true,
+    )
+    .unwrap_or_else(|| unreachable!("a registers"));
+    let b = push_pkg(
+        &mut ws,
+        "b",
+        Some("0.2.0"),
+        Ecosystem::Npm,
+        "pkgs/b",
+        "pkgs/b/package.json",
+        true,
+    )
+    .unwrap_or_else(|| unreachable!("b registers"));
+    if let (Some(_), Some(_)) = (Some(a), Some(b)) {
+        add_dep(&mut ws, b, a, DepKind::Normal);
+    }
+    ws
+}
+
+/// Both npm releases enabled with the given publish options (the wire
+/// contract the planner fills from `publish.npm`).
+fn plan_npm_ab(access: Option<&str>, provenance: Option<bool>) -> Plan {
+    plan_for(
+        vec![
+            release(
+                "a",
+                "npm",
+                "0.1.0",
+                "0.2.0",
+                Some(PlanPublish {
+                    registry: "npm".to_owned(),
+                    enabled: true,
+                    access: access.map(str::to_owned),
+                    provenance,
+                }),
+            ),
+            release(
+                "b",
+                "npm",
+                "0.2.0",
+                "0.3.0",
+                Some(PlanPublish {
+                    registry: "npm".to_owned(),
+                    enabled: true,
+                    access: access.map(str::to_owned),
+                    provenance,
+                }),
+            ),
+        ],
+        vec!["a".to_owned(), "b".to_owned()],
+        None,
+    )
+}
+
+/// Plans the npm a→b publication with the given publish options.
+fn publication_npm_ab(access: Option<&str>, provenance: Option<bool>) -> Publication {
+    let ws = ws_npm_ab();
+    let plan = plan_npm_ab(access, provenance);
+    plan_publication(&plan, &ws).unwrap_or_else(|e| unreachable!("publication plans: {e}"))
+}
+
+#[test]
+fn npm_targets_carry_the_publish_options() {
+    let publication = publication_npm_ab(Some("public"), Some(true));
+    for target in &publication.targets {
+        assert_eq!(target.access.as_deref(), Some("public"));
+        assert_eq!(target.provenance, Some(true));
+    }
+}
+
+#[test]
+fn unset_npm_options_stay_unset_on_the_targets() {
+    // Unset is semantic (the tool's own trusted-publishing posture
+    // governs): the contract carries `None` both ways, never a guessed
+    // default.
+    let publication = publication_npm_ab(None, None);
+    for target in &publication.targets {
+        assert_eq!(target.access, None);
+        assert_eq!(target.provenance, None);
+    }
+}
+
+#[test]
+fn rows_carry_the_publish_options_in_the_forecast() {
+    let publication = publication_npm_ab(Some("public"), Some(true));
+    let registry = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    effect.publishes_into(&registry);
+    let router = MapRouter::new().with("npm", Arc::new(registry.clone()));
+    let policy = policy().in_mode(PublishMode::Dry);
+    let report = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy,
+        &RecordingSleeper::default(),
+    )
+    .unwrap_or_else(|e| unreachable!("dry run: {e}"));
+    assert_eq!(report.forecast, 2);
+    for row in &report.rows {
+        assert_eq!(row.access.as_deref(), Some("public"));
+        assert_eq!(row.provenance, Some(true));
+    }
+}
+
+#[test]
+fn live_provenance_outside_a_cloud_runtime_refuses_before_any_call() {
+    // Validate-then-act (§15.3): the runtime detection rides the policy;
+    // a live `provenance = true` npm target without a detected supported
+    // cloud runtime refuses with zero probes and zero spawns — the
+    // refusal explains the musts (`id-token: write`, a hosted runner)
+    // and the escape hatch.
+    let publication = publication_npm_ab(None, Some(true));
+    let registry = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    let router = MapRouter::new().with("npm", Arc::new(registry.clone()));
+    let policy = policy().in_provenance_runtime(ProvenanceRuntime::NotDetected);
+    let error = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy,
+        &RecordingSleeper::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "E-PUB-AUTH");
+    let message = error.to_string();
+    assert!(
+        message.contains("a, b"),
+        "the offending targets are named sorted: {message}"
+    );
+    assert!(
+        message.contains("id-token: write"),
+        "the GitHub Actions must is named: {message}"
+    );
+    assert!(
+        message.contains("provenance = false"),
+        "the escape hatch is named: {message}"
+    );
+    assert!(
+        effect.requests().is_empty(),
+        "zero side effects — no effect call"
+    );
+    assert!(
+        registry.probe_log().is_empty(),
+        "zero side effects — no probe"
+    );
+}
+
+#[test]
+fn live_provenance_under_a_detected_runtime_publishes() {
+    let publication = publication_npm_ab(None, Some(true));
+    let registry = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    effect.publishes_into(&registry);
+    let router = MapRouter::new().with("npm", Arc::new(registry.clone()));
+    let policy = policy().in_provenance_runtime(ProvenanceRuntime::CloudDetected);
+    let report = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy,
+        &RecordingSleeper::default(),
+    )
+    .unwrap_or_else(|e| unreachable!("detected runtime runs: {e}"));
+    assert_eq!(report.published, 2);
+}
+
+#[test]
+fn live_unprovenanced_npm_ignores_the_runtime_detection() {
+    // Unset provenance (trusted publishing decides) and an explicit
+    // opt-out never hit the runtime gate: the run proceeds exactly as
+    // before the gate existed.
+    let publication = publication_npm_ab(None, None);
+    let registry = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    effect.publishes_into(&registry);
+    let router = MapRouter::new().with("npm", Arc::new(registry.clone()));
+    let policy = policy().in_provenance_runtime(ProvenanceRuntime::NotDetected);
+    let report = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy,
+        &RecordingSleeper::default(),
+    )
+    .unwrap_or_else(|e| unreachable!("unset provenance runs: {e}"));
+    assert_eq!(report.published, 2);
+}
+
+#[test]
+fn the_provenance_runtime_gate_scopes_to_npm_targets() {
+    // The argv grammar is npm's (the pnpm `--provenance` table); a cargo
+    // contract that carries `provenance` (a planner can never produce
+    // one) is not the gate's subject and runs unchanged.
+    let ws = ws_ab(DepKind::Normal);
+    let plan = plan_for(
+        vec![
+            release(
+                "a",
+                "cargo",
+                "0.1.0",
+                "0.2.0",
+                Some(PlanPublish {
+                    registry: "crates.io".to_owned(),
+                    enabled: true,
+                    access: None,
+                    provenance: Some(true),
+                }),
+            ),
+            release(
+                "b",
+                "cargo",
+                "0.2.0",
+                "0.3.0",
+                Some(PlanPublish {
+                    registry: "crates.io".to_owned(),
+                    enabled: true,
+                    access: None,
+                    provenance: Some(true),
+                }),
+            ),
+        ],
+        vec!["a".to_owned(), "b".to_owned()],
+        None,
+    );
+    let publication =
+        plan_publication(&plan, &ws).unwrap_or_else(|e| unreachable!("publication plans: {e}"));
+    let registry = MemoryRegistry::new();
+    let effect = MemoryPublishEffect::new();
+    effect.publishes_into(&registry);
+    let router = MapRouter::new().with("crates.io", Arc::new(registry.clone()));
+    let policy = policy().in_provenance_runtime(ProvenanceRuntime::NotDetected);
+    let report = run_publication(
+        &publication,
+        &router,
+        &effect,
+        &policy,
+        &RecordingSleeper::default(),
+    )
+    .unwrap_or_else(|e| unreachable!("cargo runs regardless: {e}"));
+    assert_eq!(report.published, 2);
 }
