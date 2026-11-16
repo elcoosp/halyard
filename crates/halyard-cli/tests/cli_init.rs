@@ -104,7 +104,8 @@ fn init_scaffolds_and_the_repo_plans_zero_config() -> Result<(), BoxError> {
     assert!(ok, "the scaffolded repo plans: {text}");
     let plan = parse_json(&text)?;
     assert!(
-        plan.get("releases").is_some_and(serde_json::Value::is_array),
+        plan.get("releases")
+            .is_some_and(serde_json::Value::is_array),
         "the plan document is the frozen v1 shape: {plan}"
     );
     Ok(())
