@@ -104,6 +104,26 @@ halyard check --exit-code
 halyard check --pr-title "feat(parser): accept spans" --comment
 ```
 
+## Zero-config scaffold (ADR-0029)
+
+```bash
+# Survey the repo and land the documented halyard.toml skeleton
+# (create-only; every key optional — the defaults ride as comments).
+halyard init
+
+# Also land the §16.1 one-file release workflow:
+#   .github/workflows/release.yml (the parent directories are created).
+halyard init --github
+
+# The scaffolded repo plans zero-config, right now:
+halyard plan
+```
+
+Create-only, fail-closed: an existing `halyard.toml` or workflow file is
+never clobbered and a refusal never leaves a half-scaffold behind
+(`E-CFG-INIT`); an existing `.config/halyard.toml` refuses first — a root
+scaffold would shadow it. Needs no git repo and reads no config.
+
 ## Command status (honest)
 
 | Command | Status |
@@ -123,7 +143,8 @@ halyard check --pr-title "feat(parser): accept spans" --comment
 | `fetch` | available (§8.8, M4.6 step 1, ADR-0016): probes `origin`'s tags, selects each package's latest release tag through the planner's template rule, fetches those tags plus the base branch in one minimal `git fetch` (blob-less; shallow clones deepen bounded by the previous releases; a failing minimal fetch retries once as the full fetch of the same refs); idempotent (I1) — tags already local at the probed target are not requested; a remote without a configured URL is an honest no-op; no `--dry` by design (the remote listing is the one input an offline forecast cannot have) |
 | `publish [--dry]` | available (M5.2 step 2, ADR-0018): the §13 engine validates the plan (recomputed hash, I8), layers the targets dependencies-first, resumes through the registry existence probes (already-published versions are no-ops, I1), waits for index visibility before dependents publish, and spawns `cargo publish` / `pnpm publish` per target through the adapter crates' verified argv tables (§13.4); `--dry` forecasts offline — the tools run their documented dry form, the registry is never probed (I5); failures are rows and the re-run continues from the first failure (§13.7); a partial publish exits 4 (§15.4); live mode under `--offline` fails closed (`E-CLI-PUBLISH`); the spawn injects the resolved publish credentials through the `PublishAuth` seam and scrubs every resolved token from surfaced tool output (M5.3 step 1, ADR-0019 — `E-PUB-AUTH` refuses a set-but-empty variable before any spawn); the JSON carries the per-registry `auth` provenance (variable names only); `publish.cargo.registry` maps to the spawn as `--registry <name>` for a non-default registry (M5.3 continued — the default spellings ride the tool's own documented default with no flag, and the token side resolves the same name, so argv and env agree); a configured custom registry routes its resume probes and visibility waits through the cargo configuration the spawned tool itself reads — the `[registries.<name>]` `index` key (the `sparse+` HTTP form) or the `CARGO_REGISTRIES_<NAME>_INDEX` override (M5.2 continued, ADR-0021) — while an unconfigured name, a git-protocol index, a malformed config or a set-but-empty override refuses `E-PUB-REGISTRY` before any spawn, with the case named — and the routing reads the legacy `.cargo/config` filename too, with the Cargo Book's documented precedence (the file without the extension wins when both exist); the npm side routes per package — each npm target's `publishConfig.registry` / `npm_config_@<scope>:registry` (the probe-verified literal-key env form) / `NPM_CONFIG_REGISTRY` / `.npmrc` chain (the configuration the spawned `pnpm publish` reads, VERIFIED) resolves its probe base — the scoped key governs a scoped package regardless of the source tier — a custom base joins the map as a per-target override and a non-HTTP value refuses naming the package |
 | `migrate` | available (M4.7 step 1, ADR-0022 + ADR-0024): the release-please (`release-please-config.json` + `.release-please-manifest.json`), changesets (`.changeset/config.json`), knope (`knope.toml`) and release-plz (`release-plz.toml` / `.release-plz.toml` / `.config/release-plz.toml`, the documented top-down search order) configurations are surveyed against the `halyard.toml` v1 surface — every mappable foreign key is a mapped row with the pinned value (the foreign tool's documented defaults preserved where they differ from halyard's, the note saying which side is the foreign default), every semantic difference is an unmapped row with its reason, and a validated draft `halyard.toml` rides the report; `--write` lands the reviewed draft at `halyard.toml` through the engine's `DraftSink` — atomic (temp sibling → fsync → rename), create-only: an existing config is never clobbered and two configured tools are a refusal naming every candidate, never a guess (`E-CFG-MIGRATE`; nothing configured is an honest `nothing_configured` no-op; ADR-0023); without the flag the command stays report-only; needs no git repo and no existing `halyard.toml`; a configured-but-unparseable foreign file refuses fail-closed `E-CFG-MIGRATE`, an absent one is `not detected` in the report |
-| `init` / `bench` / `man` / `action` | **(their milestones)** — absent rather than stubbed (§16.2) |
+| `init [--github]` | available (ADR-0029, §16.1/§16.2): discovery surveys the repository and the engine plans a create-only write — the documented `halyard.toml` skeleton (every key optional; the defaults ride as comments and loading it yields the built-in defaults exactly, so zero-config stays zero-config) and, with `--github`, the §16.1 one-file release workflow (`.github/workflows/release.yml`); atomic (temp sibling → fsync → rename) with the workflow's parent directories created; gated before any write — a refusal never leaves a half-scaffold (`E-CFG-INIT`); an existing `.config/halyard.toml` refuses first (a root scaffold would shadow it); needs no git repo and reads no config |
+| `bench` / `man` / `action` | **(their milestones)** — absent rather than stubbed (§16.2) |
 
 ## Forge credentials (M4.1c, ADR-0014)
 
