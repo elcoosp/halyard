@@ -76,6 +76,17 @@ pub struct VersioningCfg {
     /// Cascade policy for dependents of bumped packages (§10.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cascade: Option<CascadePolicy>,
+    /// Prerelease channel (§10.3, ADR-0025): one semver identifier
+    /// (`rc`, `beta`, `next-1`); every planned release becomes
+    /// `{version}-{channel}.{n}` until the key is removed, which
+    /// promotes the prerelease manifest to its own stable triple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// Branch-bound channels (§10.3 "next branch ⇒ rc", ADR-0025):
+    /// branch name → channel; when HEAD is on the branch, its binding
+    /// wins over the unbound `channel` default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_branches: Option<BTreeMap<String, String>>,
 }
 
 /// Workspace versioning policy (§5.4).
