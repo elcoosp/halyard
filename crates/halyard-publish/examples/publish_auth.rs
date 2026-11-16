@@ -34,6 +34,8 @@ fn main() {
         registry: "crates.io".to_owned(),
         manifest_dir: "crates/demo".to_owned(),
         manifest: "crates/demo/Cargo.toml".to_owned(),
+        access: None,
+        provenance: None,
     };
     let npm = PublishTarget {
         package: "demo-pkg".to_owned(),
@@ -42,6 +44,8 @@ fn main() {
         registry: "npm".to_owned(),
         manifest_dir: "packages/demo".to_owned(),
         manifest: "packages/demo/package.json".to_owned(),
+        access: None,
+        provenance: None,
     };
     for target in [&cargo, &npm] {
         println!(
