@@ -111,10 +111,13 @@ fn fixture(
     let history = Box::leak(Box::new(FixedHistory::new(Some(head), digest)));
     let refs = Box::leak(Box::new(ReleaseRefs::from_bases(vec![base])));
     let leaked_ws: &'static Workspace = Box::leak(Box::new(ws));
+    let changes: &'static halyard_core::change_file::ChangeFiles =
+        Box::leak(Box::new(halyard_core::change_file::ChangeFiles::new()));
     Ok(Snapshot {
         workspace: leaked_ws,
         history,
         refs,
+        change_files: changes,
     })
 }
 
