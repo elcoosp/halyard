@@ -123,6 +123,7 @@ pub fn check(
     // present-but-empty variable fails the check with the seam's
     // `E-PUB-AUTH` diagnosis before any run does.
     checks.push(publish_auth_check());
+    checks.push(publish_oidc_check());
 
     // History engine smoke check: the walk must succeed on this repo
     // (this is the doctor's cheapest "will plan() work" signal).
@@ -328,18 +329,65 @@ fn publish_auth_check() -> Check {
                 .iter()
                 .map(|(registry, provenance)| format!("{registry} = {provenance}"))
                 .collect();
+            // The grammar is data (ADR-0019): the documented candidate
+            // variables per registry, in resolution order — what would
+            // resolve, not only what resolved.
+            let candidates: Vec<String> = targets
+                .iter()
+                .map(|target| {
+                    format!(
+                        "{} candidates {:?}",
+                        target.registry,
+                        halyard_publish::variables_for(target)
+                    )
+                })
+                .collect();
             Check {
                 name: "publish-auth".to_owned(),
                 ok: true,
                 detail: format!(
                     "publish spawn credentials (values never logged; a set-but-empty variable \
-                     fails E-PUB-AUTH): {}",
-                    pairs.join(", ")
+                     fails E-PUB-AUTH): {}; {}",
+                    pairs.join(", "),
+                    candidates.join("; ")
                 ),
             }
         }
         Err(error) => Check {
             name: "publish-auth".to_owned(),
+            ok: false,
+            detail: error.to_string(),
+        },
+    }
+}
+
+/// The publish-oidc context check (M5.3 step 3, ADR-0031): whether the
+/// GitHub Actions OIDC runtime context is present (`id-token: write` —
+/// the runner exposes both documented variables). Presence is
+/// informational (`ok` — the exchange fires only in a live publish
+/// when the env grammar covers nothing); absence is the normal shape
+/// outside GitHub Actions; a half-configured or empty context is the
+/// seam's `E-PUB-AUTH` misconfiguration and fails the check. Read-only
+/// over the process environment — no network, no token is ever logged.
+fn publish_oidc_check() -> Check {
+    match halyard_publish::gha_oidc_context(&|name| std::env::var(name).ok()) {
+        Ok(Some(context)) => Check {
+            name: "publish-oidc".to_owned(),
+            ok: true,
+            detail: format!(
+                "GitHub Actions OIDC context present ({context}) — a live publish exchanges \
+                 the crates.io token when no documented variable covers the registry"
+            ),
+        },
+        Ok(None) => Check {
+            name: "publish-oidc".to_owned(),
+            ok: true,
+            detail: "no GitHub Actions OIDC context (the normal shape outside Actions) — the \
+                     documented env grammar and the tools' own stores govern"
+                .to_owned(),
+        },
+        Err(error) => Check {
+            name: "publish-oidc".to_owned(),
             ok: false,
             detail: error.to_string(),
         },
