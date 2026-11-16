@@ -162,6 +162,7 @@ fn package_tables_concatenate_low_to_high() -> Result<(), Box<dyn Error>> {
             release: Some(false),
             include: Vec::new(),
             exclude: Vec::new(),
+            channel: None,
         }],
         ..HalyardConfig::default()
     };
@@ -171,6 +172,7 @@ fn package_tables_concatenate_low_to_high() -> Result<(), Box<dyn Error>> {
             release: Some(true),
             include: Vec::new(),
             exclude: Vec::new(),
+            channel: None,
         }],
         ..HalyardConfig::default()
     };
@@ -217,6 +219,7 @@ fn versioning_with_channel(channel: Option<&str>) -> HalyardConfig {
             cascade: None,
             channel: channel.map(str::to_owned),
             channel_branches: None,
+            maintenance_branches: None,
         }),
         ..HalyardConfig::default()
     }
@@ -317,6 +320,7 @@ fn versioning_with_bindings(bindings: &[(&str, &str)]) -> HalyardConfig {
                     .map(|(b, c)| ((*b).to_owned(), (*c).to_owned()))
                     .collect(),
             ),
+            maintenance_branches: None,
         }),
         ..HalyardConfig::default()
     }
@@ -406,6 +410,259 @@ fn branch_bindings_merge_per_key_low_to_high() -> Result<(), Box<dyn Error>> {
             .map(halyard_core::bump::PrereleaseChannel::as_str),
         Some("alpha"),
         "untouched keys survive the merge"
+    );
+    Ok(())
+}
+// ---------------------------------------------------------------------
+// Per-package channel overrides (§10.3, M5.6 step 3 / ADR-0026): a
+// `[[package]] channel = "rc"` entry names that package's train; the
+// map resolves and validates at resolve time like the repo-wide key.
+
+/// A config with one `[[package]]` override.
+fn package_override(name: Option<&str>, channel: Option<&str>) -> HalyardConfig {
+    HalyardConfig {
+        package: vec![halyard_config::model::PackageOverride {
+            name: name.map(str::to_owned),
+            release: None,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            channel: channel.map(str::to_owned),
+        }],
+        ..HalyardConfig::default()
+    }
+}
+
+#[test]
+fn package_override_channel_resolves_into_the_plan_config() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(package_override(Some("app"), Some("rc"))),
+    ])?;
+    let channel = resolved
+        .package_channels
+        .get("app")
+        .unwrap_or_else(|| unreachable!("the override resolves"));
+    assert_eq!(channel.as_str(), "rc");
+    // The map rides `plan_config` (validated at resolve, total there).
+    assert!(
+        resolved.plan_config().package_channels.contains_key("app"),
+        "the override reaches the planner"
+    );
+    // The default carries no overrides.
+    let plain = resolve(&[])?;
+    assert!(plain.package_channels.is_empty());
+    assert!(plain.plan_config().package_channels.is_empty());
+    Ok(())
+}
+
+#[test]
+fn package_override_channel_requires_a_name() {
+    // A channel on a name-less (path-glob) override cannot be applied:
+    // fail closed instead of guessing the target.
+    let err = resolve(&[
+        Layer::Defaults,
+        Layer::File(package_override(None, Some("rc"))),
+    ])
+    .err()
+    .unwrap_or_else(|| unreachable!("a name-less override must fail"));
+    assert_eq!(err.code(), "E-CFG-CHANNEL");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("name"),
+        "the missing name is named as the cause: {rendered}"
+    );
+}
+
+#[test]
+fn invalid_package_override_channel_is_rejected_at_resolve() {
+    let err = resolve(&[
+        Layer::Defaults,
+        Layer::File(package_override(Some("app"), Some("rc."))),
+    ])
+    .err()
+    .unwrap_or_else(|| unreachable!("invalid override channel must fail"));
+    assert_eq!(err.code(), "E-CFG-CHANNEL");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("app"),
+        "the failing package is named: {rendered}"
+    );
+}
+
+#[test]
+fn package_override_channels_merge_low_to_high() -> Result<(), Box<dyn Error>> {
+    // `[[package]]` tables concatenate low→high: later entries win when
+    // both match a package (the documented merge rule).
+    let mut higher = package_override(Some("app"), Some("rc"));
+    higher.package.push(halyard_config::model::PackageOverride {
+        name: Some("lib".to_owned()),
+        release: None,
+        include: Vec::new(),
+        exclude: Vec::new(),
+        channel: Some("beta".to_owned()),
+    });
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(package_override(Some("app"), Some("beta"))),
+        Layer::PackageMetadata(higher),
+    ])?;
+    let channels: std::collections::BTreeMap<_, _> = resolved
+        .package_channels
+        .iter()
+        .map(|(name, channel)| (name.as_str(), channel.as_str()))
+        .collect();
+    assert_eq!(
+        channels.get("app").copied(),
+        Some("rc"),
+        "the higher layer's entry wins"
+    );
+    assert_eq!(channels.get("lib").copied(), Some("beta"));
+    Ok(())
+}
+
+#[test]
+fn config_hash_includes_the_package_override_channel() -> Result<(), Box<dyn Error>> {
+    let plain = config_hash(&resolve(&[])?);
+    let overridden = config_hash(&resolve(&[
+        Layer::Defaults,
+        Layer::File(package_override(Some("app"), Some("rc"))),
+    ])?);
+    assert_ne!(
+        plain, overridden,
+        "an override change invalidates the cache key (§8.7)"
+    );
+    Ok(())
+}
+
+#[test]
+fn package_override_wins_over_the_branch_bound_channel() -> Result<(), Box<dyn Error>> {
+    // Precedence (ADR-0026): the per-package override is the most
+    // explicit policy — it beats the branch binding the way it beats
+    // the unbound default; the planner resolves the effective channel
+    // per package.
+    let mut cfg = versioning_with_bindings(&[("next", "rc")]);
+    cfg.package = package_override(Some("app"), Some("beta")).package;
+    let resolved = resolve(&[Layer::Defaults, Layer::File(cfg)])?;
+    assert_eq!(
+        resolved
+            .channel_for_branch(Some("next"))
+            .as_ref()
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("rc"),
+        "the branch binding resolves the default"
+    );
+    let plan_config = resolved.plan_config();
+    assert_eq!(
+        plan_config
+            .package_channels
+            .get("app")
+            .map(halyard_core::bump::PrereleaseChannel::as_str),
+        Some("beta"),
+        "the override rides the plan config next to the default"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Maintenance-line release trains (§10.3, M5.6 / ADR-0027):
+// `[versioning].maintenance_branches = ["1.x", "1.2.x"]` — each entry
+// names the branch AND the line it pins; validated at resolve time.
+
+fn versioning_with_maintenance(entries: &[&str]) -> HalyardConfig {
+    HalyardConfig {
+        versioning: Some(halyard_config::model::VersioningCfg {
+            policy: None,
+            pre_major: None,
+            cascade: None,
+            channel: None,
+            channel_branches: None,
+            maintenance_branches: Some(entries.iter().map(|entry| (*entry).to_owned()).collect()),
+        }),
+        ..HalyardConfig::default()
+    }
+}
+
+#[test]
+fn maintenance_branches_resolve_into_lines() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_maintenance(&["1.x", "1.2.x"])),
+    ])?;
+    assert_eq!(
+        resolved
+            .maintenance_line_for(Some("1.2.x"))
+            .map(|line| line.to_string()),
+        Some("1.2.x".to_owned()),
+        "the pinned minor wins over the bare major line"
+    );
+    assert_eq!(
+        resolved
+            .maintenance_line_for(Some("1.x"))
+            .map(|line| line.to_string()),
+        Some("1.x".to_owned())
+    );
+    assert!(
+        resolved.maintenance_line_for(Some("main")).is_none(),
+        "an unlisted branch plans free"
+    );
+    assert!(
+        resolved.maintenance_line_for(None).is_none(),
+        "a detached HEAD plans free"
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_maintenance_branch_entry_is_rejected_at_resolve() {
+    let err = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_maintenance(&["1.y"])),
+    ])
+    .err()
+    .unwrap_or_else(|| unreachable!("an invalid line must fail"));
+    assert_eq!(err.code(), "E-CFG-MAINTENANCE");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("1.y"),
+        "the offending entry is named: {rendered}"
+    );
+}
+
+#[test]
+fn maintenance_branches_ride_the_config_hash() -> Result<(), Box<dyn Error>> {
+    let plain = config_hash(&resolve(&[])?);
+    let pinned = config_hash(&resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_maintenance(&["1.x"])),
+    ])?);
+    assert_ne!(
+        plain, pinned,
+        "a maintenance pin invalidates the cache key (§8.7)"
+    );
+    Ok(())
+}
+
+#[test]
+fn maintenance_branches_merge_low_to_high() -> Result<(), Box<dyn Error>> {
+    // Per-key overlay like `channel_branches`: untouched branches keep
+    // the lower layer's line.
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(versioning_with_maintenance(&["1.x"])),
+        Layer::PackageMetadata(versioning_with_maintenance(&["1.2.x"])),
+    ])?;
+    assert_eq!(
+        resolved
+            .maintenance_line_for(Some("1.x"))
+            .map(|line| line.to_string()),
+        Some("1.x".to_owned()),
+        "untouched branches survive the merge"
+    );
+    assert_eq!(
+        resolved
+            .maintenance_line_for(Some("1.2.x"))
+            .map(|line| line.to_string()),
+        Some("1.2.x".to_owned())
     );
     Ok(())
 }
