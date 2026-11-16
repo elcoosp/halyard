@@ -103,3 +103,12 @@ fn missing_file_is_a_read_error() {
     assert_eq!(err.code(), "E-CFG-TOML");
     assert_eq!(err.code(), ConfigError::READ_CODE);
 }
+
+#[test]
+fn unknown_versioning_key_suggests_channel() {
+    let err = load_from_str("[versioning]\nchaennel = \"rc\"\n")
+        .err()
+        .unwrap_or_else(|| panic!("must fail"));
+    assert_eq!(err.code(), "E-CFG-UNKNOWN-KEY");
+    assert_snapshot!(err.to_string());
+}
