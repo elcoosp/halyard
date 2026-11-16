@@ -28,6 +28,17 @@
 //! record/lock state machine is model-checked; the `flock` syscall
 //! itself is outside loom's model and documented there).
 //!
+//! Feature interaction (worth knowing when reading gate output): the
+//! `miri` and `loom` features are mutually exclusive by contract ("never
+//! combined in one build", `Cargo.toml`), and because the `miri`
+//! feature's shim switches `Mmap::open` to return `None`, a
+//! `--all-features` gate run silently exercises this crate through the
+//! `read()`-backed fallback — the real-`mmap` syscalls are covered only
+//! by the default-feature lane (`cargo test -p halyard-cache`) and the
+//! Miri lane. A `--all-features` failure here therefore reproduces with
+//! default features too; a default-feature failure does not reproduce
+//! under `--all-features`.
+//!
 //! Layer note: this crate depends on `halyard-core` only (the record
 //! payload is a [`SmallBitset`]); it is consumed by `halyard-git` *before*
 //! the [`Snapshot`](halyard_core::planner::Snapshot) is constructed and
