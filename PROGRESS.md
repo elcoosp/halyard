@@ -2126,3 +2126,73 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   differential as an xtask subcommand, (3) the M2.6 dhat re-audit with
   the cache warm, (4) more CI adapters (GitLab matrix / GitHub jobs
   JSON) behind the closed ADR-0034 seam.
+
+### 2026-11-16 — the matrix-jobs CI adapters (ADR-0035, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `0672ba4` (the
+  npm-options + CI-adapter slice). Baseline gates re-run green (fmt,
+  clippy `--workspace --all-targets --features ci-bundle -- -D
+  warnings`, the lint-hygiene grep empty, the workspace test run 0
+  failed) before any edit. The declared next work (the ADR-0034
+  consequence) was the seam's own "more CI systems" extension.
+- **M1 implemented (no stubs), one full red→green cycle** (the core
+  adapter contract tests, the empty-selection loop entry and the CLI
+  e2e gates written first — red on the unresolved `gha` lookup and
+  `invalid value 'gha' for '--ci <SYSTEM>'`, on record — then
+  implemented in dependency order): **the GitHub Actions matrix
+  adapter (`affected --ci gha`, ADR-0035)** — one compact JSON array
+  over the affected closure (docs.github.com VERIFIED: "You can use
+  the output from one job to define matrices for multiple jobs"; the
+  output value `colors=["red", "green", "blue"]` fed to
+  `fromJSON(needs.…outputs.…)` inside the downstream
+  `strategy.matrix`), the escaping owned by `serde_json` (ADR-0005;
+  never hand-rolled), the consumer names the matrix dimension on its
+  side so no key policy is encoded. Actions computes no dependency
+  closure, so — unlike turbo/bazel — the array encodes the full
+  affected closure.
+- **M2 implemented (M1 green end-to-end first), red→green**: **the
+  GitLab `parallel:matrix` adapter (`affected --ci gitlab`,
+  ADR-0035)** — one `- HALYARD_PKG: <name>` hash per affected package
+  (docs.gitlab.com/ci/yaml VERIFIED: "an array of hashes of variables
+  … The matrix identifiers, which become the variable names, can use
+  only numbers, letters, and underscores"; "each instance of the job"
+  runs "with different variable values"). `HALYARD_PKG` is the ADR's
+  documented identifier policy (namespaced: it cannot collide with the
+  job's own variables); the consumer pastes the lines under
+  `parallel: matrix:` and reads `$HALYARD_PKG` in the script. The
+  base's refusal pin (`ci_selector_adapter("gitlab").is_none()`) was
+  the red hook — flipped to the five-system lookup with `teamcity` as
+  the refused unknown.
+- **Design record.** ADR-0035 (matrix-jobs adapters) under the
+  unchanged ADR-0034 seam: trait, inputs and the
+  empty-renders-nothing contract untouched; the closure-vs-roots
+  split documented as a property of the consuming system (turbo/bazel
+  compute dependencies themselves and take the change roots; nx/gha/
+  gitlab compute nothing and take the full closure). The
+  ci-selector-grammars research note carries both systems' fetched
+  quotes.
+- **Tests/bench/example totals.** +2 core contract tests (gha array
+  over the closure, one-line-many-packages) + 1 gitlab hash test +
+  the extended empty-selection loop (five systems) + the flipped
+  lookup pin; +3 CLI e2e gates (gha render, gha honest empty, gitlab
+  render) — 11 core + 10 CLI green; benches `ci_selector_gha_40chain`
+  + `ci_selector_gitlab_40chain` registered over the same 40-package
+  chain shape; example `affected_ci` prints all five adapters.
+- **Docs drift fixed / micro-debt cleaned (additive, not milestone
+  substitutes).** Root README status row gained the `--ci SYSTEM`
+  surface (stale since ADR-0034) and the daily-command rows for the
+  two landed-but-unlisted examples (`halyard-core --example
+  affected_ci`, `halyard-publish --example publish_npm_options`);
+  the `affected_ci` example's stray double-space print artifact
+  normalized; the example/module doc headers updated to the
+  five-adapter reality; arch §16.3 as-built note and the CLI README
+  adapters section extended.
+- **Honest state at cut-off.** The adapters render only; no CI system
+  is executed by halyard (I5 — the consumers wire the lines into
+  their own pipelines). More adapters (Azure Pipelines variables,
+  TeamCity) remain behind the closed ADR-0035 lookup. Tree left dirty
+  (no commits made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for
+  halyard's own release artifacts (VERIFY first), (2) the corpus-wide
+  pnpm differential as an xtask subcommand, (3) the M2.6 dhat
+  re-audit with the cache warm.
