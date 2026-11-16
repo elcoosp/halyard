@@ -3,6 +3,7 @@
 //! `halyard-plan/v1` wire-format fixtures and pin the `plan_hash`
 //! stability (I3/I8).
 
+use halyard_core::bump::PrereleaseChannel;
 use halyard_core::history::{
     AuthorRef, BaseRef, FixedHistory, HistoryDigest, ParsedCommit, RelevantCommit, Trailer,
 };
@@ -448,4 +449,198 @@ fn changelog_entry_orders_breaking_first_and_hides_types() {
     let fixes_pos = entry.find("Bug Fixes");
     assert!(breaking_pos < features_pos && features_pos < fixes_pos);
     assert!(!entry.contains("readme only"), "hidden types dropped");
+}
+
+// ---------------------------------------------------------------------
+// Prerelease channels (§10.3, M5.6 step 1): a configured channel turns
+// the planner's stable target into `{target}-{channel}.{n}`, the counter
+// derived from the release base's own tag (no state file), and a
+// prerelease manifest with the channel removed promotes to its own
+// stable triple.
+
+/// `PlanConfig` with a prerelease channel configured (§10.3).
+fn channel_cfg(channel: &str) -> PlanConfig {
+    let mut config = cfg();
+    config.prerelease_channel =
+        PrereleaseChannel::new(channel).or_else(|| unreachable!("fixture channel"));
+    config
+}
+
+#[test]
+fn channel_first_prerelease_starts_at_one() {
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "feat", false, "grow surface", Some(7)).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"c".repeat(40),
+    );
+    let plan = plan(&snapshot, &channel_cfg("rc")).unwrap();
+    let release = plan.releases.first().unwrap();
+    assert_eq!(release.to, "1.3.0-rc.1");
+    assert_eq!(release.tag, "v1.3.0-rc.1");
+    assert_eq!(release.bump, halyard_core::Bump::Minor);
+    // The manifest edit carries the prerelease, not the stable triple.
+    let edit = plan
+        .edits
+        .iter()
+        .find(|edit| edit.file == "Cargo.toml")
+        .unwrap_or_else(|| unreachable!("manifest edit present"));
+    assert_eq!(edit.patches.first().unwrap().text, "1.3.0-rc.1");
+}
+
+#[test]
+fn channel_advances_the_counter_from_the_base_tag() {
+    // The train already shipped `v1.3.0-rc.1` and the manifest carries
+    // it; one more fix commit advances the counter on the same triple.
+    let mut ws = Workspace::new();
+    push_pkg(
+        &mut ws,
+        "app",
+        Some("1.3.0-rc.1"),
+        "v{version}",
+        "Cargo.toml",
+    )
+    .expect("fixture package");
+    let commits = vec![commit(1, "fix", false, "mend edge", Some(8)).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.3.0-rc.1".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"d".repeat(40),
+    );
+    let plan = plan(&snapshot, &channel_cfg("rc")).unwrap();
+    let release = plan.releases.first().unwrap();
+    assert_eq!(release.to, "1.3.0-rc.2");
+    assert_eq!(release.tag, "v1.3.0-rc.2");
+    // The stable triple did not move, so the row reports the bump the
+    // commits derived (patch), never `none` while a release is owed.
+    assert_eq!(release.bump, halyard_core::Bump::Patch);
+}
+
+#[test]
+fn channel_switch_restarts_the_counter() {
+    // The rc tags exist; switching the channel to `beta` starts fresh.
+    let mut ws = Workspace::new();
+    push_pkg(
+        &mut ws,
+        "app",
+        Some("1.3.0-rc.1"),
+        "v{version}",
+        "Cargo.toml",
+    )
+    .expect("fixture package");
+    let commits = vec![commit(1, "fix", false, "mend edge", None).expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.3.0-rc.1".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"e".repeat(40),
+    );
+    let plan = plan(&snapshot, &channel_cfg("beta")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "1.3.0-beta.1");
+}
+
+#[test]
+fn forced_release_as_target_is_exempt_from_the_channel() {
+    // `Release-As` is the user's explicit version: the channel never
+    // rewrites a forced target.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.2.3"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![release_as_commit(1, "2.0.0").expect("fixture commit")];
+    let snapshot = snapshot(
+        &ws,
+        commits,
+        vec![vec![0]],
+        vec![Some(BaseRef {
+            tag: "v1.2.3".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"f".repeat(40),
+    );
+    let plan = plan(&snapshot, &channel_cfg("rc")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "2.0.0");
+}
+
+#[test]
+fn prerelease_manifest_promotes_when_the_channel_is_removed() {
+    // §10.3 promotion: with no channel configured and no new commits,
+    // a prerelease manifest releases its own stable triple.
+    let mut ws = Workspace::new();
+    push_pkg(
+        &mut ws,
+        "app",
+        Some("1.3.0-rc.2"),
+        "v{version}",
+        "Cargo.toml",
+    )
+    .expect("fixture package");
+    let snapshot = snapshot(
+        &ws,
+        Vec::new(),
+        vec![Vec::new()],
+        vec![Some(BaseRef {
+            tag: "v1.3.0-rc.2".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"a".repeat(40),
+    );
+    let plan = plan(&snapshot, &cfg()).unwrap();
+    let release = plan.releases.first().unwrap();
+    assert_eq!(release.to, "1.3.0");
+    assert_eq!(release.tag, "v1.3.0");
+    let edit = plan
+        .edits
+        .iter()
+        .find(|edit| edit.file == "Cargo.toml")
+        .unwrap_or_else(|| unreachable!("manifest edit present"));
+    assert_eq!(edit.patches.first().unwrap().text, "1.3.0");
+}
+
+#[test]
+fn promotion_leaves_a_stable_manifest_untouched() {
+    // The promotion rule is a prerelease-manifest rule only: a stable
+    // manifest with no commits plans nothing (unchanged default).
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.3.0"), "v{version}", "Cargo.toml").expect("fixture package");
+    let snapshot = snapshot(
+        &ws,
+        Vec::new(),
+        vec![Vec::new()],
+        vec![Some(BaseRef {
+            tag: "v1.3.0".into(),
+            oid: oid(0).expect("fixture oid"),
+        })],
+        &"b".repeat(40),
+    );
+    let plan = plan(&snapshot, &cfg()).unwrap();
+    assert!(
+        plan.releases.is_empty(),
+        "no commits, stable manifest ⇒ no release"
+    );
+}
+
+#[test]
+fn channel_applies_to_the_initial_release() {
+    // No release tag yet: the counter starts at one.
+    let mut ws = Workspace::new();
+    push_pkg(&mut ws, "app", Some("1.0.0"), "v{version}", "Cargo.toml").expect("fixture package");
+    let commits = vec![commit(1, "feat", false, "first feature", None).expect("fixture commit")];
+    let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None], &"c".repeat(40));
+    let plan = plan(&snapshot, &channel_cfg("rc")).unwrap();
+    assert_eq!(plan.releases.first().unwrap().to, "1.1.0-rc.1");
 }
