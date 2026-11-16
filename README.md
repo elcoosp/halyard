@@ -45,7 +45,12 @@ refusal, not a guess; ADR-0022 + ADR-0023 + ADR-0024) — and the
 repo already carries — no state file — and removing the key promotes a
 leftover prerelease manifest to its own stable triple; step 2 binds
 channels to branches (`channel_branches = { next = "rc" }` — the
-§10.3 `next`-branch trains)).** The
+§10.3 `next`-branch trains); step 3 names a package's own train with
+`[[package]] channel = "rc"` — the override wins over the default and
+the branch bindings, and un-named packages keep theirs (ADR-0026);
+step 4 pins maintenance branches (`maintenance_branches = ["1.x"]` —
+a backport stays on the line, a breaking commit refuses with
+`E-PLAN-MAINTENANCE` instead of planning across it, ADR-0027)).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -223,6 +228,7 @@ cargo run -p halyard-test-support --example fixture_tour
 cargo run -p halyard-core --example workspace_demo
 cargo run -p halyard-core --example pending_releases
 cargo run -p halyard-core --example prerelease_channel
+cargo run -p halyard-core --example maintenance_line
 cargo run -p halyard-conventional --example parse_commit
 cargo run -p halyard-conventional --example lint_title
 cargo run -p halyard-version --example bump_algebra
