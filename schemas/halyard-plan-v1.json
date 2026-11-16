@@ -95,9 +95,23 @@
     "PlanPublish": {
       "description": "Publishing decision for a release (§13).",
       "properties": {
+        "access": {
+          "description": "npm access level (`public` | `restricted`) from\n`publish.npm.access` — `None` = unset, the tool's own posture\ngoverns (ADR-0033: `--access` only on an explicit value). Cargo\nreleases carry `None`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "enabled": {
           "description": "Whether publishing is enabled for this package in this plan.",
           "type": "boolean"
+        },
+        "provenance": {
+          "description": "npm provenance request from `publish.npm.provenance` — `None` =\nunset (trusted publishing decides, ADR-0033), `Some(true)` = the\nexplicit `--provenance` request, `Some(false)` = the documented\n`--no-provenance` opt-out. Cargo releases carry `None`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "registry": {
           "description": "Registry identifier (`crates.io`, `npm`, …; open set).",
