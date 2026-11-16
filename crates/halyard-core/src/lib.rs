@@ -36,9 +36,12 @@
 //!   (§7.3 lockfile subset, §9.2, M3.2).
 //! * [`graph`] — CSR adjacency, topological order, SCCs, `E-GRAPH-CYCLE`
 //!   with the dev-cycle exemption (§6.6, M1.7).
+//! * [`affected`] — the affected-package selector: the pure
+//!   transitive-dependent closure over the reverse edges (§16.3, M10).
 //! * [`link`] — polyglot link rules (§6.5, M1.7).
 #![forbid(unsafe_code)]
 
+pub mod affected;
 pub mod bitset;
 pub mod bump;
 pub mod canonical;
@@ -59,6 +62,9 @@ pub mod release_state;
 pub mod rewrite;
 pub mod trie;
 
+pub use affected::{
+    AffectedReason, AffectedRow, AffectedSelection, affected_selection, changed_from_digest,
+};
 pub use bitset::SmallBitset;
 pub use bstr::BString;
 pub use canonical::{blake3_hex, canonical_json, plan_hash};
