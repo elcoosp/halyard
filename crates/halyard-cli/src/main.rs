@@ -2366,6 +2366,11 @@ fn context(cli: &Cli, profiler: &mut Profiler) -> Result<Context, CliError> {
     // (bound `rc`) and `main` (stable) never share attributions.
     if let Some(branch) = checked_out_branch() {
         config.prerelease_channel = config.channel_for_branch(Some(&branch));
+        // §10.3 maintenance lines (ADR-0027): the checked-out branch
+        // picks its pinned line the same way — applied before the
+        // cache key, so a pinned branch and the default branch never
+        // share attributions.
+        config.maintenance_line = config.maintenance_line_for(Some(&branch));
     }
     let history = profiler
         .span("history", || {
