@@ -318,12 +318,16 @@ per-commit cache; leave `$GIT_DIR/halyard/cache/v1/` untouched),
 Failures carry the §15.4 stable codes (`E-DISC-*`, `E-GIT-*`, `E-PLAN-*`,
 `E-CLI-*`, …) and render through `miette`; every code has a page under
 [docs/errors](../../docs/errors/README.md).
-## The CI-selector adapters (`affected --ci`, ADR-0034)
+## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035)
 
-`halyard affected --ci turbo|nx|bazel` renders the selection in the CI
-system's own grammar — turbo's `--filter=...pkg` dependent filters (one
-per change root, unioned by turbo), nx's `run-many --projects=a,b` list
-(the affected closure), bazel's `rdeps(//..., //pkg/...)` query. The
+`halyard affected --ci turbo|nx|bazel|gha|gitlab` renders the selection
+in the CI system's own grammar — turbo's `--filter=...pkg` dependent
+filters (one per change root, unioned by turbo), nx's
+`run-many --projects=a,b` list (the affected closure), bazel's
+`rdeps(//..., //pkg/...)` query, GitHub Actions' matrix-output value
+(the affected closure as one compact JSON array, fed to `fromJSON`
+inside the downstream `strategy.matrix`) and GitLab's `parallel:matrix`
+hashes (one `- HALYARD_PKG: <name>` line per affected package). The
 grammars are VERIFIED in `docs/research/ci-selector-grammars.md`; an
 empty selection prints nothing (the CI step skips itself, exit 0). The
 `publish` command's npm rows carry the resolved `publish.npm.access`/
