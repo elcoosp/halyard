@@ -911,6 +911,8 @@ fn survey_config(unified: Option<String>, breaking: BumpLevel, feat: BumpLevel) 
         cascade: None,
         channel: None,
         channel_branches: None,
+        // A migration never pins a maintenance line (ADR-0022).
+        maintenance_branches: None,
     });
     config
 }
@@ -1286,6 +1288,8 @@ impl MigrationSource for ChangesetsSource {
                 release: Some(false),
                 include: Vec::new(),
                 exclude: Vec::new(),
+                // A migration never sets a channel (ADR-0022).
+                channel: None,
             });
         }
 
@@ -2119,6 +2123,8 @@ fn plz_release_rows(
             release: Some(false),
             include: Vec::new(),
             exclude: Vec::new(),
+            // A migration never sets a channel (ADR-0022).
+            channel: None,
         });
     }
 }
