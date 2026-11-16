@@ -32,7 +32,10 @@ use std::fmt::Write as _;
 
 use semver::Version;
 
-use crate::bump::{PreMajorPolicy, apply_bump};
+use crate::bump::{
+    PreMajorPolicy, PrereleaseChannel, advance_prerelease, apply_bump, promote_to_stable,
+    same_triple,
+};
 use crate::graph::WorkspaceGraph;
 use crate::history::{HistoryDigest, HistoryProvider, ReleaseRefs};
 use crate::id::PkgId;
@@ -107,6 +110,12 @@ pub struct PlanConfig {
     pub publish_npm_registry: String,
     /// Packages that must not be released (`[[package]] release = false`).
     pub release_disabled: BTreeSet<String>,
+    /// Prerelease channel (§10.3, ADR-0025): when set, every non-forced
+    /// release target becomes `{target}-{channel}.{n}` with the counter
+    /// derived from the release base's and the manifest's own versions —
+    /// no state file. `None` plans stable releases (and promotes a
+    /// leftover prerelease manifest to its own stable triple).
+    pub prerelease_channel: Option<PrereleaseChannel>,
 }
 
 impl PlanConfig {
@@ -136,6 +145,7 @@ impl PlanConfig {
             publish_cargo_registry: "crates.io".to_owned(),
             publish_npm_registry: "npm".to_owned(),
             release_disabled: BTreeSet::new(),
+            prerelease_channel: None,
         }
     }
 }
@@ -255,7 +265,9 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     normalize_groups(ws, cfg, &mut state);
     cascade(ws, &graph, &order, cfg, &mut state);
 
-    let targets = materialize_versions(ws, cfg, &state);
+    let targets = materialize_versions(ws, snapshot, cfg, &state);
+    let targets = promote_pending_stable(ws, snapshot, cfg, &targets);
+    let targets = channelize_targets(ws, snapshot, cfg, &state, &targets);
     let rewrites = collect_rewrites(ws, cfg, &targets)?;
 
     let mut releases: Vec<PlanRelease> = Vec::new();
@@ -272,7 +284,7 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
             continue;
         };
         let from = pkg.version.clone().unwrap_or_else(zero_version);
-        let bump = minimal_bump(&from, target);
+        let bump = release_bump(&from, target, state.bump(pkg.id));
         let tag = effective_template(ws, pkg, cfg).render(
             name,
             target,
@@ -683,8 +695,17 @@ fn cascade_reason(
 
 /// Step 4a: the next version per releasing package (id → target). This
 /// step cannot fail, so it returns the map directly.
+///
+/// With a channel configured (§10.3, ADR-0025) and an **active train**
+/// (the release base tag itself is a prerelease), a non-breaking step is
+/// absorbed into the train's committed triple — the manifest's stable
+/// part, verbatim; the channel counter advances instead (`1.3.0-rc.1` +
+/// one `fix` → `1.3.0-rc.2`). A breaking step moves the triple through
+/// [`apply_bump`] (a fresh `2.0.0` base, counter restarted). Without a
+/// channel the derivation is exactly the stable planner's.
 fn materialize_versions(
     ws: &Workspace,
+    snapshot: &Snapshot<'_>,
     cfg: &PlanConfig,
     state: &State,
 ) -> BTreeMap<PkgId, Version> {
@@ -705,7 +726,14 @@ fn materialize_versions(
             if bump.is_none() {
                 continue;
             }
-            apply_bump(&from, bump, &cfg.pre_major)
+            let active_train = cfg.prerelease_channel.is_some()
+                && base_version_of(ws, snapshot, pkg).is_some_and(|base| !base.pre.is_empty());
+            if active_train && !matches!(bump, Bump::Major) {
+                // The train's triple is its committed progress.
+                promote_to_stable(&from)
+            } else {
+                apply_bump(&from, bump, &cfg.pre_major)
+            }
         };
         if target <= from {
             // Forced targets are validated on ingest; this guard keeps a
@@ -715,6 +743,102 @@ fn materialize_versions(
         targets.insert(id, target);
     }
     targets
+}
+
+/// §10.3 promotion (ADR-0025): with no channel configured, a manifest
+/// that still carries a prerelease releases its own stable triple — the
+/// train's `rc.N` collapses into `{triple}` even when no commits are
+/// left (removing the channel *is* the promotion act; keeping it
+/// configured continues the train). Skipped when the manifest is behind
+/// the latest release tag (the reconciliation reports that state and
+/// never tags downward) and when a commit-derived target already exists.
+fn promote_pending_stable(
+    ws: &Workspace,
+    snapshot: &Snapshot<'_>,
+    cfg: &PlanConfig,
+    targets: &BTreeMap<PkgId, Version>,
+) -> BTreeMap<PkgId, Version> {
+    let mut out = targets.clone();
+    if cfg.prerelease_channel.is_some() {
+        return out;
+    }
+    for pkg in ws.packages() {
+        let name = pkg_name(ws, pkg);
+        if cfg.release_disabled.contains(name) || out.contains_key(&pkg.id) {
+            continue;
+        }
+        let Some(from) = &pkg.version else {
+            continue;
+        };
+        if from.pre.is_empty() {
+            continue;
+        }
+        // The manifest must not be behind the latest release tag.
+        let base_version = base_version_of(ws, snapshot, pkg);
+        if base_version.is_some_and(|base| base > *from) {
+            continue;
+        }
+        out.insert(pkg.id, promote_to_stable(from));
+    }
+    out
+}
+
+/// §10.3 channel application (ADR-0025): every non-forced target becomes
+/// `{target}-{channel}.{n}`. The counter comes from the release base's
+/// own tag and the manifest version (`advance_prerelease` picks the
+/// highest matching counter — no state file); the manifest witnesses the
+/// applied-but-untagged case where the manifest is ahead of the base
+/// tag. Forced targets are the user's explicit version and are exempt.
+fn channelize_targets(
+    ws: &Workspace,
+    snapshot: &Snapshot<'_>,
+    cfg: &PlanConfig,
+    state: &State,
+    targets: &BTreeMap<PkgId, Version>,
+) -> BTreeMap<PkgId, Version> {
+    let Some(channel) = &cfg.prerelease_channel else {
+        return targets.clone();
+    };
+    let mut out = BTreeMap::new();
+    for pkg in ws.packages() {
+        let Some(stable) = targets.get(&pkg.id) else {
+            continue;
+        };
+        if state.forced(pkg.id).is_some() {
+            out.insert(pkg.id, stable.clone());
+            continue;
+        }
+        let from = pkg.version.clone().unwrap_or_else(zero_version);
+        let mut witnesses = Vec::new();
+        if let Some(base) = base_version_of(ws, snapshot, pkg) {
+            witnesses.push(base);
+        }
+        witnesses.push(from.clone());
+        let channelized = advance_prerelease(stable, channel, &witnesses);
+        if channelized == from {
+            // The manifest already carries this exact counter step
+            // (applied but untagged, with no newer base tag): nothing new
+            // is owed this run — the same skip `materialize_versions`
+            // applies to a stable manifest the plan cannot move. Note the
+            // guard is equality, not `<=`: a channel switch can emit a
+            // version semver-below the old prerelease tier (`rc.1` →
+            // `beta.1`) — channels are parallel tracks, not an order.
+            continue;
+        }
+        out.insert(pkg.id, channelized);
+    }
+    out
+}
+
+/// The version parsed from the package's release base tag, if any
+/// (§8.2): `None` for an initial release or a tag the template cannot
+/// parse.
+fn base_version_of(ws: &Workspace, snapshot: &Snapshot<'_>, pkg: &Package) -> Option<Version> {
+    let base = snapshot.refs.base_of(pkg.id)?;
+    let name = pkg_name(ws, pkg);
+    let eco = pkg.ecosystem.resolve(ws.interner());
+    pkg.tag_template
+        .extract_version(base.tag.to_string().as_str(), name, eco)
 }
 
 /// Step 4b: requirement-rewrite patches for every edge whose requirement
@@ -809,6 +933,18 @@ fn skip_reason(pkg: &Package, cfg: &PlanConfig, ws: &Workspace) -> String {
 }
 
 /// Minimal bump taking `from` to `to` (used for forced releases).
+/// The release row's reported bump: a channel advance that keeps the
+/// stable triple reports the bump the commits derived — an owed release
+/// never renders as `none` — while stable targets (and promotions, whose
+/// commits are already consumed) keep the minimal from→to reading.
+fn release_bump(from: &Version, target: &Version, derived: Bump) -> Bump {
+    if !target.pre.is_empty() && same_triple(from, target) {
+        derived
+    } else {
+        minimal_bump(from, target)
+    }
+}
+
 fn minimal_bump(from: &Version, to: &Version) -> Bump {
     if to.major != from.major {
         Bump::Major
