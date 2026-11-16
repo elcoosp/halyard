@@ -28,5 +28,9 @@ harness = false
 name = "lockfile_patch"
 harness = false
 
+[[bench]]
+name = "publish_args"
+harness = false
+
 [lints]
 workspace = true
