@@ -1,6 +1,6 @@
 //! Config errors — stable codes `E-CFG-UNKNOWN-KEY`, `E-CFG-TAG-STYLE`,
-//! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE`, `E-CFG-CHANNEL` (§15.4;
-//! pages under `docs/errors/`).
+//! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE`, `E-CFG-CHANNEL`,
+//! `E-CFG-INIT` (§15.4; pages under `docs/errors/`).
 
 /// An error while loading or resolving `halyard.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +67,17 @@ pub enum ConfigError {
         /// What is wrong with the entry.
         reason: String,
     },
+    /// The `halyard init` scaffold (§16.1/§16.2, ADR-0029) refused:
+    /// create-only, fail-closed. Raised when the survey found nothing
+    /// to scaffold for, when a target already exists (an existing
+    /// config or workflow is never clobbered), or when the atomic
+    /// write itself fails.
+    Init {
+        /// The target path (or `.` for a survey-level refusal).
+        path: String,
+        /// What is wrong, what was looked at and what to do instead.
+        message: String,
+    },
 }
 
 impl ConfigError {
@@ -84,6 +95,8 @@ impl ConfigError {
     pub const CHANNEL_CODE: &'static str = "E-CFG-CHANNEL";
     /// Stable code for [`ConfigError::MaintenanceLine`].
     pub const MAINTENANCE_CODE: &'static str = "E-CFG-MAINTENANCE";
+    /// Stable code for [`ConfigError::Init`].
+    pub const INIT_CODE: &'static str = "E-CFG-INIT";
 
     /// Stable error code for this variant.
     pub fn code(&self) -> &'static str {
@@ -95,6 +108,7 @@ impl ConfigError {
             Self::Migrate { .. } => Self::MIGRATE_CODE,
             Self::Channel { .. } => Self::CHANNEL_CODE,
             Self::MaintenanceLine { .. } => Self::MAINTENANCE_CODE,
+            Self::Init { .. } => Self::INIT_CODE,
         }
     }
 }
@@ -151,6 +165,9 @@ impl std::fmt::Display for ConfigError {
                  branch and pins its line, e.g. `1.x` or `1.2.x`",
                 Self::MAINTENANCE_CODE
             ),
+            Self::Init { path, message } => {
+                write!(f, "[{}] cannot scaffold {path}: {message}", Self::INIT_CODE)
+            }
         }
     }
 }
