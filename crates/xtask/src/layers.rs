@@ -319,6 +319,7 @@ mod tests {
             "halyard-cache",
             "halyard-changelog",
             "halyard-cli",
+            "halyard-config",
             "halyard-core",
             "halyard-conventional",
             "halyard-discover",
