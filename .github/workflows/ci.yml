@@ -3,6 +3,12 @@ name: CI
 # M0.1: the PR gate battery of §6. Jobs mirror the local gates exactly —
 # never weaker. The perf-gate and size-gate pass vacuously until their
 # first budgets/binary exist (M2.6+ / M1.10+) and become enforceable then.
+# Feature policy (ADR-0030): the gates run `--features ci-bundle` — the
+# conflict-free spelling of "all stable features" — instead of
+# `--all-features`, because the cache crate's `miri`/`loom` pair is
+# documented-exclusive and machine-enforced (a combined build is a
+# compile error); the pair keeps its own spelled lanes (the loom job
+# below, the nightly Miri job).
 
 on:
   push:
@@ -36,7 +42,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features ci-bundle -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -49,8 +55,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --features ci-bundle
       - run: cargo test --workspace --benches
+
+  loom:
+    name: loom model check (cache state machine, ADR-0030)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p halyard-cache --features loom --release
 
   nextest:
     name: nextest (ubuntu)
@@ -62,7 +77,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: cargo nextest run --workspace --all-features
+      - run: cargo nextest run --workspace --features ci-bundle
 
   deny:
     name: cargo-deny
@@ -93,7 +108,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --workspace --all-features --no-deps
+      - run: cargo doc --workspace --features ci-bundle --no-deps
 
   schema-drift:
     name: schema drift (M0.7)
