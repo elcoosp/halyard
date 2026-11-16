@@ -69,6 +69,7 @@ link would rot with the page paths).
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
+| `E-CLI-COMMIT` | [E-CLI-COMMIT.md](E-CLI-COMMIT.md) | pending commit type is a near-miss of a known release type — the `check --commits` typo gate refuses |
 | `E-CLI-COMMENT` | [E-CLI-COMMENT.md](E-CLI-COMMENT.md) | CLI check-comment mode (M4.5 step 1, §11.6) |
 | `E-CLI-PR` | [E-CLI-PR.md](E-CLI-PR.md) | CLI live Release-PR decline (M4.2b `pr --dry`) |
 | `E-CLI-RELEASE` | [E-CLI-RELEASE.md](E-CLI-RELEASE.md) | **retired** — the live release shell reports tag/push rows through their engine codes (`E-GIT-*`, `E-FORGE-*`); no code emits this since M4.2b landed, kept for history |
@@ -86,7 +87,7 @@ link would rot with the page paths).
 | `E-PUB-ORDER` | [E-PUB-ORDER.md](E-PUB-ORDER.md) | publish target dependency cycle (M5.2, §13 step 1) |
 | `E-PUB-REGISTRY` | [E-PUB-REGISTRY.md](E-PUB-REGISTRY.md) | publish registry routing gap (M5.2, §13 step 2) |
 | `E-PUB-EFFECT` | [E-PUB-EFFECT.md](E-PUB-EFFECT.md) | publish tool failure row (M5.2, §13.7) |
-| `E-PUB-AUTH` | [E-PUB-AUTH.md](E-PUB-AUTH.md) | publish token present-but-empty refused before any spawn (M5.3 step 1, ADR-0019) |
+| `E-PUB-AUTH` | [E-PUB-AUTH.md](E-PUB-AUTH.md) | publish token present-but-empty refused before any spawn (M5.3 step 1, ADR-0019); the OIDC context detection + exchange refusals (M5.3 step 3, ADR-0031) |
 | `E-CLI-PUBLISH` | [E-CLI-PUBLISH.md](E-CLI-PUBLISH.md) | `publish` live mode contradicts `--offline` (M5.2) |
 
 ## Extension policy
