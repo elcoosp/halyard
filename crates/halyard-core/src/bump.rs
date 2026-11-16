@@ -130,6 +130,94 @@ pub fn apply_bump(version: &Version, bump: Bump, policy: &PreMajorPolicy) -> Ver
     }
 }
 
+/// A validated prerelease channel name (§10.3, ADR-0025): one semver
+/// identifier — alphanumerics and hyphens, non-empty, no leading or
+/// trailing hyphen. The planner's canonical home (the M1.3 algebra in
+/// `halyard-version` re-exports this unchanged, per ADR-0008).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct PrereleaseChannel(String);
+
+impl PrereleaseChannel {
+    /// Validates a channel name; `None` when invalid.
+    pub fn new(raw: &str) -> Option<Self> {
+        let valid = !raw.is_empty()
+            && !raw.starts_with('-')
+            && !raw.ends_with('-')
+            && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        if valid {
+            Some(Self(raw.to_owned()))
+        } else {
+            None
+        }
+    }
+
+    /// Channel name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The next prerelease on `channel` for `base` (§10.3): the counter is
+/// derived from `existing` versions — the highest `base-{channel}.N` with
+/// the same base numbers — with no state file. A new base starts at 1.
+pub fn advance_prerelease(
+    base: &Version,
+    channel: &PrereleaseChannel,
+    existing: &[Version],
+) -> Version {
+    let mut highest: Option<u64> = None;
+    for version in existing {
+        let same_base = version.major == base.major
+            && version.minor == base.minor
+            && version.patch == base.patch
+            && version.build.is_empty();
+        if !same_base {
+            continue;
+        }
+        let idents: Vec<&str> = version.pre.as_str().split('.').collect();
+        let channel_matches = idents
+            .first()
+            .is_some_and(|ident| *ident == channel.as_str());
+        let counter = idents
+            .get(1)
+            .and_then(|c| c.parse::<u64>().ok())
+            .filter(|_| idents.len() == 2 && channel_matches);
+        if let Some(counter) = counter {
+            highest = highest.max(Some(counter));
+        }
+    }
+    let counter = highest.unwrap_or(0).saturating_add(1);
+    let text = format!(
+        "{}.{}.{}-{}.{}",
+        base.major,
+        base.minor,
+        base.patch,
+        channel.as_str(),
+        counter
+    );
+    // `channel` is a validated identifier and the counter is a plain
+    // number, so the composed version always parses; fall back to the
+    // base itself on the impossible path instead of panicking.
+    Version::parse(&text).unwrap_or_else(|_| base.clone())
+}
+
+/// Drops the prerelease/build suffixes (§10.3 `rc → stable` promotion).
+pub fn promote_to_stable(version: &Version) -> Version {
+    Version {
+        major: version.major,
+        minor: version.minor,
+        patch: version.patch,
+        pre: Prerelease::EMPTY,
+        build: BuildMetadata::EMPTY,
+    }
+}
+
+/// Whether two versions share the same `major.minor.patch` triple.
+pub(crate) fn same_triple(a: &Version, b: &Version) -> bool {
+    a.major == b.major && a.minor == b.minor && a.patch == b.patch
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +237,38 @@ mod tests {
         assert_eq!(mapping.bump_for("fix", false), Bump::Patch);
         assert_eq!(mapping.bump_for("perf", false), Bump::Patch);
         assert_eq!(mapping.bump_for("ci", false), Bump::None);
+    }
+
+    #[test]
+    fn channel_names_validate() {
+        assert!(PrereleaseChannel::new("beta").is_some());
+        assert!(PrereleaseChannel::new("alpha-2").is_some());
+        assert!(PrereleaseChannel::new("rc.").is_none());
+        assert!(PrereleaseChannel::new("-rc").is_none());
+        assert!(PrereleaseChannel::new("rc-").is_none());
+        assert!(PrereleaseChannel::new("").is_none());
+        assert!(PrereleaseChannel::new("1").is_some());
+    }
+
+    #[test]
+    fn advance_prerelease_counts_existing_tags() {
+        let channel = PrereleaseChannel::new("rc").unwrap_or_else(|| unreachable!("rc"));
+        let v = |raw: &str| Version::parse(raw).unwrap_or_else(|_| unreachable!("fixture"));
+        let existing = vec![v("1.3.0-rc.1"), v("1.3.0-rc.2"), v("1.2.0")];
+        assert_eq!(
+            advance_prerelease(&v("1.3.0"), &channel, &existing),
+            v("1.3.0-rc.3")
+        );
+        // A new base starts at one; foreign channels and prereleases of
+        // other triples never contribute a counter.
+        assert_eq!(
+            advance_prerelease(&v("1.4.0"), &channel, &existing),
+            v("1.4.0-rc.1")
+        );
+        let beta = PrereleaseChannel::new("beta").unwrap_or_else(|| unreachable!("beta"));
+        assert_eq!(
+            advance_prerelease(&v("1.3.0"), &beta, &existing),
+            v("1.3.0-beta.1")
+        );
     }
 }
