@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod init;
 pub mod loader;
 pub mod migrate;
 pub mod model;
@@ -37,6 +38,15 @@ pub use crate::migrate::{
     DraftWriteReport, ForeignFiles, KnopeSource, MappingRow, MemoryDraftSink, MigrationReport,
     MigrationSource, PackageSurvey, ReleasePleaseSource, ReleasePlzSource, ToolSurvey, UnmappedRow,
     default_sources, migrate, plan_draft_write, run_draft_write,
+};
+
+// ADR-0029 (`init`, §16.1/§16.2): the zero-config scaffold engine — the
+// survey-driven create-only write plan (config skeleton + optional
+// §16.1 workflow) over the same injected `DraftSink` seam, with the
+// directory-creating production sink.
+pub use crate::init::{
+    AtomicScaffoldSink, INIT_CONFIG_TARGET, INIT_WORKFLOW_TARGET, InitFileReport, InitPlan,
+    InitReport, InitSurvey, ScaffoldFile, plan_init, run_init,
 };
 
 // Re-exported for the CLI (M1.10) and adapter consumption.
