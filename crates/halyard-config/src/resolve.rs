@@ -62,6 +62,12 @@ pub struct ResolvedConfig {
     pub pre_major_feat: BumpLevel,
     /// Cascade policy (§10.4).
     pub cascade: CascadePolicy,
+    /// Prerelease channel (§10.3, ADR-0025); `None` plans stable
+    /// releases. Validated at resolve time, so `plan_config` cannot fail.
+    pub prerelease_channel: Option<halyard_core::bump::PrereleaseChannel>,
+    /// Branch-bound channels (§10.3, ADR-0025): branch name → validated
+    /// channel. `channel_for_branch` resolves the effective channel.
+    pub channel_branches: BTreeMap<String, halyard_core::bump::PrereleaseChannel>,
     /// Commit type → bump map (built-ins overlaid by config).
     pub commit_types: BTreeMap<String, BumpLevel>,
     /// Merge-commit diffing policy (§8.5).
@@ -98,6 +104,18 @@ impl ResolvedConfig {
         resolve(&[Layer::Defaults])
     }
 
+    /// The effective §10.3 channel for the checked-out branch
+    /// (ADR-0025): a branch binding wins over the unbound `channel`
+    /// default; a detached or unborn HEAD (`None`) plans with the
+    /// default. Pure — the caller owns the branch lookup.
+    pub fn channel_for_branch(
+        &self,
+        branch: Option<&str>,
+    ) -> Option<halyard_core::bump::PrereleaseChannel> {
+        let bound = branch.and_then(|name| self.channel_branches.get(name));
+        bound.cloned().or_else(|| self.prerelease_channel.clone())
+    }
+
     /// Maps the resolved configuration onto the planner's pure knob set
     /// (ADR-0007): the conversion is total and deterministic — every
     /// planning decision stays a function of the resolved values.
@@ -118,6 +136,8 @@ impl ResolvedConfig {
             CascadePolicy::WhenUnsatisfied => halyard_core::planner::CascadeMode::WhenUnsatisfied,
             CascadePolicy::Never => halyard_core::planner::CascadeMode::Never,
         };
+        // The channel was validated at resolve time; the map is total.
+        let prerelease_channel = self.prerelease_channel.clone();
         let commit_types = self
             .commit_types
             .iter()
@@ -147,6 +167,7 @@ impl ResolvedConfig {
             publish_cargo_registry: self.publish_cargo_registry.clone(),
             publish_npm_registry: "npm".to_owned(),
             release_disabled,
+            prerelease_channel,
         }
     }
 }
@@ -240,6 +261,17 @@ fn merge_versioning(lower: &mut HalyardConfig, versioning: Option<crate::model::
     }
     if higher.cascade.is_some() {
         slot.cascade = higher.cascade;
+    }
+    if higher.channel.is_some() {
+        slot.channel = higher.channel;
+    }
+    if let Some(bindings) = higher.channel_branches {
+        // Per-key overlay: a higher layer's binding replaces its branch,
+        // untouched branches keep the lower layer's binding.
+        let slot_bindings = slot.channel_branches.get_or_insert_with(BTreeMap::new);
+        for (branch, channel) in bindings {
+            slot_bindings.insert(branch, channel);
+        }
     }
     let pm = higher.pre_major.unwrap_or_default();
     if pm.breaking.is_none() && pm.feat.is_none() {
@@ -357,6 +389,32 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
     };
     let versioning = effective.versioning.unwrap_or_default();
     let pre_major = versioning.pre_major.unwrap_or_default();
+    let prerelease_channel = versioning
+        .channel
+        .as_deref()
+        .map(|raw| {
+            halyard_core::bump::PrereleaseChannel::new(raw).ok_or_else(|| ConfigError::Channel {
+                value: raw.to_owned(),
+                reason: "not a single semver identifier".to_owned(),
+            })
+        })
+        .transpose()?;
+    let channel_branches = versioning
+        .channel_branches
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(branch, raw)| {
+            let channel = halyard_core::bump::PrereleaseChannel::new(&raw).ok_or_else(|| {
+                ConfigError::Channel {
+                    value: raw.clone(),
+                    reason: format!(
+                        "the `{branch}` branch binding is not a single semver identifier"
+                    ),
+                }
+            })?;
+            Ok((branch, channel))
+        })
+        .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
     let commits = effective.commits.unwrap_or_default();
     let mut commit_types = default_commit_types();
     for (kind, level) in commits.types.unwrap_or_default() {
@@ -379,6 +437,8 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
         pre_major_breaking: pre_major.breaking.unwrap_or(BumpLevel::Minor),
         pre_major_feat: pre_major.feat.unwrap_or(BumpLevel::Patch),
         cascade: versioning.cascade.unwrap_or(CascadePolicy::WhenUnsatisfied),
+        prerelease_channel,
+        channel_branches,
         commit_types,
         merge_policy: commits.merge_policy.unwrap_or(MergePolicy::FirstParent),
         initial_max_commits,
