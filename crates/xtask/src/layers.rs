@@ -109,11 +109,14 @@ const RULES: &[LayerRule] = &[
     // layer planning over the core graph, the resume/visibility probes
     // over the registry seam, the injected `PublishEffect`. The spawn
     // effect (the real `cargo publish`/`pnpm publish`) joins with the
-    // CLI shell; the engine itself owns no I/O.
+    // CLI shell; the engine itself owns no I/O. ADR-0031 widens the
+    // rule consciously: the OIDC trusted-publishing exchange rides the
+    // forge transport vocabulary (still no HTTP client of its own —
+    // the same `HttpTransport` injection the registry clients use).
     LayerRule {
         name: "halyard-publish",
-        workspace: &["halyard-core", "halyard-registry"],
-        external: Some(&[]),
+        workspace: &["halyard-core", "halyard-registry", "halyard-forge"],
+        external: Some(&["serde_json"]),
     },
     LayerRule {
         name: "halyard-test-support",
