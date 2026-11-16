@@ -433,6 +433,14 @@ enum CiSelector {
     /// Bazel: one `rdeps(//..., <patterns>)` query over the changed
     /// packages' recursive target patterns.
     Bazel,
+    /// GitHub Actions: one compact JSON array over the affected
+    /// closure — the documented matrix output value the downstream job
+    /// feeds to `fromJSON` inside its own `strategy.matrix`.
+    Gha,
+    /// GitLab: one `- HALYARD_PKG: <name>` hash per affected package —
+    /// the `parallel:matrix` array-of-hashes the consumer pastes under
+    /// `matrix:` and reads as `$HALYARD_PKG` in the script.
+    Gitlab,
 }
 
 impl CiSelector {
@@ -442,6 +450,8 @@ impl CiSelector {
             Self::Turbo => "turbo",
             Self::Nx => "nx",
             Self::Bazel => "bazel",
+            Self::Gha => "gha",
+            Self::Gitlab => "gitlab",
         }
     }
 }
