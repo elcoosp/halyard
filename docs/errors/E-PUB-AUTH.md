@@ -83,3 +83,34 @@ halyard doctor | grep publish-auth
 # refuses there before any tool spawn
 halyard publish --dry --format json
 ```
+## The npm provenance runtime refusal (ADR-0033)
+
+A live npm publish whose plan contract requests
+`publish.npm.provenance = true` refuses **before any call** when the
+shell detected no supported cloud CI runtime:
+
+```
+[E-PUB-AUTH] npm: the npm packages <names> request provenance
+attestations (`publish.npm.provenance = true`) but no supported cloud CI
+runtime was detected — npm provenance requires a supported
+cloud-hosted runner with the workflow permission `id-token: write`
+(GitHub Actions exposes the OIDC context only then; GitLab CI/CD is
+also documented) and attestations are generated at publish time, never
+from a laptop; add the `id-token: write` permission and run on a hosted
+runner, or set `publish.npm.provenance = false` (the `--no-provenance`
+opt-out) or remove the key to let trusted publishing decide (see
+E-PUB-AUTH)
+```
+
+Why fail-closed: the attestations are generated at publish time on a
+supported cloud-hosted runner (npm's documented musts); from a laptop
+the request cannot succeed, and a cryptic tool-side failure teaches
+nothing. The dry forecast never refuses (I5 — the offline forecast
+cannot have the runtime context). Detection is the shell's
+(`provenance_runtime_detected`: the GitHub Actions OIDC context, or
+GitLab's `GITLAB_CI` marker); the engine consumes the verdict as
+`PublishPolicy::provenance_runtime` — plain data, `NotDetected` by
+default. Unset and the explicit `false` opt-out never consult the gate.
+
+`doctor` reports the same verdict as the `publish-provenance` check
+(information, never a failure).
