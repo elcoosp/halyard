@@ -167,6 +167,8 @@ fn build_plan(ws: &Workspace) -> Result<Plan, Box<dyn std::error::Error>> {
             Some(PlanPublish {
                 registry: "crates.io".to_owned(),
                 enabled: true,
+                access: None,
+                provenance: None,
             }),
         ),
         (
@@ -174,6 +176,8 @@ fn build_plan(ws: &Workspace) -> Result<Plan, Box<dyn std::error::Error>> {
             Some(PlanPublish {
                 registry: "crates.io".to_owned(),
                 enabled: true,
+                access: None,
+                provenance: None,
             }),
         ),
         (
@@ -181,6 +185,8 @@ fn build_plan(ws: &Workspace) -> Result<Plan, Box<dyn std::error::Error>> {
             Some(PlanPublish {
                 registry: "crates.io".to_owned(),
                 enabled: true,
+                access: None,
+                provenance: None,
             }),
         ),
         ("internal-docs", None),
