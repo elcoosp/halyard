@@ -1001,3 +1001,190 @@ fn doctor_reports_the_publish_oidc_row() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The npm publish options (M5.3 step 6's npm half, ADR-0033): the
+// `publish.npm.access`/`provenance` config rides the plan contract into
+// the spawn argv, the report rows surface it, and a live
+// `provenance = true` run refuses outside a supported cloud runtime
+// before any call. Written first (red), implemented second.
+// ---------------------------------------------------------------------------
+
+/// The npm publish-options config: explicit access + provenance.
+fn npm_options_config() -> &'static str {
+    "[publish]\nenabled = true\n\n[publish.npm]\naccess = \"public\"\nprovenance = true\n"
+}
+
+#[test]
+fn npm_publish_options_ride_the_forecast_argv_and_rows() -> Result<(), BoxError> {
+    let mut fx = build_npm_workspace("npm-opts-dry", None)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("halyard.toml".to_owned(), npm_options_config().to_owned())],
+        "chore: enable npm publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-opts-dry")?;
+    let log = fixture_dir("shim-log-npm-opts-dry")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(out.status.success(), "the dry forecast runs: {text}");
+    // The rows carry the resolved options (the report's machine shape).
+    assert!(
+        text.contains("\"access\": \"public\""),
+        "the access row: {text}"
+    );
+    assert!(
+        text.contains("\"provenance\": true"),
+        "the provenance row: {text}"
+    );
+    // The shim captured the documented argv per target.
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("--access") && recorded.contains("public"),
+        "the access argv: {recorded}"
+    );
+    assert!(
+        recorded.contains("--provenance"),
+        "the provenance argv: {recorded}"
+    );
+    Ok(())
+}
+
+#[test]
+fn npm_provenance_live_refuses_outside_a_cloud_runtime() -> Result<(), BoxError> {
+    // The verified npm musts (docs.npmjs.com, §0.4): a supported cloud
+    // CI/CD on a hosted runner, `id-token: write`. Outside one, a live
+    // `provenance = true` run fails closed before any probe or spawn —
+    // the refusal names the fix and the escape hatch.
+    let (index, base) = FakeIndex::start(
+        BTreeMap::from([
+            ("p1".to_owned(), "0.1.1".to_owned()),
+            ("p2".to_owned(), "0.1.1".to_owned()),
+        ]),
+        "",
+        true,
+    )?;
+    let mut fx = build_npm_workspace("npm-opts-live-refuse", Some(&base))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("halyard.toml".to_owned(), npm_options_config().to_owned())],
+        "chore: enable npm publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-opts-live-refuse")?;
+    let log = fixture_dir("shim-log-npm-opts-live-refuse")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(
+        !out.status.success(),
+        "the unsupported runtime refuses: {text}"
+    );
+    assert!(text.contains("E-PUB-AUTH"), "the stable code: {text}");
+    assert!(
+        text.contains("id-token: write"),
+        "the must is named: {text}"
+    );
+    assert!(
+        text.contains("provenance = false"),
+        "the escape hatch is named: {text}"
+    );
+    assert!(
+        !std::fs::exists(&log).unwrap_or(false) || std::fs::read_to_string(&log)?.trim().is_empty(),
+        "zero side effects — the tool never spawned: {text}"
+    );
+    assert_eq!(index.served(), 0, "zero probes before the refusal");
+    Ok(())
+}
+
+#[test]
+fn npm_provenance_live_runs_under_a_detected_cloud_runtime() -> Result<(), BoxError> {
+    // The GitLab marker (VERIFIED: docs.gitlab.com predefined variables,
+    // `GITLAB_CI` = "true when available") is a supported cloud runtime:
+    // the run proceeds over the loopback registry, the tool's own
+    // trusted-publishing posture governs the attestation.
+    let (index, base) = FakeIndex::start(
+        BTreeMap::from([
+            ("p1".to_owned(), "0.1.1".to_owned()),
+            ("p2".to_owned(), "0.1.1".to_owned()),
+        ]),
+        "",
+        true,
+    )?;
+    let mut fx = build_npm_workspace("npm-opts-live-gitlab", Some(&base))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("halyard.toml".to_owned(), npm_options_config().to_owned())],
+        "chore: enable npm publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-opts-live-gitlab")?;
+    let log = fixture_dir("shim-log-npm-opts-live-gitlab")?.join("argv.log");
+    let (out, text) = halyard_env_with(
+        fx.root(),
+        &["publish", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+        &[("GITLAB_CI", "true")],
+    )?;
+    assert!(out.status.success(), "the detected runtime runs: {text}");
+    assert!(
+        text.contains("\"published\": 2"),
+        "both targets landed: {text}"
+    );
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("--access") && recorded.contains("public"),
+        "the access argv: {recorded}"
+    );
+    assert!(
+        recorded.contains("--provenance"),
+        "the provenance argv: {recorded}"
+    );
+    // The resume probes rode the loopback registry (the run reached the
+    // spawns, not only the detection).
+    assert!(
+        index.served() >= 2,
+        "the loopback packuments were probed: {}",
+        index.served()
+    );
+    Ok(())
+}
+
+#[test]
+fn npm_trusted_publishing_decides_when_options_are_unset() -> Result<(), BoxError> {
+    // Unset is semantic (VERIFIED: pnpm.io `provenance` config —
+    // "When unset, trusted publishing decides"): no flag is invented,
+    // and the report rows stay free of the option keys.
+    let mut fx = build_npm_workspace("npm-opts-unset", None)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable npm publishing",
+    ))?;
+    let shim = write_pnpm_shim("shim-npm-opts-unset")?;
+    let log = fixture_dir("shim-log-npm-opts-unset")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(out.status.success(), "the dry forecast runs: {text}");
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        !recorded.contains("--provenance")
+            && !recorded.contains("--no-provenance")
+            && !recorded.contains("--access"),
+        "no invented flags: {recorded}"
+    );
+    assert!(
+        !text.contains("\"access\"") && !text.contains("\"provenance\""),
+        "the rows stay free of the unset options: {text}"
+    );
+    Ok(())
+}
