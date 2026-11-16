@@ -103,6 +103,8 @@ fn plan_40() -> Plan {
                 publish: Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             }
         })
