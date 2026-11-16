@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use halyard_config::model::{BumpLevel, HalyardConfig};
+use halyard_config::model::{BumpLevel, HalyardConfig, NpmAccess};
 use halyard_config::{
     ConfigError, Layer, ResolvedConfig, TagStyleSetting, config_hash, env_layer_from, resolve,
 };
@@ -45,7 +45,10 @@ fn defaults_match_section_16_4() -> Result<(), Box<dyn Error>> {
     assert_eq!(resolved.initial_max_commits, 10_000);
     assert!(!resolved.publish_enabled, "publish is opt-in (I7)");
     assert_eq!(resolved.publish_cargo_registry, "crates.io");
-    assert!(resolved.publish_npm_provenance, "provenance defaults on");
+    assert_eq!(
+        resolved.publish_npm_provenance, None,
+        "provenance unset is semantic (ADR-0033)"
+    );
     assert_eq!(resolved.forge_commit_mode, halyard_config::CommitMode::Auto);
     assert_eq!(
         resolved.changelog_hidden_types,
@@ -664,5 +667,84 @@ fn maintenance_branches_merge_low_to_high() -> Result<(), Box<dyn Error>> {
             .map(|line| line.to_string()),
         Some("1.2.x".to_owned())
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The npm publish options (ADR-0033): `unset` is semantic — the
+// spawned tool's own trusted-publishing posture governs (`--provenance`
+// is only passed on an explicit `true`, `--no-provenance` only on an
+// explicit `false`), so the resolved config carries the `Option` states
+// through, never a guessed default. Written first (red), implemented
+// second.
+// ---------------------------------------------------------------------------
+
+fn publish_npm_config(access: Option<&str>, provenance: Option<bool>) -> HalyardConfig {
+    use halyard_config::model::{NpmPublishCfg, PublishCfg};
+    let level = match access {
+        Some("restricted") => Some(NpmAccess::Restricted),
+        Some(_) => Some(NpmAccess::Public),
+        None => None,
+    };
+    let npm = NpmPublishCfg {
+        access: level,
+        provenance,
+    };
+    let publish = PublishCfg {
+        enabled: None,
+        cargo: None,
+        npm: Some(npm),
+    };
+    HalyardConfig {
+        publish: Some(publish),
+        ..HalyardConfig::default()
+    }
+}
+
+#[test]
+fn unset_npm_publish_options_stay_unset() -> Result<(), Box<dyn Error>> {
+    // No `[publish.npm]` at all: both options resolve `None` — the run
+    // must not silently invent `--access`/`--provenance` flags the user
+    // never asked for.
+    let resolved = resolve(&[Layer::Defaults])?;
+    assert_eq!(resolved.publish_npm_access, None);
+    assert_eq!(resolved.publish_npm_provenance, None);
+    Ok(())
+}
+
+#[test]
+fn explicit_npm_publish_options_resolve_verbatim() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(publish_npm_config(Some("public"), Some(true))),
+    ])?;
+    assert_eq!(resolved.publish_npm_access, Some(NpmAccess::Public));
+    assert_eq!(resolved.publish_npm_provenance, Some(true));
+    Ok(())
+}
+
+#[test]
+fn npm_provenance_opt_out_resolves_false() -> Result<(), Box<dyn Error>> {
+    // `provenance = false` is the documented self-hosted escape hatch
+    // (`--no-provenance`); it must survive as an explicit `Some(false)`,
+    // not collapse into the unset state.
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(publish_npm_config(Some("restricted"), Some(false))),
+    ])?;
+    assert_eq!(resolved.publish_npm_access, Some(NpmAccess::Restricted));
+    assert_eq!(resolved.publish_npm_provenance, Some(false));
+    Ok(())
+}
+
+#[test]
+fn npm_publish_options_layer_high_over_low() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(publish_npm_config(Some("public"), Some(true))),
+        Layer::PackageMetadata(publish_npm_config(Some("restricted"), Some(false))),
+    ])?;
+    assert_eq!(resolved.publish_npm_access, Some(NpmAccess::Restricted));
+    assert_eq!(resolved.publish_npm_provenance, Some(false));
     Ok(())
 }
