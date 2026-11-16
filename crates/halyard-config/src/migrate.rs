@@ -875,21 +875,7 @@ impl MigrationSource for ReleasePleaseSource {
         unmapped.sort_by(|a, b| a.foreign_key.cmp(&b.foreign_key));
         survey_packages.sort_by(|a, b| a.path.cmp(&b.path));
 
-        let mut config = HalyardConfig::default();
-        if let Some(template) = unified {
-            config.repo = Some(RepoCfg {
-                base_branch: None,
-                tag_style: Some(TagStyle(template)),
-            });
-        }
-        config.versioning = Some(crate::model::VersioningCfg {
-            policy: None,
-            pre_major: Some(PreMajorCfg {
-                breaking: Some(breaking),
-                feat: Some(feat),
-            }),
-            cascade: None,
-        });
+        let config = survey_config(unified, breaking, feat);
 
         Ok(ToolSurvey {
             tool: self.tool().to_owned(),
@@ -901,6 +887,32 @@ impl MigrationSource for ReleasePleaseSource {
             draft: Some(render_draft(&config, RP_CONFIG)?),
         })
     }
+}
+
+/// The validated draft `halyard.toml` skeleton every release-please
+/// survey builds: the translated tag template on `[repo]` and the
+/// foreign pre-major mapping on `[versioning]`. A migration never sets
+/// a channel (ADR-0022: the draft carries only what the foreign config
+/// actually maps).
+fn survey_config(unified: Option<String>, breaking: BumpLevel, feat: BumpLevel) -> HalyardConfig {
+    let mut config = HalyardConfig::default();
+    if let Some(template) = unified {
+        config.repo = Some(RepoCfg {
+            base_branch: None,
+            tag_style: Some(TagStyle(template)),
+        });
+    }
+    config.versioning = Some(crate::model::VersioningCfg {
+        policy: None,
+        pre_major: Some(PreMajorCfg {
+            breaking: Some(breaking),
+            feat: Some(feat),
+        }),
+        cascade: None,
+        channel: None,
+        channel_branches: None,
+    });
+    config
 }
 
 /// Parses the optional release-please manifest
