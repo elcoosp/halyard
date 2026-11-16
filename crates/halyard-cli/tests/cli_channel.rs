@@ -200,3 +200,68 @@ fn invalid_branch_binding_fails_closed() -> Result<(), BoxError> {
     assert!(out.contains("E-CFG-CHANNEL"), "{out}");
     Ok(())
 }
+
+// ---------------------------------------------------------------------
+// Per-package channel overrides (§10.3, M5.6 step 3 / ADR-0026): a
+// `[[package]] channel` entry names that package's train; the shell
+// plans the override without any process-level wiring (the resolved
+// map rides `ResolvedConfig::plan_config`).
+
+/// The override plans the train with no repo-wide channel configured.
+#[test]
+fn package_override_plans_the_prerelease() -> Result<(), BoxError> {
+    let mut fx = build_workspace("pkg-on")?;
+    write_config(&mut fx, "[[package]]\nname = \"solo\"\nchannel = \"rc\"\n")?;
+    let (code, out) = halyard(fx.root(), &["plan", "--format", "json"])?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let release = value
+        .get("releases")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first().cloned())
+        .ok_or("the plan carries one release")?;
+    assert_eq!(
+        release.get("to").and_then(serde_json::Value::as_str),
+        Some("1.1.0-rc.1"),
+        "the override names the train: {out}"
+    );
+    Ok(())
+}
+
+/// The override is the most explicit policy: it beats the repo-wide
+/// default the same way it beats a branch binding (ADR-0026).
+#[test]
+fn package_override_beats_the_repo_wide_channel() -> Result<(), BoxError> {
+    let mut fx = build_workspace("pkg-wins")?;
+    write_config(
+        &mut fx,
+        "[versioning]\nchannel = \"beta\"\n\n[[package]]\nname = \"solo\"\nchannel = \"rc\"\n",
+    )?;
+    let (code, out) = halyard(fx.root(), &["plan", "--format", "json"])?;
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    let release = value
+        .get("releases")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first().cloned())
+        .ok_or("the plan carries one release")?;
+    assert_eq!(
+        release.get("to").and_then(serde_json::Value::as_str),
+        Some("1.1.0-rc.1"),
+        "the override wins over the default: {out}"
+    );
+    Ok(())
+}
+
+/// An invalid override channel fails closed at load (`E-CFG-CHANNEL`),
+/// naming the package.
+#[test]
+fn invalid_package_override_channel_fails_closed() -> Result<(), BoxError> {
+    let mut fx = build_workspace("pkg-bad")?;
+    write_config(&mut fx, "[[package]]\nname = \"solo\"\nchannel = \"rc.\"\n")?;
+    let (code, out) = halyard(fx.root(), &["plan", "--format", "json"])?;
+    assert_ne!(code, 0, "invalid override channel must fail: {out}");
+    assert!(out.contains("E-CFG-CHANNEL"), "{out}");
+    assert!(out.contains("solo"), "the failing package is named: {out}");
+    Ok(())
+}
