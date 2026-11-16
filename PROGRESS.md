@@ -51,6 +51,71 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | §10.3 channels completed — per-package overrides (M5.6 step 3, ADR-0026) + maintenance-line trains (M5.6 completion, ADR-0027) | done | (tree left dirty; no commits) | M1 (step 3): `[[package]] channel = "rc"` — `PackageOverride.channel` (loader `package.element` keys + regenerated `halyard-config-v1` schema), validated at resolve time into `ResolvedConfig::package_channels` (E-CFG-CHANNEL names the package; a name-less path-glob override fails closed), merged low→high with later entries winning; `PlanConfig.package_channels` + `channel_for_package` as the ONE resolution point (override > branch binding > unbound default) consulted at all three channel decision points — the active-train absorption rule, promotion (now per package: a trained package continues its train while a channel-less package promotes) and `channelize_targets`; rides `config_hash`; migrate drafts keep `channel: None` (ADR-0022); 4 planner tests + 6 config tests + 3 CLI gates (red→green on record: E0609/E0560 on the missing seam); bench `plan_channel_override` (override hit ≈9.3 µs, mixed two-package ≈18.7 µs vs stable ≈16.4 µs — one pass, no re-planning); `prerelease_channel` example gains the override pass; ADR-0026 + arch §10.3/§16.4 + README/CLI-README + E-CFG-CHANNEL page/index. M2 (M1 green first, same session): the maintenance-branch half of M5.6 — `MaintenanceLine` (parse `MAJOR.x`/`MAJOR.MINOR.x`, matches the final target, renders back), `PlanConfig.maintenance_line` (branch-resolved, shell-applied before the cache key like the channel), `enforce_maintenance_line` as ONE guard pass over the final targets (the channelized triple is what is checked; `Release-As` exempt; the §10.2 remap applies first — on `0.1.x` the remapped `0.2.0` still refuses), `[versioning].maintenance_branches` validated at resolve (`E-CFG-MAINTENANCE` + page + index) and merged per-key low→high; `PlanError::MaintenanceLine` (`E-PLAN-MAINTENANCE` + page + index) refuses with the package, line and target named; 6 planner tests + 4 config tests + 3 CLI gates (red→green on record: E0433/E0609/E0560/E0599, plus two test-side shadowing corrections and a fixture reshaped to a `chore` scaffold so the gates assert the line semantics under either base behavior); bench `plan_maintenance` (in-line patch ≈9.0 µs, unpinned baseline ≈9.9 µs, refusal ≈0.9 µs — the guard exits before rewrites); example `maintenance_line` (backport → refusal → unpinned free); ADR-0027 + arch §10.3/§16.4 + README/CLI-README rows + example row. Micro-debt + drift cleaned en passant: the dead `path` parameter in `halyard-cache::load_locked` removed (`let _ = path;` gone), the CLI README absent-commands row now names `bench`/`man` per §16.2, the versioning did-you-mean snapshot regenerated for both new keys | M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit — all unchanged; recorded quirk: CLI git fixtures plan from the initial release when no base tag is selected (the repo's single-feat-after-tag shapes make base-derived and initial targets coincide; the maintenance gates shape around it) | 2026-11-16; session log below |
 
+| §9.4 change-file input slice (M3.5 completion, ADR-0028) | done | (tree left dirty; no commits) | M1: the pre-wired-but-unproduced `Reason::Changeset` seam finally fed — `halyard-core::change_file`: the pure `ChangeFiles` input type (bumps + notes per package name, strongest-wins `record`, 4 inline tests) carried by `Snapshot::change_files`; `halyard-changelog::change_files`: the strict TOML-style grammar (`parse_change_file`: `---` delimiters, one `packages = { name = "bump" }` inline table, quoted `major`/`minor`/`patch`, npm scoped-name charset, `ChangelogError::ChangeFile` = `E-CHLOG-CHANGE-FILE` + page + index) + `load_change_files` (path-order merge, fail-closed on any bad file); planner: `direct_bumps` applies the explicit bump after the commit loop (overwrite — replaces the commit-derived level in both directions, the ADR-0028 escape-hatch reading; the monotone cascade guard exempts explicit packages for free), `validate_change_files` refuses unknown names (`PlanError::ChangeFilePackage` = `E-PLAN-CHANGE-FILE` + page + index), `render_entry` merges the notes verbatim (one merge point feeding the §11.3 body, the CHANGELOG.md write and the `create_release` payload); CLI `plan_from_context` scans `.halyard/changes/*.md` (missing directory = zero-config); `Release-As` stays above the change file (both reasons ride the chain when both present); 8 planner tests + golden `plan__change_file` snapshot + 15 parser tests + 3 CLI gates (red→green on record: E0432/E0560/E0599 across the three suites) + bench `planner_changes` (baseline ≈10.2 µs, explicit-bump ≈13 µs, note-merge) + example `change_file` + ADR-0028; every `Snapshot` construction site updated (tests ×3, benches ×3, examples ×2, xtask replay/bench, CLI). Micro-debt + drift fixed (additive, not milestone substitutes): `PlanError` now exposes its structured cause through `Error::source()` (`Unrewritable`'s `VersionError` — the `EditFailure`/`LockfileFailure` convention extended to the planner), the retired `E-CLI-RELEASE` page marked retired (no producer since the live release shell; index row annotated), the §9.4 as-built note rewritten (it still claimed the user-template path was open — it shipped with M4.1b) and now records the change-file completion + the consumed-on-release maintainer contract, README status/layout/commands rows, changelog crate description row | M2 candidate identified but deferred, inventory recorded: `halyard init` (§16.1 — zero-config draft `halyard.toml` create-only + `--github` workflow scaffold, reusing the ADR-0023 `DraftSink` machinery); M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-16; session log below |
+
+### 2026-11-16 — §9.4 change-file input (M3.5 completion, ADR-0028) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `38b8873` (the
+  channels-completion session): fresh stable toolchain 1.100.0,
+  `cargo check --workspace --all-features --all-targets` exit 0 as the
+  baseline. The survey (two parallel read-only agents + hand reads)
+  classified the tree: zero `todo!`/`unimplemented!`/`#[allow]`
+  anywhere (structural, not discipline), 17/18 crates carry consumer
+  examples (only xtask lacks one), error taxonomy 67 codes ↔ 67 pages
+  ↔ 67 producers with exactly one asymmetry (`E-CLI-RELEASE` has no
+  producer — retired, unmarked), architecture §7.1 lists two phantom
+  crates (`halyard-action`, `halyard-plugin-host`) while omitting
+  `halyard-forge-github`, and the §9.4 as-built note still claimed the
+  user-template path was open. Feature surface: `miri`/`loom` are
+  documented-exclusive but not machine-enforced, and the `--all-features`
+  CI lane silently combines them (the shadow-mmap path runs there);
+  nothing requires nightly, no bench is nightly-gated; no `ci-bundle`
+  feature exists.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing API itself (`E0432` on `halyard_core::change_file` /
+  `halyard_changelog::change_files`, `E0560` on the `Snapshot` field,
+  `E0599` on both error variants), captured on all three suites before
+  any implementation. The green landed the ADR-0028 design: pure data
+  in core, strict grammar in the §9.4 crate, planner precedence
+  (explicit replaces commits, `Release-As` still outranks it, cascade
+  exempt by the existing monotone guard), one note-merge point in
+  `render_entry`, the CLI scan wired into the shared `plan_from_context`
+  pipeline. Test-side corrections during green (the red phase
+  corrected the tests, not the design): the strongest-wins fixture had
+  to record notes verbatim and in path order (the loader sorts,
+  `record` preserves), and the cascade fixture's requirement site had
+  to name the dependent's real manifest.
+- **M2 deferred, inventory recorded.** `halyard init` (§16.1) is the
+  chosen next milestone: zero-config draft `halyard.toml` create-only
+  (the ADR-0023 `DraftSink` machinery exists — `plan_draft_write` +
+  `AtomicDraftSink`) plus the `--github` workflow scaffold; it needs
+  its own red→green cycle, CLI gates, docs row and an example, which
+  did not fit the session budget after the full gate battery. Deferred,
+  not half-shipped.
+- **Tests/bench/example totals.** 8 new planner integration tests +
+  the `plan__change_file` golden (wire format + plan_hash pinned), 15
+  change-file grammar tests, 4 `ChangeFiles` inline tests, 3 CLI
+  end-to-end gates, bench group `plan_changes` (3 shapes), example
+  `change_file`, all `Snapshot` sites (11 files) updated.
+- **Docs.** ADR-0028; `E-CHLOG-CHANGE-FILE` + `E-PLAN-CHANGE-FILE`
+  pages + two index rows (67 → 69 codes, pages and producers exact);
+  §9.4 as-built rewritten (drift fixed); README status/layout/commands;
+  crate description row.
+- **Micro-debt + drift (additive).** `PlanError::source()` (the
+  structured `VersionError` cause surfaced), `E-CLI-RELEASE` marked
+  retired (page + index row), §9.4 note's stale user-template claim
+  corrected.
+- **Gates on the final tree.** fmt ✓, clippy `-D warnings` workspace
+  ✓, tests `--all-features` ✓ (0 failures), benches ✓, lint-hygiene
+  grep empty, rustdoc `-D warnings` ✓ (session log records the exact
+  counts).
+- **Honest state at cut-off.** The tree is dirty by protocol; every
+  gate re-run on the final tree. The `--all-features` lane still
+  combines the documented-exclusive `miri`+`loom` (flagged, not
+  enforced — a candidate xtask check, not landed this session).
+- **Next session start point.** `halyard init` (§16.1) per the M2
+  inventory above; then the M4.7 corpus-lane acceptance.
+
 ### 2026-11-16 — §10.3 channels completed: per-package overrides (M5.6 step 3, ADR-0026) + maintenance-line trains (M5.6 completion, ADR-0027) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `e08b5cc` (the
