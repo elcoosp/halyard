@@ -39,7 +39,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::{PublishError, PublishTarget};
+use crate::{ProvenanceRuntime, PublishError, PublishTarget};
 
 // ---------------------------------------------------------------------------
 // The seam
@@ -332,6 +332,37 @@ impl PublishAuth for EnvPublishAuth {
     fn secrets(&self) -> Vec<String> {
         // BTreeMap iterates in key order — the deterministic listing.
         self.table.values().cloned().collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The provenance-runtime verdict (ADR-0033)
+// ---------------------------------------------------------------------------
+
+/// Resolves the provenance-runtime verdict the publish policy consumes
+/// (ADR-0033): a supported cloud CI runtime is **detected** when the
+/// GitHub Actions OIDC context is present (`context_present` — the
+/// runner exposes it only under `id-token: write`, npm's documented
+/// must) or the GitLab CI/CD marker `GITLAB_CI` equals `true` (VERIFIED:
+/// docs.gitlab.com predefined variables — "Available for all jobs
+/// executed in CI/CD. true when available"). The shell owns the process
+/// environment; the injected `reader` keeps the resolution testable
+/// without mutating it (the `gha_oidc_context` convention).
+///
+/// The verdict is the validate-then-act input for the engine's
+/// provenance posture: `CloudDetected` lets an explicit
+/// `publish.npm.provenance = true` run, `NotDetected` refuses it before
+/// any call. Unset provenance and the explicit opt-out never consult
+/// this verdict.
+#[must_use]
+pub fn provenance_runtime_detected(
+    context_present: bool,
+    reader: &dyn Fn(&str) -> Option<String>,
+) -> ProvenanceRuntime {
+    if context_present || reader("GITLAB_CI").as_deref() == Some("true") {
+        ProvenanceRuntime::CloudDetected
+    } else {
+        ProvenanceRuntime::NotDetected
     }
 }
 
