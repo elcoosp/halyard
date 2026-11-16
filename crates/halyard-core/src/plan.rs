@@ -169,6 +169,18 @@ pub struct PlanPublish {
     pub registry: String,
     /// Whether publishing is enabled for this package in this plan.
     pub enabled: bool,
+    /// npm access level (`public` | `restricted`) from
+    /// `publish.npm.access` — `None` = unset, the tool's own posture
+    /// governs (ADR-0033: `--access` only on an explicit value). Cargo
+    /// releases carry `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
+    /// npm provenance request from `publish.npm.provenance` — `None` =
+    /// unset (trusted publishing decides, ADR-0033), `Some(true)` = the
+    /// explicit `--provenance` request, `Some(false)` = the documented
+    /// `--no-provenance` opt-out. Cargo releases carry `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<bool>,
 }
 
 /// Byte patches for one file (§5.8 `edits`, §9.1).
@@ -259,6 +271,8 @@ mod tests {
                 publish: Some(PlanPublish {
                     registry: "crates.io".to_owned(),
                     enabled: true,
+                    access: None,
+                    provenance: None,
                 }),
             }],
             edits: vec![PlanEdit {
