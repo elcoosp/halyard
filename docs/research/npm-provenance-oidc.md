@@ -36,3 +36,30 @@ statements" <https://docs.npmjs.com/generating-provenance-statements>
   pass `--access` on first publish (`publish.npm.access`).
 - Tokenless path = npm trusted publishing (OIDC); HALYARD should prefer it
   when the workflow provides an OIDC token, falling back to `NODE_AUTH_TOKEN`.
+## Verified facts, 2026-11-16 fetch (M5.3 step 6's npm half, ADR-0033)
+
+- **pnpm publish** (`https://pnpm.io/cli/publish`, fetched live):
+  `--provenance` — "When publishing from a supported cloud CI/CD
+  system, the package will be publicly linked to where it was built and
+  published from"; "Under trusted publishing, pnpm attaches provenance
+  to a public package from a public repository on its own"; the opt-out
+  — "Use --no-provenance (or --provenance=false) to publish without
+  it, for example from a self-hosted runner"; the `provenance` config —
+  "Default: undefined", "When unset, trusted publishing decides", "Set
+  it to false to never attach provenance"; the CLI option "takes
+  precedence" over config/env. `--access <public|restricted>` —
+  "Tells the registry whether the published package should be public or
+  restricted". `--dry-run` and `--no-git-checks` as previously
+  recorded.
+- **GitLab marker** (`https://docs.gitlab.com/ci/variables/predefined_variables`):
+  `GITLAB_CI` — "Available for all jobs executed in CI/CD. true when
+  available".
+
+### Design consequences update
+
+- **Unset is semantic**: halyard passes `--provenance` only on an
+  explicit `true`, `--no-provenance` only on an explicit `false`, and
+  nothing when unset — the tool's own trusted-publishing posture
+  governs (the earlier "must refuse outside cloud CI" consequence
+  applies to the *explicit* request, and the tool itself performs the
+  OIDC exchange, so halyard never exchanges or injects for npm).
