@@ -25,6 +25,6 @@ the exact members to change.
 ## Command
 
 ```bash
-cargo run -p halyard -- graph --format mermaid
+cargo run -p halyard -- graph --graph-format mermaid
 cargo test -p halyard-core planner
 ```
