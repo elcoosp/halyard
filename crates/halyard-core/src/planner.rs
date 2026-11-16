@@ -116,6 +116,18 @@ pub struct PlanConfig {
     /// no state file. `None` plans stable releases (and promotes a
     /// leftover prerelease manifest to its own stable triple).
     pub prerelease_channel: Option<PrereleaseChannel>,
+    /// Per-package channel overrides (§10.3, ADR-0026): package name →
+    /// channel, materialized from the `[[package]] channel` entries.
+    /// The override is the most explicit policy — it wins over
+    /// [`Self::prerelease_channel`] (the branch-resolved default) for
+    /// that package through [`Self::channel_for_package`]; every other
+    /// package keeps the default.
+    pub package_channels: BTreeMap<String, PrereleaseChannel>,
+    /// Maintenance-line pin (§10.3, ADR-0027): the branch-resolved line
+    /// the shell is releasing on (`None` = an unpinned branch plans
+    /// free). A non-forced target that would leave the line refuses
+    /// (`E-PLAN-MAINTENANCE`) instead of planning across it.
+    pub maintenance_line: Option<MaintenanceLine>,
 }
 
 impl PlanConfig {
@@ -146,13 +158,93 @@ impl PlanConfig {
             publish_npm_registry: "npm".to_owned(),
             release_disabled: BTreeSet::new(),
             prerelease_channel: None,
+            package_channels: BTreeMap::new(),
+            maintenance_line: None,
         }
+    }
+
+    /// The effective §10.3 channel for `name` (ADR-0026): the
+    /// `[[package]]` override when one matches, else the repo-wide
+    /// (branch-resolved) default. The planner consults this at every
+    /// channel decision point — the train-absorption rule, promotion
+    /// and channelization — so a mixed repo plans each package on its
+    /// own policy with no post-pass.
+    pub fn channel_for_package(&self, name: &str) -> Option<&PrereleaseChannel> {
+        self.package_channels
+            .get(name)
+            .or(self.prerelease_channel.as_ref())
     }
 }
 
 impl Default for PlanConfig {
     fn default() -> Self {
         Self::default_values()
+    }
+}
+
+/// A maintenance release line (§10.3, ADR-0027): the `1.x` / `1.2.x`
+/// branch pattern pins every non-forced target to the line — a bump
+/// that would leave the line refuses (`E-PLAN-MAINTENANCE`) instead of
+/// planning across it. The same string names the branch and the line
+/// it pins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct MaintenanceLine {
+    /// The pinned major.
+    pub major: u64,
+    /// The pinned minor (`None` = any minor on the major).
+    pub minor: Option<u64>,
+}
+
+impl MaintenanceLine {
+    /// Parses the documented grammar: `MAJOR.x` or `MAJOR.MINOR.x`.
+    /// `None` for anything else — the guard never guesses a line.
+    pub fn parse(branch: &str) -> Option<Self> {
+        let mut parts = branch.split('.');
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let second = parts.next()?;
+        let third = parts.next();
+        if parts.next().is_some() {
+            return None;
+        }
+        let minor = match third {
+            // `MAJOR.MINOR.x`: the middle part must be numeric.
+            Some("x") => {
+                if second == "x" {
+                    return None;
+                }
+                Some(second.parse::<u64>().ok()?)
+            }
+            // `MAJOR.x`: exactly two parts, the tail is the pin.
+            None => {
+                if second != "x" {
+                    return None;
+                }
+                None
+            }
+            // Anything else is not the documented grammar.
+            Some(_) => return None,
+        };
+        Some(Self { major, minor })
+    }
+
+    /// Whether `version` stays on the line.
+    pub fn matches(&self, version: &Version) -> bool {
+        if version.major != self.major {
+            return false;
+        }
+        match self.minor {
+            Some(minor) => version.minor == minor,
+            None => true,
+        }
+    }
+}
+
+impl std::fmt::Display for MaintenanceLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.minor {
+            Some(minor) => write!(f, "{}.{minor}.x", self.major),
+            None => write!(f, "{}.x", self.major),
+        }
     }
 }
 
@@ -185,6 +277,16 @@ pub enum PlanError {
         /// The dependent package name.
         package: String,
     },
+    /// A maintenance-line pin (§10.3, ADR-0027) refuses a target that
+    /// would leave the line it pins (`E-PLAN-MAINTENANCE`).
+    MaintenanceLine {
+        /// The package whose target leaves the line.
+        package: String,
+        /// The line the branch pins, as written.
+        line: String,
+        /// The offending target.
+        target: String,
+    },
 }
 
 impl PlanError {
@@ -194,6 +296,7 @@ impl PlanError {
             Self::Cycle { .. } => "E-PLAN-CYCLE",
             Self::ReleaseAsVersion { .. } => "E-PLAN-RELEASE-AS",
             Self::Unrewritable { .. } => "E-PLAN-UNREWRITABLE",
+            Self::MaintenanceLine { .. } => "E-PLAN-MAINTENANCE",
         }
     }
 }
@@ -218,6 +321,17 @@ impl std::fmt::Display for PlanError {
                 f,
                 "[E-PLAN-UNREWRITABLE] {package}: {detail} (in {file}); adjust the requirement \
                  or set [versioning] cascade = \"never\""
+            ),
+            Self::MaintenanceLine {
+                package,
+                line,
+                target,
+            } => write!(
+                f,
+                "[E-PLAN-MAINTENANCE] `{package}` would release {target} on the `{line}` \
+                 maintenance branch — a release must stay on the line it pins; land the \
+                 breaking work on the default branch or force it with `Release-As` (the \
+                 explicit escape hatch)"
             ),
         }
     }
@@ -268,6 +382,7 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     let targets = materialize_versions(ws, snapshot, cfg, &state);
     let targets = promote_pending_stable(ws, snapshot, cfg, &targets);
     let targets = channelize_targets(ws, snapshot, cfg, &state, &targets);
+    let targets = enforce_maintenance_line(ws, cfg, &state, targets)?;
     let rewrites = collect_rewrites(ws, cfg, &targets)?;
 
     let mut releases: Vec<PlanRelease> = Vec::new();
@@ -726,7 +841,7 @@ fn materialize_versions(
             if bump.is_none() {
                 continue;
             }
-            let active_train = cfg.prerelease_channel.is_some()
+            let active_train = cfg.channel_for_package(name).is_some()
                 && base_version_of(ws, snapshot, pkg).is_some_and(|base| !base.pre.is_empty());
             if active_train && !matches!(bump, Bump::Major) {
                 // The train's triple is its committed progress.
@@ -745,6 +860,38 @@ fn materialize_versions(
     targets
 }
 
+/// §10.3 maintenance-line guard (ADR-0027): with a branch-resolved
+/// line pinned, every non-forced target must stay on the line it names —
+/// the guard runs over the FINAL targets, so a channelized train triple
+/// is what is checked. Forced (`Release-As`) targets are the user's
+/// explicit version and stay exempt.
+fn enforce_maintenance_line(
+    ws: &Workspace,
+    cfg: &PlanConfig,
+    state: &State,
+    targets: BTreeMap<PkgId, Version>,
+) -> Result<BTreeMap<PkgId, Version>, PlanError> {
+    let Some(line) = &cfg.maintenance_line else {
+        return Ok(targets);
+    };
+    // Refuse the FIRST out-of-line target in package order — the error
+    // names the package, the line and the offending version.
+    for pkg in ws.packages() {
+        let Some(target) = targets.get(&pkg.id) else {
+            continue;
+        };
+        if state.forced(pkg.id).is_some() || line.matches(target) {
+            continue;
+        }
+        return Err(PlanError::MaintenanceLine {
+            package: pkg_name(ws, pkg).to_owned(),
+            line: line.to_string(),
+            target: target.to_string(),
+        });
+    }
+    Ok(targets)
+}
+
 /// §10.3 promotion (ADR-0025): with no channel configured, a manifest
 /// that still carries a prerelease releases its own stable triple — the
 /// train's `rc.N` collapses into `{triple}` even when no commits are
@@ -752,6 +899,9 @@ fn materialize_versions(
 /// configured continues the train). Skipped when the manifest is behind
 /// the latest release tag (the reconciliation reports that state and
 /// never tags downward) and when a commit-derived target already exists.
+/// The channel decision is per package (ADR-0026): a package running
+/// its own `[[package]] channel` train continues it even when the
+/// repo-wide default is unset.
 fn promote_pending_stable(
     ws: &Workspace,
     snapshot: &Snapshot<'_>,
@@ -759,12 +909,12 @@ fn promote_pending_stable(
     targets: &BTreeMap<PkgId, Version>,
 ) -> BTreeMap<PkgId, Version> {
     let mut out = targets.clone();
-    if cfg.prerelease_channel.is_some() {
-        return out;
-    }
     for pkg in ws.packages() {
         let name = pkg_name(ws, pkg);
-        if cfg.release_disabled.contains(name) || out.contains_key(&pkg.id) {
+        if cfg.release_disabled.contains(name)
+            || cfg.channel_for_package(name).is_some()
+            || out.contains_key(&pkg.id)
+        {
             continue;
         }
         let Some(from) = &pkg.version else {
@@ -789,6 +939,9 @@ fn promote_pending_stable(
 /// highest matching counter — no state file); the manifest witnesses the
 /// applied-but-untagged case where the manifest is ahead of the base
 /// tag. Forced targets are the user's explicit version and are exempt.
+/// The channel is resolved per package (ADR-0026): a `[[package]]`
+/// override names that package's train, the repo-wide default fills the
+/// rest, and an un-channelized package keeps its stable target.
 fn channelize_targets(
     ws: &Workspace,
     snapshot: &Snapshot<'_>,
@@ -796,9 +949,6 @@ fn channelize_targets(
     state: &State,
     targets: &BTreeMap<PkgId, Version>,
 ) -> BTreeMap<PkgId, Version> {
-    let Some(channel) = &cfg.prerelease_channel else {
-        return targets.clone();
-    };
     let mut out = BTreeMap::new();
     for pkg in ws.packages() {
         let Some(stable) = targets.get(&pkg.id) else {
@@ -808,6 +958,11 @@ fn channelize_targets(
             out.insert(pkg.id, stable.clone());
             continue;
         }
+        let name = pkg_name(ws, pkg);
+        let Some(channel) = cfg.channel_for_package(name) else {
+            out.insert(pkg.id, stable.clone());
+            continue;
+        };
         let from = pkg.version.clone().unwrap_or_else(zero_version);
         let mut witnesses = Vec::new();
         if let Some(base) = base_version_of(ws, snapshot, pkg) {
