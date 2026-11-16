@@ -1,6 +1,6 @@
 //! Config errors — stable codes `E-CFG-UNKNOWN-KEY`, `E-CFG-TAG-STYLE`,
-//! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE` (§15.4; pages under
-//! `docs/errors/`).
+//! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE`, `E-CFG-CHANNEL` (§15.4;
+//! pages under `docs/errors/`).
 
 /// An error while loading or resolving `halyard.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +49,15 @@ pub enum ConfigError {
         /// do instead.
         message: String,
     },
+    /// The `[versioning].channel` value (§10.3) is not a valid channel
+    /// name — one semver identifier: alphanumerics and hyphens, non-empty,
+    /// no leading or trailing hyphen.
+    Channel {
+        /// The offending value.
+        value: String,
+        /// What is wrong with the name.
+        reason: String,
+    },
 }
 
 impl ConfigError {
@@ -62,6 +71,8 @@ impl ConfigError {
     pub const ENV_CODE: &'static str = "E-CFG-ENV";
     /// Stable code for [`ConfigError::Migrate`].
     pub const MIGRATE_CODE: &'static str = "E-CFG-MIGRATE";
+    /// Stable code for [`ConfigError::Channel`].
+    pub const CHANNEL_CODE: &'static str = "E-CFG-CHANNEL";
 
     /// Stable error code for this variant.
     pub fn code(&self) -> &'static str {
@@ -71,6 +82,7 @@ impl ConfigError {
             Self::Read { .. } => Self::READ_CODE,
             Self::Env { .. } => Self::ENV_CODE,
             Self::Migrate { .. } => Self::MIGRATE_CODE,
+            Self::Channel { .. } => Self::CHANNEL_CODE,
         }
     }
 }
@@ -114,6 +126,12 @@ impl std::fmt::Display for ConfigError {
                 "[{}] cannot migrate {path}: {message} — fix or remove the foreign \
                  configuration; the migration never guesses",
                 Self::MIGRATE_CODE
+            ),
+            Self::Channel { value, reason } => write!(
+                f,
+                "[{}] invalid prerelease channel {value:?}: {reason} — a channel is one \
+                 semver identifier: alphanumerics and hyphens, no leading or trailing hyphen",
+                Self::CHANNEL_CODE
             ),
         }
     }
