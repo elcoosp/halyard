@@ -46,6 +46,10 @@ name = "bitset"
 harness = false
 
 [[bench]]
+name = "affected"
+harness = false
+
+[[bench]]
 name = "release_state"
 harness = false
 
