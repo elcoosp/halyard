@@ -21,6 +21,7 @@ pattern from M1 onward where useful).
 | `E-CFG-TOML` | [E-CFG-TOML.md](E-CFG-TOML.md) | config read/parse (M1.8) |
 | `E-CFG-ENV` | [E-CFG-ENV.md](E-CFG-ENV.md) | config env layer (M1.8) |
 | `E-CFG-MIGRATE` | [E-CFG-MIGRATE.md](E-CFG-MIGRATE.md) | foreign-config migration survey + `--write` refusals (M4.7) |
+| `E-CFG-CHANNEL` | [E-CFG-CHANNEL.md](E-CFG-CHANNEL.md) | config prerelease channel name (§10.3, ADR-0025) |
 | `E-EDIT-PATCHES` | [E-EDIT-PATCHES.md](E-EDIT-PATCHES.md) | edit patch validation (M1.4) |
 | `E-EDIT-VERIFY` | [E-EDIT-VERIFY.md](E-EDIT-VERIFY.md) | edit re-parse verification (M1.4) |
 | `E-EDIT-IO` | [E-EDIT-IO.md](E-EDIT-IO.md) | edit atomic write (M1.4) |
