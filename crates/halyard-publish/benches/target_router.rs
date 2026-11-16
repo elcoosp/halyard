@@ -22,6 +22,8 @@ fn target(registry: &str, package: &str) -> PublishTarget {
         registry: registry.to_owned(),
         manifest_dir: String::new(),
         manifest: "Cargo.toml".to_owned(),
+        access: None,
+        provenance: None,
     }
 }
 
