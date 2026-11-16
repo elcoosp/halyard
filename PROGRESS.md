@@ -2055,3 +2055,74 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   (2) the corpus-wide pnpm differential as an xtask subcommand,
   (3) the M2.6 dhat re-audit with the cache warm, (4) the
   `github-release-notes` PR-comment mode.
+### 2026-11-16 — M5.3 step 6's npm half + M10 step 2 (ADR-0033/0034, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `d3c1dd7` (the
+  affected/man slice). The last commit recorded the npm-provenance
+  VERIFY outcome — the declared next work. Baseline gates re-run green
+  (stable 1.10x, `debuginfo=0` — the sandbox's 10G disk hit the target
+  ceiling twice before the flag was consistent; a linker bus-error is
+  resource, not code). The doc gate at base: three stale spots found
+  and fixed in-session (below).
+- **M1 implemented (no stubs), one full red→green cycle** (the engine
+  gate/rows tests, the argv tests, the config tri-state tests, the
+  planner contract tests and the CLI e2e tests written first — red on
+  the unresolved `NpmPublishOptions`/`ProvenanceRuntime` APIs and the
+  missing `--ci` argument, on record — then implemented in dependency
+  order): **the npm publish options end to end (ADR-0033)** —
+  `publish.npm.access`/`provenance` resolve as semantic-unset
+  `Option`s (the pnpm.io fetch: "Default: undefined", "When unset,
+  trusted publishing decides" — the old guessed defaults
+  `access=Public`/`provenance=true` would have invented flags every
+  publish), the planner fills the npm releases' `PlanPublish`
+  (optional, schema-additive fields; cargo carries `None`), the engine
+  surfaces them on targets and rows, `pnpm_publish_args` emits
+  `--access`/`--provenance`/`--no-provenance` only on explicit values,
+  and a live `provenance = true` run refuses `E-PUB-AUTH` before any
+  call when no supported cloud runtime is detected — the detection
+  (`provenance_runtime_detected`: the GHA OIDC context or GitLab's
+  `GITLAB_CI` marker, VERIFIED "true when available") stays in the
+  shell, the engine consumes `PublishPolicy::provenance_runtime` as
+  plain data (default `NotDetected`, fail-closed; the dry forecast
+  never refuses, I5). Doctor gains the `publish-provenance` check.
+  Tests: 8 engine/argv/config/planner suites + 4 CLI e2e (dry argv+rows,
+  live refusal with zero spawns/probes, GitLab-detected live run over
+  loopback, unset-stays-bare). Bench `publish_args` registered and run
+  (unset ≈36 ns, combined-dry ≈206 ns, opt-out ≈123 ns — the assembly
+  is free). Example `publish_npm_options` runs clean. Plan schema
+  regenerated (two optional props, additive).
+- **M2 implemented (M1 green end-to-end first), red→green**: **the
+  CI-selector adapters (ADR-0034, M10 step 2)** — the
+  `CiSelectorAdapter` seam in `halyard_core::ci_selector`
+  (`SelectedPackage { name, root }` inputs; three impls — Turbo
+  `--filter=...pkg` per root, Nx `--projects=a,b` over the closure,
+  Bazel `rdeps(//..., //root/...)` over the patterns; VERIFIED quotes
+  in `docs/research/ci-selector-grammars.md`), the closed
+  `ci_selector_adapter` lookup (unknown ⇒ `None`, extending one is an
+  ADR), the CLI's `affected --ci SYSTEM` value enum beside `--format`
+  (the `--graph-format` lesson), an empty selection rendering nothing
+  (exit 0). Tests: 8 core adapter contract tests + 3 CLI gates; bench
+  `affected_ci` registered (the 40-package chain shape); example
+  `affected_ci` runs clean.
+- **Docs drift fixed / micro-debt cleaned (additive, not milestone
+  substitutes).** The §16.2 table's `publish [--resume]` row corrected
+  to `publish [--dry]` (the engine always resumes, I2 — stale since
+  M5.2); §13 item 6's provenance note + the M5.3-later as-built note
+  rewritten to the wired reality; the duplicated "the channel was
+  validated at resolve time" comment in `resolve.rs` dropped; the
+  npm-provenance research note extended with the 2026-11-16 pnpm/GitLab
+  quotes; E-PUB-AUTH page + index row for the runtime refusal;
+  ADR-0033/0034 recorded; CLI README gains the `--ci` section and the
+  npm-rows note.
+- **Honest state at cut-off.** The npm trusted-publishing OIDC needs
+  **no** halyard exchange (the tool performs it; the as-built note
+  records the non-interference posture) — the remaining M5.4 items
+  (npm provenance attestations for our own binaries, SLSA/cosign/SBOM)
+  are unchanged. The corpus-wide pnpm differential and the M2.6 dhat
+  re-audit remain open (sandbox limits as recorded). Tree left dirty
+  (no commits made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for halyard's
+  own release artifacts (VERIFY first), (2) the corpus-wide pnpm
+  differential as an xtask subcommand, (3) the M2.6 dhat re-audit with
+  the cache warm, (4) more CI adapters (GitLab matrix / GitHub jobs
+  JSON) behind the closed ADR-0034 seam.
