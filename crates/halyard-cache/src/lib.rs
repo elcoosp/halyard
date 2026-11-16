@@ -371,16 +371,16 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
         };
-        let outcome = cache.load_locked(&path);
+        let outcome = cache.load_locked();
         release_lock(&cache.file, &path);
         outcome?;
         Ok(cache)
     }
 
     /// The open-time body (header validation + record scan) under the
-    /// already-acquired exclusive lock.
-    fn load_locked(&mut self, path: &Path) -> Result<(), CacheError> {
-        let _ = path;
+    /// already-acquired exclusive lock. The path is not re-read here:
+    /// every operation goes through the already-held `File` handle.
+    fn load_locked(&mut self) -> Result<(), CacheError> {
         let size = self
             .file
             .metadata()
