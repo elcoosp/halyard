@@ -98,10 +98,15 @@ pub struct ResolvedConfig {
     pub publish_cargo_registry: String,
     /// crates.io index visibility wait (§13).
     pub publish_cargo_wait_for_index: String,
-    /// npm access level.
-    pub publish_npm_access: NpmAccess,
-    /// npm provenance attestations (§13.6).
-    pub publish_npm_provenance: bool,
+    /// npm access level; `None` = unset — the spawned tool's own
+    /// posture governs (ADR-0033: `--access` is passed only on an
+    /// explicit value, never a guessed default).
+    pub publish_npm_access: Option<NpmAccess>,
+    /// npm provenance attestations (§13 item 6); `None` = unset — under
+    /// trusted publishing the tool decides (ADR-0033: `--provenance` on
+    /// an explicit `true`, `--no-provenance` on an explicit `false`,
+    /// no flag when unset).
+    pub publish_npm_provenance: Option<bool>,
     /// Forge adapter (invariant I9).
     pub forge_kind: ForgeKind,
     /// Release-branch commit mode (§11.5).
@@ -162,7 +167,6 @@ impl ResolvedConfig {
             CascadePolicy::Never => halyard_core::planner::CascadeMode::Never,
         };
         // The channel was validated at resolve time; the map is total.
-        // The channel was validated at resolve time; the map is total.
         let prerelease_channel = self.prerelease_channel.clone();
         // Per-package overrides validated at resolve time; the map rides
         // the planner's knob set (ADR-0026) next to the default.
@@ -195,6 +199,11 @@ impl ResolvedConfig {
             publish_enabled: self.publish_enabled,
             publish_cargo_registry: self.publish_cargo_registry.clone(),
             publish_npm_registry: "npm".to_owned(),
+            publish_npm_access: self.publish_npm_access.map(|level| match level {
+                NpmAccess::Public => "public".to_owned(),
+                NpmAccess::Restricted => "restricted".to_owned(),
+            }),
+            publish_npm_provenance: self.publish_npm_provenance,
             release_disabled,
             prerelease_channel,
             package_channels,
@@ -556,8 +565,8 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
         publish_enabled: publish.enabled.unwrap_or(false),
         publish_cargo_registry: cargo.registry.unwrap_or_else(|| "crates.io".to_owned()),
         publish_cargo_wait_for_index: cargo.wait_for_index.unwrap_or_else(|| "90s".to_owned()),
-        publish_npm_access: npm.access.unwrap_or(NpmAccess::Public),
-        publish_npm_provenance: npm.provenance.unwrap_or(true),
+        publish_npm_access: npm.access,
+        publish_npm_provenance: npm.provenance,
         forge_kind: forge.kind.unwrap_or(ForgeKind::Github),
         forge_commit_mode: forge.commit_mode.unwrap_or(CommitMode::Auto),
         packages: effective.package,
