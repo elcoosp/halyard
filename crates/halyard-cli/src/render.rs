@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use halyard_core::HistoryProvider;
-use halyard_core::{PackageTagState, Plan, PlanRelease, TagState};
+use halyard_core::{
+    AffectedReason, AffectedSelection, PackageTagState, PkgId, Plan, PlanRelease, TagState,
+};
 use halyard_edit::{ApplyReport, DryPatch};
 use halyard_forge::{GovernorEvent, MachineEffect, MachineReport};
 use halyard_git::push::{TagPushReport, TagPushRow};
@@ -833,6 +835,138 @@ pub fn status_gha(context: &Context) -> String {
                 .unwrap_or_default(),
         );
     }
+    out
+}
+
+/// The name of one workspace package (empty for a foreign id — the
+/// renderers stay total over stale selections).
+fn package_name(context: &Context, pkg: PkgId) -> String {
+    context
+        .discovery
+        .workspace
+        .package(pkg)
+        .and_then(|p| {
+            context
+                .discovery
+                .workspace
+                .interner()
+                .get(p.name)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// The `affected` report as data (§16.3/M10): the base the selection was
+/// made against (the `--base` ref, else the release bases), the
+/// name-sorted changed roots and the name-sorted closed rows with their
+/// reasons (`via` = the nearest affected ancestor's name). Byte-stable
+/// across runs (I3).
+pub fn affected_report_json(
+    context: &Context,
+    selection: &AffectedSelection,
+    base: Option<&str>,
+) -> serde_json::Value {
+    let mut changed: Vec<String> = selection
+        .rows()
+        .iter()
+        .filter(|row| row.reason == AffectedReason::Changed)
+        .map(|row| package_name(context, row.package))
+        .collect();
+    changed.sort();
+    let mut rows: Vec<(String, serde_json::Value)> = selection
+        .rows()
+        .iter()
+        .map(|row| {
+            let name = package_name(context, row.package);
+            let value = match row.reason {
+                AffectedReason::Changed => serde_json::json!({
+                    "package": name.clone(),
+                    "reason": "changed",
+                }),
+                AffectedReason::Dependent { via } => serde_json::json!({
+                    "package": name.clone(),
+                    "reason": "dependent",
+                    "via": package_name(context, via),
+                }),
+            };
+            (name, value)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let packages: Vec<serde_json::Value> = rows.into_iter().map(|(_, value)| value).collect();
+    serde_json::json!({
+        "base": base,
+        "changed": changed,
+        "packages": packages,
+        "total": selection.len(),
+    })
+}
+
+/// The `affected` table (human): an explicit base line when the
+/// selection was made against a ref, then package / reason / via.
+pub fn affected_human(
+    context: &Context,
+    selection: &AffectedSelection,
+    base: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    if let Some(base) = base {
+        let _ = writeln!(out, "affected against base: {base}");
+    }
+    // The header is a literal: `{:20} {:10} {}` over constant strings is
+    // computable at compile time (the clippy useless-format rule).
+    let _ = writeln!(out, "package              reason     via");
+    for row in selection.rows() {
+        let _ = writeln!(
+            out,
+            "{:20} {:10} {}",
+            package_name(context, row.package),
+            match row.reason {
+                AffectedReason::Changed => "changed",
+                AffectedReason::Dependent { .. } => "dependent",
+            },
+            match row.reason {
+                AffectedReason::Changed => "-".to_owned(),
+                AffectedReason::Dependent { via } => package_name(context, via),
+            },
+        );
+    }
+    out
+}
+
+/// The `affected` selection as a GHA summary: the markdown table plus a
+/// machine-greppable tally line (`affected=N changed=M`).
+pub fn affected_gha(
+    context: &Context,
+    selection: &AffectedSelection,
+    base: Option<&str>,
+) -> String {
+    let heading = match base {
+        Some(base) => format!("## halyard affected (base: {base})\n"),
+        None => String::from("## halyard affected\n"),
+    };
+    let mut out = heading;
+    out.push_str("\n| package | reason | via |\n|---|---|---|\n");
+    let mut changed = 0usize;
+    for row in selection.rows() {
+        if row.reason == AffectedReason::Changed {
+            changed += 1;
+        }
+        let _ = writeln!(
+            out,
+            "| {p} | {r} | {v} |",
+            p = package_name(context, row.package),
+            r = match row.reason {
+                AffectedReason::Changed => "changed",
+                AffectedReason::Dependent { .. } => "dependent",
+            },
+            v = match row.reason {
+                AffectedReason::Changed => "-".to_owned(),
+                AffectedReason::Dependent { via } => package_name(context, via),
+            },
+        );
+    }
+    let _ = writeln!(out, "\naffected={} changed={}", selection.len(), changed);
     out
 }
 
