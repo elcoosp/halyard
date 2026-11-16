@@ -50,7 +50,13 @@ channels to branches (`channel_branches = { next = "rc" }` — the
 the branch bindings, and un-named packages keep theirs (ADR-0026);
 step 4 pins maintenance branches (`maintenance_branches = ["1.x"]` —
 a backport stays on the line, a breaking commit refuses with
-`E-PLAN-MAINTENANCE` instead of planning across it, ADR-0027)).** The
+`E-PLAN-MAINTENANCE` instead of planning across it, ADR-0027)) — and
+the §9.4 change-file input (M3.5 completion, ADR-0028: optional
+`.halyard/changes/*.md` files — TOML-style front-matter
+(`packages = { core = "minor" }`) bumps that replace the commit-derived
+level as the squash-merge escape hatch, notes merged verbatim into the
+changelog preview, the strict grammar refusing with
+`E-CHLOG-CHANGE-FILE` and unknown names with `E-PLAN-CHANGE-FILE`).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -185,7 +191,8 @@ crates/
   halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase,
                          tag-target pinpoint, tag push, smart minimal fetch (§8, §11.1)
   halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
-  halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body
+  halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body +
+                         change-file grammar (.halyard/changes/*.md, ADR-0028)
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
   halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
@@ -258,6 +265,7 @@ cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
 cargo run -p halyard-changelog --example render_user_template
 cargo run -p halyard-changelog --example render_check_comment
+cargo run -p halyard-changelog --example change_file
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-publish --example publish_auth
 cargo run -p halyard-forge --example release_lifecycle
