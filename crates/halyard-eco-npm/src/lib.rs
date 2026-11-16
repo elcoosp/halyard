@@ -36,6 +36,7 @@ pub mod pnpm_yaml;
 // M5.2 step 2 (§13.4): the publish argv grammar (the shell spawns, the
 // adapter owns the tool grammar — the `refresh_command` convention).
 pub mod publish;
+pub use publish::NpmPublishOptions;
 pub use publish::pnpm_publish_args;
 // M5.2 continued (ADR-0021): where the §13 probe looks for one npm
 // package — the publishConfig.registry / NPM_CONFIG_REGISTRY / .npmrc
