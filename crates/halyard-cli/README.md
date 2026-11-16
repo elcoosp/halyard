@@ -18,6 +18,21 @@ halyard plan --json
 # Same, but only the releases array (requires jq).
 halyard plan --json | jq '.releases'
 
+# Prerelease channel (§10.3, ADR-0025): with `[versioning].channel = "rc"`
+# in `halyard.toml`, every planned release becomes `{target}-{rc}.{n}` —
+# `1.3.0-rc.1`, `1.3.0-rc.2`, … with the counter derived from the tags the
+# repository already carries (no state file). Non-breaking steps on an
+# active train advance the counter; a breaking commit opens a new base;
+# removing the key promotes a leftover prerelease manifest to its own
+# stable triple. `Release-As` targets are exempt. An invalid name fails
+# closed (`E-CFG-CHANNEL`).
+#
+# Branch-bound channels: `[versioning].channel_branches = { next = "rc" }`
+# binds a channel to a branch — HEAD on `next` plans `rc` prereleases,
+# every other branch keeps the unbound default (or stays stable). The
+# binding rides the §8.7 cache key, so the two branches never share
+# attributions.
+
 # Show every package, its version, last tag, unreleased commits and pending state.
 halyard status
 
