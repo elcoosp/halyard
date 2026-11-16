@@ -1994,3 +1994,76 @@ pub fn migrate_report_gha(
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// init (§16.1/§16.2, ADR-0029)
+// ---------------------------------------------------------------------------
+
+/// The init report's machine shape: the engine's own
+/// [`halyard_config::InitReport`] serialization (the engine type is the
+/// single source of the field names; the shape line and the landed-file
+/// rows are plain data, I3).
+pub fn init_report_json(
+    report: &halyard_config::InitReport,
+) -> serde_json::Result<serde_json::Value> {
+    serde_json::to_value(report)
+}
+
+/// The init report, human shape (ADR-0029): the detected shape, one row
+/// per landed file with its byte count, and the next step — the
+/// zero-config plan the scaffolded repo runs right away.
+pub fn init_report(report: &halyard_config::InitReport) -> String {
+    let mut out = String::new();
+    let noun = if report.files.len() == 1 {
+        "file"
+    } else {
+        "files"
+    };
+    let _ = writeln!(
+        out,
+        "init (§16.1): scaffolded {} {noun} — {}",
+        report.files.len(),
+        report.shape
+    );
+    for file in &report.files {
+        let note = if file.path == halyard_config::INIT_WORKFLOW_TARGET {
+            "the §16.1 release workflow (the `halyard/action` glue lands with its milestone)"
+        } else {
+            "every key optional; the defaults ride as comments"
+        };
+        let _ = writeln!(
+            out,
+            "  wrote `{}` ({} bytes) — {note}",
+            file.path, file.bytes
+        );
+    }
+    let _ = writeln!(
+        out,
+        "  next: `halyard plan` shows the zero-config release plan; commit the \
+         scaffold when it looks right"
+    );
+    out
+}
+
+/// The init report, GHA shape (ADR-0029): a `::notice` per landed file
+/// plus a small job-summary table (the rows a review reads).
+pub fn init_report_gha(report: &halyard_config::InitReport) -> String {
+    let mut out = String::new();
+    let noun = if report.files.len() == 1 {
+        "file"
+    } else {
+        "files"
+    };
+    let _ = writeln!(
+        out,
+        "::notice::halyard init: scaffolded {} {noun} — {}",
+        report.files.len(),
+        report.shape
+    );
+    let _ = writeln!(out, "\n## halyard init\n");
+    let _ = writeln!(out, "| file | bytes |\n|---|---|");
+    for file in &report.files {
+        let _ = writeln!(out, "| `{}` | {} |", file.path, file.bytes);
+    }
+    out
+}
