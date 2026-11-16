@@ -68,6 +68,20 @@ pub struct ResolvedConfig {
     /// Branch-bound channels (§10.3, ADR-0025): branch name → validated
     /// channel. `channel_for_branch` resolves the effective channel.
     pub channel_branches: BTreeMap<String, halyard_core::bump::PrereleaseChannel>,
+    /// Per-package channel overrides (§10.3, ADR-0026): package name →
+    /// validated channel, from the `[[package]] channel` entries merged
+    /// low→high (later entries win when both match a package). The
+    /// override is the most explicit policy: it wins over the default
+    /// and the branch bindings inside the planner.
+    pub package_channels: BTreeMap<String, halyard_core::bump::PrereleaseChannel>,
+    /// Maintenance-line pins (§10.3, ADR-0027): branch name → the line
+    /// it pins, validated at resolve time into the documented grammar.
+    pub maintenance_lines: BTreeMap<String, halyard_core::planner::MaintenanceLine>,
+    /// The branch-resolved maintenance line (§10.3, ADR-0027); the
+    /// shell fills it from [`Self::maintenance_line_for`] before the
+    /// §8.7 cache key is computed. `None` = an unpinned branch plans
+    /// free.
+    pub maintenance_line: Option<halyard_core::planner::MaintenanceLine>,
     /// Commit type → bump map (built-ins overlaid by config).
     pub commit_types: BTreeMap<String, BumpLevel>,
     /// Merge-commit diffing policy (§8.5).
@@ -104,6 +118,17 @@ impl ResolvedConfig {
         resolve(&[Layer::Defaults])
     }
 
+    /// The maintenance line pinned for `branch` (ADR-0027): the entry
+    /// naming the branch, `None` when the branch is unpinned (or HEAD
+    /// is detached/unborn). Pure — the caller owns the branch lookup.
+    pub fn maintenance_line_for(
+        &self,
+        branch: Option<&str>,
+    ) -> Option<halyard_core::planner::MaintenanceLine> {
+        let line = branch.and_then(|name| self.maintenance_lines.get(name));
+        line.copied()
+    }
+
     /// The effective §10.3 channel for the checked-out branch
     /// (ADR-0025): a branch binding wins over the unbound `channel`
     /// default; a detached or unborn HEAD (`None`) plans with the
@@ -137,7 +162,11 @@ impl ResolvedConfig {
             CascadePolicy::Never => halyard_core::planner::CascadeMode::Never,
         };
         // The channel was validated at resolve time; the map is total.
+        // The channel was validated at resolve time; the map is total.
         let prerelease_channel = self.prerelease_channel.clone();
+        // Per-package overrides validated at resolve time; the map rides
+        // the planner's knob set (ADR-0026) next to the default.
+        let package_channels = self.package_channels.clone();
         let commit_types = self
             .commit_types
             .iter()
@@ -168,6 +197,8 @@ impl ResolvedConfig {
             publish_npm_registry: "npm".to_owned(),
             release_disabled,
             prerelease_channel,
+            package_channels,
+            maintenance_line: self.maintenance_line,
         }
     }
 }
@@ -273,6 +304,16 @@ fn merge_versioning(lower: &mut HalyardConfig, versioning: Option<crate::model::
             slot_bindings.insert(branch, channel);
         }
     }
+    if let Some(entries) = higher.maintenance_branches {
+        // Per-key overlay too: the entry string IS the branch name, so
+        // dedupe-by-entry is the union with the higher layer winning.
+        let slot_entries = slot.maintenance_branches.get_or_insert_with(Vec::new);
+        for entry in entries {
+            if !slot_entries.contains(&entry) {
+                slot_entries.push(entry);
+            }
+        }
+    }
     let pm = higher.pre_major.unwrap_or_default();
     if pm.breaking.is_none() && pm.feat.is_none() {
         return;
@@ -375,6 +416,61 @@ fn merge_forge(lower: &mut HalyardConfig, forge: Option<&ForgeCfg>) {
     }
 }
 
+/// Validates the `[[package]] channel` overrides (§10.3, ADR-0026) into
+/// the name-keyed map: the same grammar as the repo-wide key, the
+/// package named on failure, a name-less (path-glob) override refused —
+/// it cannot carry a train, so it fails closed instead of guessing.
+/// Validates the `[versioning].maintenance_branches` entries (§10.3,
+/// ADR-0027) into the branch-keyed map: each entry must parse as
+/// `MAJOR.x` or `MAJOR.MINOR.x`; anything else fails closed naming the
+/// entry.
+fn maintenance_lines_of(
+    versioning: &crate::model::VersioningCfg,
+) -> Result<BTreeMap<String, halyard_core::planner::MaintenanceLine>, ConfigError> {
+    versioning
+        .maintenance_branches
+        .iter()
+        .flatten()
+        .map(|entry| {
+            let line = halyard_core::planner::MaintenanceLine::parse(entry).ok_or_else(|| {
+                ConfigError::MaintenanceLine {
+                    value: entry.clone(),
+                    reason: "not a `MAJOR.x` or `MAJOR.MINOR.x` line".to_owned(),
+                }
+            })?;
+            Ok((entry.clone(), line))
+        })
+        .collect()
+}
+
+fn package_channels_of(
+    packages: &[PackageOverride],
+) -> Result<BTreeMap<String, halyard_core::bump::PrereleaseChannel>, ConfigError> {
+    packages
+        .iter()
+        .filter_map(|entry| entry.channel.as_deref().map(|raw| (entry, raw)))
+        .map(|(entry, raw)| {
+            let Some(name) = entry.name.as_deref() else {
+                return Err(ConfigError::Channel {
+                    value: raw.to_owned(),
+                    reason: "a `[[package]] channel` override requires a package `name` \
+                             (path-glob overrides refine the include/exclude filters)"
+                        .to_owned(),
+                });
+            };
+            let channel = halyard_core::bump::PrereleaseChannel::new(raw).ok_or_else(|| {
+                ConfigError::Channel {
+                    value: raw.to_owned(),
+                    reason: format!(
+                        "the `{name}` package override is not a single semver identifier"
+                    ),
+                }
+            })?;
+            Ok((name.to_owned(), channel))
+        })
+        .collect()
+}
+
 /// Materializes the effective config against the built-in defaults.
 fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> {
     let repo = effective.repo.unwrap_or_default();
@@ -388,6 +484,12 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
             })?,
     };
     let versioning = effective.versioning.unwrap_or_default();
+    // Maintenance-line pins (§10.3, ADR-0027): each entry names the
+    // branch and the line it pins; a non-parsing entry is
+    // `E-CFG-MAINTENANCE` naming the entry. Extracted before any
+    // `versioning` field moves so the borrow stays clean.
+    let maintenance_lines = maintenance_lines_of(&versioning)?;
+    let maintenance_line: Option<halyard_core::planner::MaintenanceLine> = None;
     let pre_major = versioning.pre_major.unwrap_or_default();
     let prerelease_channel = versioning
         .channel
@@ -415,6 +517,10 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
             Ok((branch, channel))
         })
         .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+    // Per-package channel overrides (§10.3, ADR-0026): validated exactly
+    // like the repo-wide key; entries land in merge order, so a later
+    // `[[package]]` entry wins when both match the same package.
+    let package_channels = package_channels_of(&effective.package)?;
     let commits = effective.commits.unwrap_or_default();
     let mut commit_types = default_commit_types();
     for (kind, level) in commits.types.unwrap_or_default() {
@@ -439,6 +545,9 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
         cascade: versioning.cascade.unwrap_or(CascadePolicy::WhenUnsatisfied),
         prerelease_channel,
         channel_branches,
+        package_channels,
+        maintenance_lines,
+        maintenance_line,
         commit_types,
         merge_policy: commits.merge_policy.unwrap_or(MergePolicy::FirstParent),
         initial_max_commits,
