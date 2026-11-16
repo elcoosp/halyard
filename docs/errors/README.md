@@ -21,7 +21,7 @@ pattern from M1 onward where useful).
 | `E-CFG-TOML` | [E-CFG-TOML.md](E-CFG-TOML.md) | config read/parse (M1.8) |
 | `E-CFG-ENV` | [E-CFG-ENV.md](E-CFG-ENV.md) | config env layer (M1.8) |
 | `E-CFG-MIGRATE` | [E-CFG-MIGRATE.md](E-CFG-MIGRATE.md) | foreign-config migration survey + `--write` refusals (M4.7) |
-| `E-CFG-CHANNEL` | [E-CFG-CHANNEL.md](E-CFG-CHANNEL.md) | config prerelease channel name (§10.3, ADR-0025) |
+| `E-CFG-CHANNEL` | [E-CFG-CHANNEL.md](E-CFG-CHANNEL.md) | config prerelease channel name — repo-wide, branch bindings, `[[package]]` overrides (§10.3, ADR-0025/ADR-0026) |
 | `E-EDIT-PATCHES` | [E-EDIT-PATCHES.md](E-EDIT-PATCHES.md) | edit patch validation (M1.4) |
 | `E-EDIT-VERIFY` | [E-EDIT-VERIFY.md](E-EDIT-VERIFY.md) | edit re-parse verification (M1.4) |
 | `E-EDIT-IO` | [E-EDIT-IO.md](E-EDIT-IO.md) | edit atomic write (M1.4) |
@@ -48,6 +48,8 @@ pattern from M1 onward where useful).
 | `E-PLAN-CYCLE` | [E-PLAN-CYCLE.md](E-PLAN-CYCLE.md) | planner cycle (M1.9) |
 | `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
 | `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
+| `E-PLAN-MAINTENANCE` | [E-PLAN-MAINTENANCE.md](E-PLAN-MAINTENANCE.md) | planner maintenance-line guard (§10.3, ADR-0027) |
+| `E-CFG-MAINTENANCE` | [E-CFG-MAINTENANCE.md](E-CFG-MAINTENANCE.md) | config maintenance-branch entry (§10.3, ADR-0027) |
 | `E-LOCK-PARSE` | [E-LOCK-PARSE.md](E-LOCK-PARSE.md) | lockfile patch seam (M3.2, §9.2 · M3.4, §9.3) |
 | `E-LOCK-NATIVE` | [E-LOCK-NATIVE.md](E-LOCK-NATIVE.md) | native lockfile refresh fallback (M3.2, §9.2 rule 4 · M3.4, §9.3) |
 | `E-CACHE-OPEN` | [E-CACHE-OPEN.md](E-CACHE-OPEN.md) | cache open (M2.5) |
