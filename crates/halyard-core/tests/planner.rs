@@ -4,6 +4,7 @@
 //! stability (I3/I8).
 
 use halyard_core::bump::PrereleaseChannel;
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::history::{
     AuthorRef, BaseRef, FixedHistory, HistoryDigest, ParsedCommit, RelevantCommit, Trailer,
 };
@@ -152,10 +153,12 @@ fn snapshot<'a>(
     // (each test builds one snapshot).
     let leaked: &'a FixedHistory = Box::leak(Box::new(history));
     let refs_leaked: &'a ReleaseRefs = Box::leak(Box::new(refs));
+    let changes_leaked: &'a ChangeFiles = Box::leak(Box::new(ChangeFiles::new()));
     Snapshot {
         workspace: ws,
         history: leaked,
         refs: refs_leaked,
+        change_files: changes_leaked,
     }
 }
 
