@@ -28,9 +28,45 @@
 - `foo/...`: "a target pattern that evaluates to a set containing all
   rules in every package recursively beneath the `foo` directory".
 
-## Design consequences (feeds ADR-0034)
+## GitHub Actions — <https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/running-variations-of-jobs-in-a-workflow>
+
+- "You can use the output from one job to define matrices for multiple
+  jobs." (the ADR-0035 `gha` adapter's emission shape: the output
+  value)
+- The defining job writes the values via:
+  `echo 'colors=["red", "green", "blue"]' >> "$GITHUB_OUTPUT"` — the
+  output value is the **bare JSON array**.
+- The downstream job consumes it inside its own matrix with
+  `color: ${{ fromJSON(needs.define-matrix.outputs.colors) }}` — the
+  consumer names the matrix dimension (`color`), not the producer.
+- "Within your matrix, define one or more variables followed by an
+  array of values."
+
+## GitLab — <https://docs.gitlab.com/ci/yaml/> ("parallel:matrix")
+
+- "Use parallel:matrix to run a job multiple times in parallel in a
+  single pipeline, but with different variable values for each
+  instance of the job."
+- "Supported values: An array of hashes of variables: The matrix
+  identifiers, which become the variable names, can use only numbers,
+  letters, and underscores (`_`). The values must be either a string,
+  or an array of strings. The number of permutations cannot exceed
+  200."
+- The documented example expands two hashes into seven jobs
+  (`deploystacks: [aws, monitoring]` …), the variables readable in the
+  script (`environment: $PROVIDER/$STACK`) — a one-dimensional matrix
+  is one hash per instance.
+
+## Design consequences (feeds ADR-0034 + ADR-0035)
 
 - Turbo consumes **change roots** (its own dependent closure + union
   replace the re-encoding); Nx consumes the **affected closure** list;
   Bazel consumes **roots as recursive patterns** inside one `rdeps`
-  query. One seam carries name + root; empty selection ⇒ empty output.
+  query; GitHub Actions consumes the **affected closure as the bare
+  JSON array** (the matrix-output value; Actions computes nothing);
+  GitLab consumes the **affected closure as one variable hash per
+  package** under `parallel: matrix:`. One seam carries name + root;
+  empty selection ⇒ empty output. The closure-vs-roots split is a
+  property of the consuming system: tools that compute dependencies
+  themselves (turbo, bazel) get the roots; tools that compute nothing
+  (nx, gha, gitlab) get the closure.
