@@ -30,7 +30,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use halyard_core::plan::{Plan, PlanRelease};
@@ -698,12 +697,6 @@ static RELEASE_TEMPLATE: &str = r"## [{{ version }}]
 {% for line in section.1 %}- {{ line }}
 {% endfor %}
 {% endfor %}";
-
-/// Convenience: a map view of the plan's releases by version (used by the
-/// idempotence tests to compare pre/post states).
-pub fn releases_by_version(plan: &Plan) -> BTreeMap<&str, &PlanRelease> {
-    plan.releases.iter().map(|r| (r.to.as_str(), r)).collect()
-}
 
 #[cfg(test)]
 mod tests {
