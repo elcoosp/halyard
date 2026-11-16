@@ -247,6 +247,13 @@ enum Command {
         /// The squash-merge PR title to lint (§11.6).
         #[arg(long, value_name = "TITLE")]
         pr_title: Option<String>,
+        /// Lint the pending history's own commit subjects through the
+        /// same title rules (§16.2's commits half — the merge-commit
+        /// flow's counterpart to `--pr-title`): per-commit rows, the
+        /// typo gate refusing `E-CLI-COMMIT`, autosquash and
+        /// mapped-none rows as honest warnings.
+        #[arg(long)]
+        commits: bool,
         /// Post the verdict as the PR's halyard check comment (§11.6,
         /// M4.5 step 1): requires `--pr-title` (the verdict is the
         /// comment) and live forge credentials.
@@ -411,9 +418,17 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         }
         Command::Check {
             pr_title,
+            commits,
             comment,
             exit_code,
-        } => cmd_check(cli, profiler, pr_title.as_deref(), *comment, *exit_code),
+        } => cmd_check(
+            cli,
+            profiler,
+            pr_title.as_deref(),
+            *commits,
+            *comment,
+            *exit_code,
+        ),
         Command::Status => {
             cmd_status(cli, profiler)?;
             Ok(ExitCode::SUCCESS)
@@ -654,7 +669,7 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
         &report,
         body.as_deref(),
         &extras,
-    );
+    )?;
     Ok(())
 }
 
@@ -720,7 +735,7 @@ fn render_pr_report(
     report: &halyard_forge::MachineReport,
     body: Option<&str>,
     extras: &serde_json::Value,
-) {
+) -> Result<(), CliError> {
     match cli.format {
         Format::Json => {
             let effects: Vec<serde_json::Value> =
@@ -746,7 +761,7 @@ fn render_pr_report(
             {
                 map.insert("governor".to_owned(), governor.clone());
             }
-            let _ = print_pretty_json(&document);
+            print_pretty_json(&document)?;
         }
         Format::Gha => {
             let mut rendered = if view_dry(extras) {
@@ -777,6 +792,7 @@ fn render_pr_report(
             print!("{rendered}");
         }
     }
+    Ok(())
 }
 
 /// The live forge wire-up's environment-derived credentials (ADR-0013,
@@ -1796,6 +1812,9 @@ fn release_pr_title(plan: &halyard_core::Plan) -> String {
 /// report carries `Forecast` rows. Live failures are rows (§13.7); the
 /// command exits 4 on a partial publish (§15.4), 1 when nothing
 /// landed, and refuses a live run under `--offline` (`E-CLI-PUBLISH`).
+/// Publish-auth resolution rides the OIDC trusted-publishing fallback
+/// (M5.3 step 3, ADR-0031): the documented env grammar first, the
+/// crates.io exchange under a GitHub Actions context.
 fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode, CliError> {
     if !dry && cli.offline {
         return Err(CliError::new(
@@ -1808,9 +1827,23 @@ fn cmd_publish(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<ExitCode
     // The shell captures the publish-auth snapshot once (M5.3 step 1,
     // ADR-0019): resolution and scrubbing share one deterministic table,
     // and a present-but-empty token variable refuses the run here —
-    // before any plan, probe or spawn (E-PUB-AUTH).
-    let auth = halyard_publish::EnvPublishAuth::capture()
+    // before any plan, probe or spawn (E-PUB-AUTH). The OIDC context
+    // detection rides the same refusal point (M5.3 step 3, ADR-0031):
+    // a half-configured GitHub Actions OIDC context refuses both modes
+    // before any network, the dry forecast projects its provenance
+    // with the exchange disabled (I5), and a live run exchanges the
+    // crates.io token only when no documented variable covers it.
+    let base = halyard_publish::EnvPublishAuth::capture()
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let oidc_context = halyard_publish::gha_oidc_context(&|name| std::env::var(name).ok())
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let auth = halyard_publish::OidcPublishAuth::new(
+        base,
+        oidc_context,
+        std::sync::Arc::new(halyard_forge_github::UreqTransport::new()),
+        "https://crates.io".to_owned(),
+        !dry,
+    );
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let publication = profiler
@@ -2122,6 +2155,7 @@ fn cmd_check(
     cli: &Cli,
     profiler: &mut Profiler,
     pr_title: Option<&str>,
+    commits: bool,
     comment: bool,
     exit_code: bool,
 ) -> Result<ExitCode, CliError> {
@@ -2138,6 +2172,14 @@ fn cmd_check(
     let plan = plan_from_context(&context, profiler)?;
     let pending = !plan.releases.is_empty();
     let plan_config: PlanConfig = context.config.plan_config();
+    if commits {
+        let rows = check::pending_commit_rows(
+            &context.discovery.workspace,
+            context.history.digest(),
+            &plan_config,
+        );
+        return render_commits_lint(cli, &rows, &plan_config, pending, exit_code);
+    }
     let Some(title) = pr_title else {
         render_check_pending(cli, &plan, pending)?;
         return Ok(pending_exit(exit_code, pending));
@@ -2204,6 +2246,74 @@ fn render_check_pending(
         Format::Human => print!("{}", render::check_pending_human(plan)),
     }
     Ok(())
+}
+
+/// One commit-lint finding as a stable JSON fragment (the verdict plus
+/// its fields — merged flat into the row document).
+fn commit_finding_json(finding: &check::CommitFinding) -> serde_json::Value {
+    match finding {
+        check::CommitFinding::Drives { bump } => {
+            serde_json::json!({ "verdict": "drives", "bump": check::bump_str(*bump) })
+        }
+        check::CommitFinding::MappedNone => serde_json::json!({ "verdict": "mapped_none" }),
+        check::CommitFinding::Typo { kind, closest } => {
+            serde_json::json!({ "verdict": "typo", "type": kind, "closest": closest })
+        }
+        check::CommitFinding::NotConventional { reason } => {
+            serde_json::json!({ "verdict": "not_conventional", "reason": reason })
+        }
+    }
+}
+
+/// The `check --commits` renders (json/human/gha) and the exits: the
+/// report prints first (complete observability — the typo row is
+/// visible in every format), a typo row then refuses the run
+/// `E-CLI-COMMIT` (the title gate's rule over commits: a near-miss kind
+/// silently drops a bump), and the pending gate (`--exit-code`, §15.4
+/// exit 3) applies when the lint passed.
+fn render_commits_lint(
+    cli: &Cli,
+    rows: &[check::CommitRow],
+    config: &PlanConfig,
+    pending: bool,
+    exit_code: bool,
+) -> Result<ExitCode, CliError> {
+    let typo = rows
+        .iter()
+        .find(|row| matches!(row.finding, check::CommitFinding::Typo { .. }));
+    match cli.format {
+        Format::Json => {
+            let commits: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|row| {
+                    let mut document = serde_json::json!({
+                        "package": row.package,
+                        "oid": row.oid,
+                        "subject": row.subject,
+                    });
+                    let finding = commit_finding_json(&row.finding);
+                    if let (Some(map), Some(object)) =
+                        (document.as_object_mut(), finding.as_object())
+                    {
+                        for (key, value) in object {
+                            map.insert(key.clone(), value.clone());
+                        }
+                    }
+                    document
+                })
+                .collect();
+            print_pretty_json(&serde_json::json!({ "pending": pending, "commits": commits }))?;
+        }
+        Format::Gha => print!("{}", render::check_commits_gha(rows, pending)),
+        Format::Human => print!("{}", render::check_commits_human(rows, pending)),
+    }
+    if let Some(row) = typo {
+        return Err(CliError::new(
+            "E-CLI-COMMIT",
+            check::commit_typo_message(row, config),
+        ));
+    }
+    Ok(pending_exit(exit_code, pending))
 }
 
 /// The accepted-verdict renders (json/human/gha); the `comment` block
