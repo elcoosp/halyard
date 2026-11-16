@@ -3,6 +3,7 @@
 //! version strictly increasing, produce tags carrying the target version,
 //! cascade only patch-level bumps, and be hash-deterministic (I3).
 
+use halyard_core::change_file::ChangeFiles;
 use halyard_core::history::{
     AuthorRef, BaseRef, FixedHistory, HistoryDigest, ParsedCommit, RelevantCommit,
 };
@@ -211,10 +212,12 @@ fn build_history(f: &Fixture) -> Result<(FixedHistory, ReleaseRefs), TestCaseErr
 fn check_fixture(f: &Fixture) -> Result<(), TestCaseError> {
     let (ws, _versions) = build_workspace(f)?;
     let (history, refs) = build_history(f)?;
+    let changes = ChangeFiles::new();
     let snapshot = Snapshot {
         workspace: &ws,
         history: &history,
         refs: &refs,
+        change_files: &changes,
     };
     let config = PlanConfig::default_values();
     let plan = match plan(&snapshot, &config) {
