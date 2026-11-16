@@ -1,6 +1,9 @@
 //! The `check` command's pure logic (§11.6): the shell's [`TitleBumpRule`]
-//! over `PlanConfig::commit_types` and the per-package bump prediction for
-//! squash-merge repositories.
+//! over `PlanConfig::commit_types`, the per-package bump prediction for
+//! squash-merge repositories, and the commits lint (§16.2's "lint PR
+//! title/commits" second half — the same machinery over the pending
+//! history's own subjects; autosquash subjects never reach it, §8.5
+//! drops them at the parser).
 //!
 //! The prediction mirrors the planner exactly: the title's kind is looked
 //! up as written, breaking titles are major (§10.1's fixed rule — the
@@ -175,6 +178,133 @@ pub(crate) fn known_types_csv(config: &PlanConfig) -> String {
         .cloned()
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// One pending commit's lint finding (§16.2's commits half): the same
+/// title machinery over a commit subject — what the planner does with
+/// the commit and whether its subject needs a fix.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CommitFinding {
+    /// The kind maps to a bump and the commit drives the release (the
+    /// engine's level, pre-major remap included, as the plan applies it).
+    Drives {
+        /// The bump the commit conveys.
+        bump: Bump,
+    },
+    /// The kind is mapped to no bump (`docs:`, `chore:` …) — ignored by
+    /// the configured mapping, no release effect, informational.
+    MappedNone,
+    /// The kind is unmapped and within edit distance 2 of a known type
+    /// (the title gate's typo rule): a likely typo silently dropping a
+    /// bump — the run refuses `E-CLI-COMMIT`.
+    Typo {
+        /// The type as written.
+        kind: String,
+        /// The closest known type (the did-you-mean).
+        closest: String,
+    },
+    /// The subject is not a conventional commit at all. Unreachable
+    /// from the digest path (the walk drops unparseable subjects —
+    /// `halyard-git`'s `let Some(parsed) = … else { continue }`), kept
+    /// because the classifier is total over any subject.
+    NotConventional {
+        /// The engine's grammar refusal text.
+        reason: String,
+    },
+}
+
+/// One pending commit's lint row: who it is, and what the planner would
+/// do with it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CommitRow {
+    /// The package the commit is attributed to (the digest's per-package
+    /// attribution — one row per (package, commit) pair).
+    pub package: String,
+    /// Full commit object id (hex), matching the plan's reason chains.
+    pub oid: String,
+    /// The subject line (lossy UTF-8 of the digest's bytes).
+    pub subject: String,
+    /// The lint finding.
+    pub finding: CommitFinding,
+}
+
+/// Builds the pending-history lint rows (§16.2's commits half): every
+/// workspace package's pending commits (the digest's own attribution)
+/// in discovery order, walk order inside a package — deterministic (I3)
+/// without extra sorting. Packages with no release base (initial
+/// releases) contribute no rows (the digest records nothing pending
+/// for them).
+pub(crate) fn pending_commit_rows(
+    workspace: &halyard_core::Workspace,
+    digest: &halyard_core::history::HistoryDigest,
+    config: &PlanConfig,
+) -> Vec<CommitRow> {
+    let mut rows = Vec::new();
+    for package in workspace.packages() {
+        let Some(name) = workspace.interner().get(package.name) else {
+            continue;
+        };
+        for index in digest.commits_for(package.id) {
+            let Some(commit) = digest.commits.get(*index) else {
+                continue;
+            };
+            let subject = String::from_utf8_lossy(&commit.subject).into_owned();
+            let finding = classify_commit(&subject, config);
+            rows.push(CommitRow {
+                package: name.to_owned(),
+                oid: commit.oid.to_string(),
+                subject,
+                finding,
+            });
+        }
+    }
+    rows
+}
+
+/// Lints one commit subject through the title machinery (`lint_title`
+/// with the shell's rule — the exact gate the §11.6 title lint runs),
+/// so a repo's commits and its squash titles can never disagree about
+/// what a kind conveys.
+pub(crate) fn classify_commit(subject: &str, config: &PlanConfig) -> CommitFinding {
+    match lint(subject, config) {
+        TitleVerdict::Accepted(lint) => {
+            // The typo gate, verbatim from the title path: an unmapped
+            // kind with a close known kind is a likely typo — fail
+            // loudly instead of silently releasing nothing.
+            if let Some(closest) = &lint.closest_known {
+                CommitFinding::Typo {
+                    kind: lint.kind.clone(),
+                    closest: closest.clone(),
+                }
+            } else {
+                match bump_of(lint.level) {
+                    Bump::None => CommitFinding::MappedNone,
+                    bump => CommitFinding::Drives { bump },
+                }
+            }
+        }
+        // Defensive totality: the digest never yields autosquash
+        // subjects (§8.5 — the parser drops them before the walk), so
+        // the arm maps onto the same honest "no effect" shape.
+        TitleVerdict::FixupOrSquash => CommitFinding::MappedNone,
+        TitleVerdict::NotConventional { reason } => CommitFinding::NotConventional { reason },
+    }
+}
+
+/// The single-sourced `E-CLI-COMMIT` diagnosis for a typo'd pending
+/// commit (the exit error's message — the same wording the renderers
+/// surface on the typo row).
+pub(crate) fn commit_typo_message(row: &CommitRow, config: &PlanConfig) -> String {
+    let CommitFinding::Typo { kind, closest } = &row.finding else {
+        unreachable!("commit_typo_message is only called on typo rows")
+    };
+    format!(
+        "pending commit {} on {} — {} — type {kind:?} is not a known release type — did you          mean {closest:?}? Known types: {}. The planner ignores unmapped types, so this          commit releases nothing; reword the subject (`git rebase -i`) or map the type in          `[versioning].commit_types` (see E-CLI-COMMIT)",
+        row.oid,
+        row.package,
+        row.subject,
+        known_types_csv(config)
+    )
 }
 
 /// The lint's outcome after the typo gate: the accepted lint (the
