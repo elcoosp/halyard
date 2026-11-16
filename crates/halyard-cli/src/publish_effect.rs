@@ -90,8 +90,20 @@ impl PublishEffect for SpawnPublishEffect {
             // §13.4 names `pnpm publish` as the npm-side tool; a
             // plain-npm repository without pnpm fails honestly rather
             // than switching to a different tool with different
-            // packaging semantics (see the research note).
-            "npm" => ("pnpm", halyard_eco_npm::pnpm_publish_args(self.dry)),
+            // packaging semantics (see the research note). The plan
+            // contract's npm options (ADR-0033) ride the adapter's
+            // grammar — unset stays bare (the tool's own
+            // trusted-publishing posture governs).
+            "npm" => {
+                let options = halyard_eco_npm::NpmPublishOptions {
+                    access: target.access.clone(),
+                    provenance: target.provenance,
+                };
+                (
+                    "pnpm",
+                    halyard_eco_npm::pnpm_publish_args(self.dry, &options),
+                )
+            }
             other => {
                 return Err(PublishError::Effect {
                     ecosystem: target.ecosystem.clone(),
