@@ -51,5 +51,9 @@ harness = false
 name = "planner_maintenance"
 harness = false
 
+[[bench]]
+name = "planner_changes"
+harness = false
+
 [lints]
 workspace = true
