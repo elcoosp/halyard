@@ -51,13 +51,6 @@ impl LockfileVersionChange {
             to: release.to.clone(),
         })
     }
-
-    /// Derives the Cargo.lock change for one plan release (M3.2, §9.2):
-    /// cargo releases only, real moves only.
-    #[must_use]
-    pub fn from_release(release: &PlanRelease) -> Option<Self> {
-        Self::from_release_for_ecosystem(release, "cargo")
-    }
 }
 
 /// Result of one adapter lockfile pass (§7.3 lockfile subset, §9.2).
@@ -270,7 +263,10 @@ mod tests {
             publish: None,
         };
         assert_eq!(
-            LockfileVersionChange::from_release(&release("cargo", "0.4.1", "0.5.0")),
+            LockfileVersionChange::from_release_for_ecosystem(
+                &release("cargo", "0.4.1", "0.5.0"),
+                "cargo",
+            ),
             Some(LockfileVersionChange {
                 name: "core".to_owned(),
                 from: "0.4.1".to_owned(),
@@ -279,12 +275,18 @@ mod tests {
         );
         // Non-cargo ecosystems never touch a Cargo.lock.
         assert_eq!(
-            LockfileVersionChange::from_release(&release("npm", "0.4.1", "0.5.0")),
+            LockfileVersionChange::from_release_for_ecosystem(
+                &release("npm", "0.4.1", "0.5.0"),
+                "cargo",
+            ),
             None
         );
         // A no-move release (bump None) must not touch the lockfile.
         assert_eq!(
-            LockfileVersionChange::from_release(&release("cargo", "0.5.0", "0.5.0")),
+            LockfileVersionChange::from_release_for_ecosystem(
+                &release("cargo", "0.5.0", "0.5.0"),
+                "cargo",
+            ),
             None
         );
     }
