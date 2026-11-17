@@ -30,7 +30,13 @@ real spawn live) — the publish-auth plumbing with secret scrubbing
 (M5.3 step 1, ADR-0019) and the custom-registry routing (M5.2
 continued, ADR-0021: configured `[registries.<name>]` sparse indexes
 join the routing map, npm `publishConfig.registry` routes per package)
-— and the §11.6 check-comment mode (`check --pr-title --comment`: the
+— and the OIDC trusted-publishing half (M5.3 step 3, ADR-0031:
+`OidcPublishAuth` — `gha_oidc_context` detection, the `OidcExchanger`
+over the forge transport, the env grammar first and the memoized
+crates.io exchange as fallback, secret scrubbing throughout) and the
+npm publish-options row (ADR-0033: `publishConfig.access` /
+`--provenance` / `--tag` carried through `pnpm_publish_args`) — and
+the §11.6 check-comment mode (`check --pr-title --comment`: the
 verdict posted to the PR under review through the forge seam's
 marker-based comment upsert, rewrite-in-place idempotent; M4.5 step 1,
 ADR-0020) — and the M4.7 migration report + write step (`halyard migrate`: the
@@ -71,8 +77,10 @@ explicit-ref base for the PR-selection shape and the selection rendered
 in the CI systems' own grammars — turbo, nx, bazel, GitHub Actions'
 matrix-output JSON array, GitLab's `parallel:matrix` hashes, Azure
 Pipelines' `task.setvariable` output variable, TeamCity's matrix-build
-`param(...)` line and CircleCI's dynamic-config continuation
-`parameters: '{ "halyard_pkgs": [...] }'` line) — and the §12
+`param(...)` line, CircleCI's dynamic-config continuation
+`parameters: '{ "halyard_pkgs": [...] }'` line, Buildkite's
+build-matrix `matrix.setup` dimension block and Jenkins' declarative
+`axis` block) — and the §12
 action-output seam (M10/§12 step 1,
 ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
 the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
@@ -235,7 +243,7 @@ crates/
                          discover-diff, git-diff, replay, bench-public, pgo
   halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
                          migrate/explain/status/graph/doctor/schema/completions/
-                         affected/man/forge-smoke)
+                         affected/man/action/forge-smoke)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
