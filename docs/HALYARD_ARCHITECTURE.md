@@ -642,9 +642,47 @@ breakdown — wall-clock would break I3). The degraded-mode annotation
 wires to the walk's own `HistoryStats::degraded` marker (`::warning::`,
 never a guess). The composite distribution (binary download, checksum +
 attestation) stays with M5.4's own-artifact slice, and the remaining
-§12 modes (`auto|pr|release|check`) land with their executors — absent
+§12 modes (`auto|release|check`) land with their executors — absent
 rather than stubbed; VERIFIED quotes in
-`docs/research/github-actions-outputs.md`.)*
+`docs/research/github-actions-outputs.md`.*
+
+*(As-built note, 2026-11 (ADR-0043): the §12 `pr` mode ships — the
+§11.1 release machine's pass view rendered through the same seam as
+`halyard action [--mode pr] [--dry] [--plan-out PATH]`. The executor
+extracts from `cmd_pr` into the shell-internal `run_pr_pass` (one
+§11.1 machine pass, two renderers — `pr`'s report and the §12 outputs;
+the adapter swap stays the only posture difference), and the machine
+report now carries the forge's own URL beside the PR number
+(`MachineEffect::PrOpened`/`PrUpdated`/`PrUnchanged`/`PrClosed` gained
+`url` — the `pr_url` output renders what the forge minted, never a
+composed guess; the `pr` report's JSON effect rows carry the same key,
+the human/GHA forecast lines byte-identical). The `halyard-action`
+side is a plain forge-free view — `PrEffect`/`PrPass` +
+`pr_outputs`/`pr_summary`: `released` is the pass's honest execution
+value (`true` only when the live tag phase created a release; a dry
+forecast stays `false`, I5), the `pr_number`/`pr_url` pair rides only
+when the pass has a Release PR to report (absent on the PROPAGATE and
+no-op passes), `releases_json` fills the pass's minted URLs by tag
+match over the plan rows (ADR-0037's "a forge mode fills it"), and the
+summary's pass line names the effect, the minted releases and the
+forecast posture. The dry posture rides `--dry` over the preview
+adapter (the `preview://`/`0` shapes mark it); live runs fail-closed
+on credentials exactly like `halyard pr`.)*
+
+*(As-built note, 2026-11 (ADR-0044): the §12 `check` mode ships — the
+§11.6 check surface's verdict through the same seam as `halyard action
+--mode check [--pr-title TITLE]`: the squash-merge title lint (the
+shell's own `classify_title`/`predict` — the planner's mapping and the
+§10.2 pre-major remap, single-sourced) beside the pending forecast's
+plan vocabulary (`plan_outputs` reused verbatim — the §12 shape stays
+mode-independent), the verdict rendered as the summary's line
+(`title accepted: <kind> → <level> · conveyed <pkg> <bump>, …`, the
+rejection's diagnosis, or the no-title posture) over the plain
+forge-free view `CheckVerdict`/`TitleOutcome`/`CheckRow` +
+`check_summary`. Fail-closed ordering is the contract: the
+classification precedes every effect, so a rejected title refuses
+`E-CLI-TITLE` before the plan file or any sink call exists. The §12
+modes `auto|release` stay absent rather than stubbed.)**
 
 ---
 
