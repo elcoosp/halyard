@@ -1,7 +1,8 @@
 //! The CI-selector adapters (§16.3/M10 step 2, ADR-0034): the affected
 //! selection rendered in a CI system's **own** grammar — the
 //! machine-consumer surface beside the human/json/gha renderings (the
-//! CLI's `affected --ci turbo|nx|bazel|gha|gitlab`).
+//! CLI's `affected --ci
+//! turbo|nx|bazel|gha|gitlab|azure|teamcity`).
 //!
 //! Each adapter is a pure projection over two name-sorted inputs (the
 //! change roots and the closed selection, both as [`SelectedPackage`])
@@ -42,6 +43,34 @@
 //!   halyard-owned identifier (namespaced so it cannot collide with
 //!   the job's own variables) the consumer reads as `$HALYARD_PKG` in
 //!   the script.
+//! - **Azure Pipelines** (learn.microsoft.com, "Logging commands"):
+//!   `##vso[task.setvariable variable=…;isOutput=true]…` — "Sets a
+//!   variable in the variable service of taskcontext. The first task
+//!   can set a variable, and following tasks are able to use the
+//!   variable" — one line whose value is the affected closure,
+//!   name-sorted and comma-joined: the documented consumption of a
+//!   comma-joined variable is the `split(variables.environments, ',')`
+//!   example iterated with the documented `${{ each }}` keyword, and
+//!   the cross-job reference is
+//!   `dependencies.<job-name>.outputs['<step-name>.<variable-name>']`.
+//!   Pipelines computes no dependency closure, so the variable encodes
+//!   the full affected closure; `HALYARD_PKGS` is the halyard-owned
+//!   identifier (namespaced so it cannot collide with the pipeline's
+//!   own variables).
+//!
+//! - **`TeamCity`** (jetbrains.com/help/teamcity, "Matrix Build"): the
+//!   build feature "enables you to define a collection of builds by
+//!   iterating over specified parameter values and generating a build
+//!   for every combination" — the documented Kotlin DSL entry is
+//!   `param("Browser", listOf(value("Chrome"), value("Firefox")))` and
+//!   the documented sample iteration set carries an `env.*` parameter
+//!   (`env.ShouldFail: true, false`). One
+//!   `param("env.HALYARD_PKG", listOf(value(…), …))` line over the
+//!   affected closure — the consumer pastes it inside its `matrix { }`
+//!   block and each instance reads `$HALYARD_PKG` in the script
+//!   (`TeamCity` computes no dependency closure, so the parameter
+//!   encodes the full affected closure; `HALYARD_PKG` is the
+//!   halyard-owned identifier, the ADR-0035 policy carried over).
 //!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
@@ -67,7 +96,9 @@ pub struct SelectedPackage {
 /// I3) — and the output is the argv atoms / one expression the CI
 /// system consumes, one line per atom.
 pub trait CiSelectorAdapter: Send + Sync {
-    /// The CI system this adapter speaks (`turbo`, `nx`, `bazel`).
+    /// The CI system this adapter speaks — one of the lookup's keys
+    /// (`turbo`, `nx`, `bazel`, `gha`, `gitlab`, `azure`, `teamcity`;
+    /// the closed surface [`ci_selector_adapter`] names).
     fn system(&self) -> &'static str;
 
     /// Renders the selection: `changed` are the packages with pending
@@ -195,9 +226,84 @@ impl CiSelectorAdapter for GitlabSelector {
     }
 }
 
-/// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`
-/// — anything else is `None` (an unknown system is a caller bug the
-/// CLI's value enum refuses before this point).
+/// The Azure Pipelines adapter: one `##vso[task.setvariable
+/// variable=HALYARD_PKGS;isOutput=true]` logging command over the
+/// affected closure, name-sorted and comma-joined — the documented
+/// variable-setting command ("Sets a variable in the variable service
+/// of taskcontext. The first task can set a variable, and following
+/// tasks are able to use the variable"). Pipelines computes no
+/// dependency closure of its own, so the variable encodes the **full
+/// affected closure**; the consumer references it across jobs as
+/// `dependencies.<job-name>.outputs['<step-name>.<variable-name>']`
+/// and iterates with the documented `split(…, ',')` + `${{ each }}`
+/// shape. `HALYARD_PKGS` is the halyard-owned identifier (namespaced
+/// so it cannot collide with the pipeline's own variables).
+///
+/// The command's escape sequences (`;`, `\n`, `\r`, `]`, `%`) never
+/// fire: both package-name grammars the selection carries (cargo's
+/// `[A-Za-z0-9_-]`, npm's URL-safe set) exclude every escapable
+/// character, so the value is emitted verbatim.
+pub struct AzureSelector;
+
+impl CiSelectorAdapter for AzureSelector {
+    fn system(&self) -> &'static str {
+        "azure"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let names = affected
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<Vec<&str>>()
+            .join(",");
+        vec![format!(
+            "##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]{names}"
+        )]
+    }
+}
+
+/// The `TeamCity` adapter: one `param("env.HALYARD_PKG", listOf(value(
+/// …), …))` line over the affected closure, name-sorted — the
+/// documented Matrix Build feature entry ("define a collection of
+/// builds by iterating over specified parameter values and generating
+/// a build for every combination"; the DSL block is
+/// `param("Browser", listOf(value("Chrome"), value("Firefox")))`, and
+/// the documented sample iteration set carries an `env.*` parameter).
+/// `TeamCity` computes no dependency closure of its own, so the
+/// parameter encodes the **full affected closure**; the consumer
+/// pastes the line inside its `matrix { }` block and each matrix
+/// instance reads `$HALYARD_PKG` in the script — the ADR-0035
+/// identifier policy carried over.
+///
+/// The Kotlin string literal never needs escaping: neither package-name
+/// grammar the selection carries (cargo's `[A-Za-z0-9_-]`, npm's
+/// URL-safe set) contains a quote, so the values are emitted verbatim.
+pub struct TeamcitySelector;
+
+impl CiSelectorAdapter for TeamcitySelector {
+    fn system(&self) -> &'static str {
+        "teamcity"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let values = affected
+            .iter()
+            .map(|package| format!(r#"value("{}")"#, package.name))
+            .collect::<Vec<String>>()
+            .join(", ");
+        vec![format!(r#"param("env.HALYARD_PKG", listOf({values}))"#)]
+    }
+}
+
+/// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`,
+/// `azure`, `teamcity` — anything else is `None` (an unknown system is
+/// a caller bug the CLI's value enum refuses before this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
@@ -206,6 +312,8 @@ pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapte
         "bazel" => Some(&BazelSelector),
         "gha" => Some(&GhaSelector),
         "gitlab" => Some(&GitlabSelector),
+        "azure" => Some(&AzureSelector),
+        "teamcity" => Some(&TeamcitySelector),
         _ => None,
     }
 }
