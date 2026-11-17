@@ -300,3 +300,59 @@ fn affected_ci_gitlab_renders_the_matrix_hashes() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_azure_renders_the_setvariable_line() -> Result<(), BoxError> {
+    // learn.microsoft.com (VERIFIED): `##vso[task.setvariable
+    // variable=shouldrun;isOutput=true]true` "Sets a variable in the
+    // variable service of taskcontext"; the documented job-to-job
+    // reference is `dependencies.<job-name>.outputs['…']` and the
+    // documented consumption of a comma-joined variable is the
+    // `split(variables.environments, ',')` + `${{ each }}` example.
+    // One `HALYARD_PKGS` output variable over the affected closure.
+    let fx = two_package_fixture("cli-affected-ci-azure")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "azure"])?;
+    assert!(ok, "the azure adapter renders: {text}");
+    assert!(
+        text.contains("##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]app,lib"),
+        "the affected closure as the one-line output variable: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn affected_ci_azure_empty_selection_prints_nothing() -> Result<(), BoxError> {
+    // The honest no-op carries over: a fully-tagged repo renders no
+    // adapter lines (exit 0) in the azure grammar too.
+    let mut fx = two_package_fixture("cli-affected-ci-azure-empty")?;
+    fx.tag_annotated("lib-v0.1.1", "lib 0.1.1")?;
+    fx.tag_annotated("app-v0.1.1", "app 0.1.1")?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "azure"])?;
+    assert!(ok, "an empty selection is still a successful run: {text}");
+    assert_eq!(text.trim(), "", "no output — the CI step skips itself");
+    Ok(())
+}
+
+#[test]
+fn affected_ci_teamcity_renders_the_matrix_param_line() -> Result<(), BoxError> {
+    // jetbrains.com/help/teamcity (VERIFIED): the Matrix Build feature
+    // "enables you to define a collection of builds by iterating over
+    // specified parameter values" — the documented DSL entry is
+    // `param("Browser", listOf(value("Chrome"), value("Firefox")))`
+    // and the documented sample iteration set carries an `env.*`
+    // parameter. One `param("env.HALYARD_PKG", listOf(value(…), …))`
+    // line over the affected closure; each matrix instance reads
+    // `$HALYARD_PKG`.
+    let fx = two_package_fixture("cli-affected-ci-teamcity")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "teamcity"])?;
+    assert!(ok, "the teamcity adapter renders: {text}");
+    assert!(
+        text.contains(r#"param("env.HALYARD_PKG", listOf(value("app"), value("lib")))"#),
+        "the affected closure as the one-line matrix parameter: {text}"
+    );
+    Ok(())
+}
