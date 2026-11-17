@@ -70,19 +70,21 @@ defaults exactly, plus the §16.1 one-file release workflow with
 `--github` — refusals carry `E-CFG-INIT` and never leave a
 half-scaffold)** — and the §16.3/M10 affected-package selector (`halyard
 affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 +
-ADR-0034/0035/0036/0038: the CI question — which packages must rebuild
-and test? — answered as the pending-commit attribution closed over the
-workspace's reverse dependency edges, dev edges included, with an
-explicit-ref base for the PR-selection shape and the selection rendered
-in the CI systems' own grammars — turbo, nx, bazel, GitHub Actions'
-matrix-output JSON array, GitLab's `parallel:matrix` hashes, Azure
-Pipelines' `task.setvariable` output variable, TeamCity's matrix-build
-`param(...)` line, CircleCI's dynamic-config continuation
-`parameters: '{ "halyard_pkgs": [...] }'` line, Buildkite's
-build-matrix `matrix.setup` dimension block, Jenkins' declarative
-`axis` block and Bitbucket's `parallel: steps:` block — one literal
-`export HALYARD_PKG=<name>` script line per affected package, the
-documented grammar having no per-step `env`) — and the §12
+ADR-0034/0035/0036/0038/0039/0040/0041/0045: the CI question — which
+packages must rebuild and test? — answered as the pending-commit
+attribution closed over the workspace's reverse dependency edges, dev
+edges included, with an explicit-ref base for the PR-selection shape
+and the selection rendered in the CI systems' own grammars — turbo, nx,
+bazel, GitHub Actions' matrix-output JSON array, GitLab's
+`parallel:matrix` hashes, Azure Pipelines' `task.setvariable` output
+variable, TeamCity's matrix-build `param(...)` line, CircleCI's
+dynamic-config continuation `parameters: '{ "halyard_pkgs": [...] }'`
+line, Buildkite's build-matrix `matrix.setup` dimension block,
+Jenkins' declarative `axis` block, Bitbucket's `parallel: steps:` block
+(one literal `export HALYARD_PKG=<name>` script line per affected
+package, the documented grammar having no per-step `env`) and Drone's
+step-scoped `environment:` fragment (the documented per-step
+environment mechanism, one fragment per affected package)) — and the §12
 action-output seam (M10/§12 step 1,
 ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
 the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
@@ -92,7 +94,11 @@ summary; the §12 `pr` mode (ADR-0043) renders the §11.1 release
 machine's pass view through the same seam — the forge's own
 `pr_number`/`pr_url`, the minted release URLs and the honest
 `released` value; the §12 `check` mode (ADR-0044) renders the title
-lint's verdict and the conveyed bumps beside the pending forecast).** The
+lint's verdict and the conveyed bumps beside the pending forecast; the
+§12 `release` mode (ADR-0046) renders the release executor's pass view
+— the §11.1 tag phase, the push and the forge half through the same
+shared pass `halyard release` drives, the created tags, the minted URLs
+and the honest `released` value, no PR keys).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -231,7 +237,7 @@ crates/
                          change-file grammar (.halyard/changes/*.md, ADR-0028)
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
-  halyard-action         §12 action-output seam (ADR-0037/0043/0044): the outputs vocabulary
+  halyard-action         §12 action-output seam (ADR-0037/0043/0044/0046): the outputs vocabulary
                          over the GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files, the preview
                          call log, the plan-mode forecast, the §12 pr mode's pass renderers
                          and the §12 check mode's verdict (`halyard action`)
@@ -330,6 +336,7 @@ cargo run -p halyard-forge-github --example forge_exchange
 cargo run -p halyard-forge-github --example app_exchange
 cargo run -p halyard-action --example plan_forecast
 cargo run -p halyard-action --example pr_forecast
+cargo run -p halyard-action --example release_forecast
 cargo run -p halyard-action --example check_forecast
 ```
 
