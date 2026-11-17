@@ -2322,3 +2322,92 @@ pub fn init_report_gha(report: &halyard_config::InitReport) -> String {
     }
     out
 }
+
+/// The `bench` report as the human table (§16.2, ADR-0042): the pass
+/// posture and the repo shape the timings belong to, then one row per
+/// pipeline stage (the `--profile` trace's own span vocabulary) with
+/// the nearest-rank percentile columns, then the budgets posture —
+/// a measurement, never a gate (the §14.1 budgets are shape-bound to
+/// the synthetic fixtures; this repo's shape is its own).
+pub fn bench_human(report: &crate::bench::BenchReport) -> String {
+    let cache = if report.cache_warm {
+        "warm".to_owned()
+    } else {
+        "cold (--no-cache)".to_owned()
+    };
+    let mut out = format!(
+        "halyard bench — the planning pipeline over this repo\npasses: {} timed (+1 warmup) · cache: {cache}\nshape: {} packages · {} pending commits\n\n",
+        report.iterations, report.packages, report.pending_commits
+    );
+    let _ = writeln!(
+        out,
+        "stage      samples      p50       p99       min      mean"
+    );
+    for stage in &report.stages {
+        let _ = writeln!(
+            out,
+            "{stage:<10} {samples:>7} {p50:>9} {p99:>9} {min:>9} {mean:>9}",
+            stage = stage.stage,
+            samples = stage.samples,
+            p50 = crate::bench::format_duration(stage.p50_us),
+            p99 = crate::bench::format_duration(stage.p99_us),
+            min = crate::bench::format_duration(stage.min_us),
+            mean = crate::bench::format_duration(stage.mean_us),
+        );
+    }
+    out.push_str(
+        "budgets: none — the §14.1 budgets are shape-bound to bench/budgets.toml's \
+         synthetic fixtures; this repo's shape is its own (measurement, not a gate)\n",
+    );
+    out
+}
+
+/// The `bench` report as the stable JSON document (§16.2): the posture,
+/// the shape and the name-sorted stage distributions. The timings are
+/// wall-clock — the schema, the stage order and the shape are the
+/// run-stable contract.
+pub fn bench_json(report: &crate::bench::BenchReport) -> serde_json::Value {
+    serde_json::json!({
+        "iterations": report.iterations,
+        "cache": if report.cache_warm { "warm" } else { "cold" },
+        "shape": {
+            "packages": report.packages,
+            "pending_commits": report.pending_commits,
+        },
+        "stages": report.stages.iter().map(|stage| serde_json::json!({
+            "stage": stage.stage,
+            "samples": stage.samples,
+            "p50_us": stage.p50_us,
+            "p99_us": stage.p99_us,
+            "min_us": stage.min_us,
+            "mean_us": stage.mean_us,
+        })).collect::<Vec<serde_json::Value>>(),
+    })
+}
+
+/// The `bench` report as a GHA summary (§16.3): the same table the
+/// human render carries, markdown-shaped for the job summary.
+pub fn bench_gha(report: &crate::bench::BenchReport) -> String {
+    let cache = if report.cache_warm { "warm" } else { "cold" };
+    let mut out = format!(
+        "## halyard bench\n\n{} timed passes (+1 warmup) · cache: {cache} · shape: {} packages, {} pending commits\n\n| stage | samples | p50 | p99 | min | mean |\n|---|---|---|---|---|---|\n",
+        report.iterations, report.packages, report.pending_commits
+    );
+    for stage in &report.stages {
+        let _ = writeln!(
+            out,
+            "| {stage} | {samples} | {p50} | {p99} | {min} | {mean} |",
+            stage = stage.stage,
+            samples = stage.samples,
+            p50 = crate::bench::format_duration(stage.p50_us),
+            p99 = crate::bench::format_duration(stage.p99_us),
+            min = crate::bench::format_duration(stage.min_us),
+            mean = crate::bench::format_duration(stage.mean_us),
+        );
+    }
+    out.push_str(
+        "\nBudgets: none — the §14.1 budgets are shape-bound to the synthetic \
+         fixtures; measurement, not a gate.\n",
+    );
+    out
+}
