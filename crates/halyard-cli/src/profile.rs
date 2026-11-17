@@ -48,6 +48,17 @@ impl Profiler {
         result
     }
 
+    /// The recorded spans as `(name, duration_us)` pairs, oldest first
+    /// — the measurement readout the `bench` command aggregates per
+    /// stage (ADR-0042). A disabled profiler records nothing, so an
+    /// untimed pass yields an empty list by construction.
+    pub fn recorded_spans(&self) -> Vec<(&'static str, u128)> {
+        self.spans
+            .iter()
+            .map(|span| (span.name, span.duration_us))
+            .collect()
+    }
+
     /// Writes the trace (Chrome Trace JSON, `traceEvents` with `X` phase
     /// events) and returns `true` when a trace was produced.
     pub fn finish(&mut self) -> bool {
