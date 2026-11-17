@@ -1,8 +1,9 @@
 //! The CI-selector adapters (M10 step 2, ADR-0034; the matrix-jobs
-//! adapters per ADR-0035, the azure/teamcity adapters per ADR-0036):
-//! the affected selection rendered in the seven CI systems' own
-//! grammars — offline, over a hand-built `lib ← app` workspace (no
-//! git, no network). Each adapter's output is the exact argv/one-line
+//! adapters per ADR-0035, the azure/teamcity adapters per ADR-0036,
+//! the circleci continuation adapter per ADR-0038): the affected
+//! selection rendered in the eight CI systems' own grammars —
+//! offline, over a hand-built `lib ← app` workspace (no git, no
+//! network). Each adapter's output is the exact argv/one-line
 //! expression the CI step consumes; an empty selection renders
 //! nothing (the honest no-op).
 //!
@@ -28,7 +29,9 @@ fn main() {
         },
     ];
 
-    for system in ["turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity"] {
+    for system in [
+        "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci",
+    ] {
         if let Some(adapter) = ci_selector_adapter(system) {
             println!(
                 "{} → {}",
