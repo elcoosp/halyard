@@ -20,6 +20,12 @@ use clap_complete::{Shell, generate};
 use miette::Diagnostic;
 
 use crate::profile::Profiler;
+// M10/§12 step 1 (ADR-0037): the `action` command renders the §12
+// outputs through the action-output seam.
+use halyard_action::{
+    ActionCall, ActionWriter, GithubActionsWriter, PreviewActionWriter, env_file_entry,
+    plan_outputs, plan_summary, write_plan_file,
+};
 use halyard_changelog::load_change_files;
 use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, resolve};
 use halyard_core::change_file::ChangeFiles;
@@ -109,9 +115,8 @@ struct Cli {
     command: Command,
 }
 
-/// The v1 command surface (§16.2; the remaining commands — `bench`
-/// and the `action` glue — land with their milestones M4.x/M10+
-/// and are absent rather than stubbed; `apply` joined
+/// The v1 command surface (§16.2; `bench` — the M10+ perf surface —
+/// remains absent rather than stubbed; `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
 /// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
 /// (§8.8) in the smart-minimal-fetch slice, `publish` (§13, the
@@ -119,8 +124,9 @@ struct Cli {
 /// `migrate` (report, and with `--write` the §16.2 draft write) in the
 /// M4.7 slices, `init` (the §16.1 zero-config scaffold) in the
 /// ADR-0029 slice, `affected` (the §16.3/M10 CI selector) in the
-/// ADR-0032 slice and `man` (the §16.2 shell-integration pages) in
-/// its session).
+/// ADR-0032 slice, `man` (the §16.2 shell-integration pages) in
+/// its session and `action` (the §12 forecast mode) in the
+/// ADR-0037 slice.
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -281,15 +287,37 @@ enum Command {
         #[arg(long, value_name = "REF")]
         base: Option<String>,
         /// Render the selection in a CI system's own grammar (M10 step
-        /// 2, ADR-0034 + the ADR-0035/0036 adapters): turbo's
+        /// 2, ADR-0034 + the ADR-0035/0036/0038 adapters): turbo's
         /// `--filter=...pkg` dependent filters, nx's `run-many
         /// --projects=` list, bazel's `rdeps(//…)` query, gha's
         /// matrix-output JSON array, gitlab's `parallel:matrix` hashes,
         /// azure's `task.setvariable` output variable, teamcity's
-        /// matrix-build `param(...)` line — the machine-consumer
+        /// matrix-build `param(...)` line, circleci's dynamic-config
+        /// continuation `parameters` line — the machine-consumer
         /// surface beside `--format`.
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
+    },
+    /// The §12 action surface (§12 step 1, ADR-0037): the plan-mode
+    /// forecast rendered through the action-output seam — plan → the
+    /// canonical plan file → the §12 outputs (`released`, `published`,
+    /// `plan_json`, `releases_json`, the per-package `--version` /
+    /// `--tag` keys, `paths_released`) and the §12 job summary. Inside
+    /// a workflow step (`GITHUB_OUTPUT` set) the calls land in the env
+    /// files verbatim; outside, the preview call log prints them
+    /// (nothing is written but the plan file). Offline (I5). The
+    /// remaining §12 modes (`auto|pr|release|check`) land with their
+    /// milestones and are absent rather than stubbed.
+    Action {
+        /// The §12 behavior mode.
+        #[arg(long, value_enum, default_value = "plan")]
+        mode: ActionMode,
+        /// Where the canonical plan JSON lands — the `plan_json`
+        /// output's value (default: `halyard-plan.json` in the working
+        /// directory; a missing parent directory refuses
+        /// `E-ACTION-PLAN`, the caller's contract is never invented).
+        #[arg(long, value_name = "PATH")]
+        plan_out: Option<PathBuf>,
     },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
@@ -455,6 +483,13 @@ enum CiSelector {
     /// Kotlin DSL entry the consumer pastes inside its `matrix { }`
     /// block, each instance reading `$HALYARD_PKG`.
     Teamcity,
+    /// `CircleCI`: one paste-ready dynamic-config
+    /// `parameters: '{ "halyard_pkgs": [...] }'` line over the affected
+    /// closure — the documented continuation-orb `continue` step's
+    /// `parameters` value (a JSON object as a string), which the
+    /// consumer pastes into the setup workflow and declares as a
+    /// pipeline parameter in the continuation config.
+    Circleci,
 }
 
 impl CiSelector {
@@ -468,8 +503,18 @@ impl CiSelector {
             Self::Gitlab => "gitlab",
             Self::Azure => "azure",
             Self::Teamcity => "teamcity",
+            Self::Circleci => "circleci",
         }
     }
+}
+
+/// The §12 behavior modes (§12 inputs: `auto|pr|release|plan|check`).
+/// `plan` lands with ADR-0037; the remaining §12 modes land with their
+/// milestones and are absent rather than stubbed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum ActionMode {
+    /// The offline forecast: plan → the §12 outputs + job summary.
+    Plan,
 }
 
 /// `schema` targets (§16.2; the frozen documents live under `schemas/`).
@@ -563,6 +608,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
         Command::Fetch => cmd_fetch(cli, profiler),
         Command::Affected { base, ci } => {
             cmd_affected(cli, profiler, base.as_deref(), *ci)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Action { mode, plan_out } => {
+            cmd_action(cli, profiler, *mode, plan_out.as_deref())?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Explain { package } => {
@@ -2382,6 +2431,127 @@ fn cmd_doctor(cli: &Cli, profiler: &mut Profiler, registries: bool) -> Result<()
 /// gates CI on a pending release (§15.4 exit code 3). A rejected title
 /// fails with the `E-CLI-TITLE` diagnosis (§11.6: errors teach).
 ///
+/// The `action` command (§12 step 1, ADR-0037): the plan-mode forecast
+/// over the action-output seam — plan → the canonical plan file → the
+/// §12 outputs and job summary. The sink follows the environment: the
+/// `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY` env files when the workflow
+/// step provides them, the preview call log otherwise (the honest
+/// local shape — the outputs are the same, only the sink differs).
+/// The §12 degraded-mode warning rides the walk's own provenance (the
+/// `HistoryStats::degraded` marker), never a guess.
+fn cmd_action(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    mode: ActionMode,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    match mode {
+        ActionMode::Plan => cmd_action_plan(cli, profiler, plan_out),
+    }
+}
+
+/// The §12 `plan` mode: forecast, write, render, deliver.
+fn cmd_action_plan(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    let plan_path = plan_out.map_or_else(|| PathBuf::from("halyard-plan.json"), PathBuf::from);
+    write_plan_file(&plan, &plan_path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let outputs =
+        plan_outputs(&plan, &plan_path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let summary = plan_summary(&plan);
+    // The sink: the env files inside a workflow step, the preview call
+    // log outside — one seam, two postures, the outputs identical.
+    let real = GithubActionsWriter::from_env();
+    let in_step = real.is_some();
+    let preview = PreviewActionWriter::new();
+    let sink: &dyn ActionWriter = if let Some(writer) = &real {
+        writer
+    } else {
+        &preview
+    };
+    for (name, value) in &outputs {
+        sink.set_output(name, value)
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    }
+    sink.append_summary(&summary)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // §12's degraded-mode annotation rides the walk's own marker (the
+    // engine's §8.3 honesty: the commit-graph is an optimization, its
+    // absence is surfaced, correctness unaffected).
+    let degraded = context.stats.degraded;
+    if degraded {
+        sink.emit_warning(
+            "the history walk ran without a commit-graph (degraded mode — correctness \
+             unaffected)",
+        )
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    }
+
+    if cli.format == Format::Json {
+        let mut map = serde_json::Map::new();
+        for (name, value) in &outputs {
+            map.insert(name.to_string(), serde_json::Value::String(value.clone()));
+        }
+        let sink_name = if in_step { "env-files" } else { "preview" };
+        let document = serde_json::json!({
+            "mode": "plan",
+            "sink": sink_name,
+            "outputs": map,
+            "summary_md": summary,
+            "plan_file": plan_path.display().to_string(),
+        });
+        print_pretty_json(&document)?;
+        return Ok(());
+    }
+
+    if in_step {
+        if let Some(writer) = real.as_ref() {
+            let outputs_path = writer.outputs_path().display();
+            match writer.summary_path() {
+                Some(summary_path) => {
+                    println!(
+                        "wrote {} outputs → $GITHUB_OUTPUT ({outputs_path}), job summary → \
+                         $GITHUB_STEP_SUMMARY ({})",
+                        outputs.len(),
+                        summary_path.display(),
+                    );
+                }
+                None => println!(
+                    "wrote {} outputs → $GITHUB_OUTPUT ({outputs_path})",
+                    outputs.len(),
+                ),
+            }
+            println!("plan file → {}", plan_path.display());
+            if degraded {
+                println!("degraded-mode warning emitted (::warning:: — no commit-graph)");
+            }
+        }
+    } else {
+        // Outside a workflow step the preview call log is the report:
+        // the exact env-file entries a real step would receive, then
+        // the job summary under its marker.
+        for call in preview.calls() {
+            match call {
+                ActionCall::SetOutput { name, value } => {
+                    let entry = env_file_entry(&name, &value)
+                        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+                    print!("{entry}");
+                }
+                ActionCall::AppendSummary { markdown } => {
+                    println!("# >> $GITHUB_STEP_SUMMARY");
+                    println!("{markdown}");
+                }
+                ActionCall::Warning { message } => println!("::warning::{message}"),
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The comment mode (`--comment`, M4.5 step 1) posts the verdict to the
 /// PR under review through the forge seam's marker-based upsert — the
 /// §11.6 "if merged, this will release" comment. The target is the open
@@ -2985,10 +3155,9 @@ fn change_files() -> Result<ChangeFiles, CliError> {
         let bytes = std::fs::read(path).map_err(|e| {
             CliError::new(
                 "E-CHLOG-CHANGE-FILE",
-                format!(
-                    "[E-CHLOG-CHANGE-FILE] change file {} cannot be read: {e}",
-                    path.display()
-                ),
+                // The code rides `CliError::new` — the message stays
+                // prose (no second copy of the code in the text).
+                format!("change file {} cannot be read: {e}", path.display()),
             )
         })?;
         files.push((path.to_string_lossy().into_owned(), bytes));
