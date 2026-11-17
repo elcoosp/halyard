@@ -1,7 +1,9 @@
 # E-CFG-TOML
 
 **Code:** `E-CFG-TOML` · **Area:** config (M1.8) · **Kinds:** `io`,
-`toml`, `schema`
+`toml`, `schema` · **Raised by:** `halyard_config::loader`
+(`ConfigError::Read` — every config read/parse entry point: `plan`,
+`apply`, `pr`, `release`, `publish`, `fetch`, `migrate`, `check`)
 
 ## What it means
 
