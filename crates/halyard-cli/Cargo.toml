@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The `halyard` command line: init, plan, apply, pr, check, affected, explain, status, graph, doctor, schema, completions, man"
+description = "The `halyard` command line: init, plan, apply, pr, check, affected, action, bench, explain, status, graph, doctor, schema, completions, man"
 
 [[bin]]
 name = "halyard"
@@ -73,6 +73,13 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "man"
+harness = false
+
+# The `bench_report` bench (ADR-0042): the §16.2 `bench` command's pure
+# aggregation (per-stage grouping + nearest-rank percentiles) over the
+# sample counts a real pass loop produces.
+[[bench]]
+name = "bench_report"
 harness = false
 
 [lints]
