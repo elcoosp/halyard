@@ -2,7 +2,7 @@
 //! selection rendered in a CI system's **own** grammar — the
 //! machine-consumer surface beside the human/json/gha renderings (the
 //! CLI's `affected --ci
-//! turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins`).
+//! turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins|bitbucket`).
 //!
 //! Each adapter is a pure projection over two name-sorted inputs (the
 //! change roots and the closed selection, both as [`SelectedPackage`])
@@ -129,6 +129,31 @@
 //!   `[A-Za-z0-9_-]`, npm's URL-safe set) contains a quote, so the
 //!   values are emitted verbatim.
 //!
+//! - **`Bitbucket`** (support.atlassian.com/bitbucket-cloud, VERIFIED
+//!   2026-11-17): "Parallel steps allow you to group pipeline steps
+//!   that can run at the same time (concurrently) to reduce build
+//!   time" — the documented shape is a `parallel:` block carrying the
+//!   required `steps:` property ("The `steps` property contains the
+//!   lists of `step`s in a `stage` or a `parallel`. At least 1 `step`
+//!   is required within the steps list"), whose steps differ per step
+//!   in the script itself (the docs' own example runs
+//!   `--batch 1` / `--batch 2` per step). There is no per-step `env`
+//!   property (the `variables` option's "Allowed parent properties" is
+//!   `[pipe]`), so one literal script line per affected package —
+//!   `export HALYARD_PKG=<name>`, the halyard-owned identifier the
+//!   consumer's own tool invocation reads in the same script — carries
+//!   the full affected closure, name-sorted. The relative indentation
+//!   follows the documented example exactly (`steps:` +2 under
+//!   `parallel:`, the step list +2 under `steps:`, `script:` +4 under
+//!   the step, the script items +2 under `script:`).
+//!
+//!   The pipeline's step cap is the consumer's policy ("The 100-step
+//!   limit on pipelines includes each step in a parallel group") — the
+//!   adapter renders the grammar, never the guard. The assignment is
+//!   verbatim-safe: neither package-name grammar the selection carries
+//!   (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set) contains a shell
+//!   metacharacter, so the bare-word value is emitted unquoted.
+//!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
 //! empty-selection contract). The surface is closed: an unknown system
@@ -155,8 +180,8 @@ pub struct SelectedPackage {
 pub trait CiSelectorAdapter: Send + Sync {
     /// The CI system this adapter speaks — one of the lookup's keys
     /// (`turbo`, `nx`, `bazel`, `gha`, `gitlab`, `azure`, `teamcity`,
-    /// `circleci`, `buildkite`, `jenkins`; the closed surface
-    /// [`ci_selector_adapter`] names).
+    /// `circleci`, `buildkite`, `jenkins`, `bitbucket`; the closed
+    /// surface [`ci_selector_adapter`] names).
     fn system(&self) -> &'static str;
 
     /// Renders the selection: `changed` are the packages with pending
@@ -494,10 +519,58 @@ impl CiSelectorAdapter for JenkinsSelector {
     }
 }
 
+/// The `Bitbucket` adapter: one paste-ready `parallel:` block over the
+/// affected closure, name-sorted — the documented parallel-steps shape
+/// (support.atlassian.com/bitbucket-cloud, VERIFIED 2026-11-17:
+/// "Parallel steps allow you to group pipeline steps that can run at
+/// the same time (concurrently) to reduce build time"; the required
+/// `steps:` property "contains the lists of `step`s in a `stage` or a
+/// `parallel`. At least 1 `step` is required within the steps list").
+/// `Bitbucket` computes no dependency closure of its own and exposes no
+/// per-step `env` property (`variables` is a `pipe`-only option), so
+/// each parallel step's script carries one literal assignment —
+/// `export HALYARD_PKG=<name>` — the halyard-owned identifier the
+/// consumer's own tool invocation reads in the same script (the
+/// ADR-0035 identifier policy carried over, the docs' own upper-snake
+/// `BITBUCKET_*` variable style).
+///
+/// The relative indentation follows the documented example exactly:
+/// `steps:` +2 under `parallel:`, the step list +2 under `steps:`,
+/// `script:` +4 under the step, the script items +2 under `script:` —
+/// the consumer pastes the block at pipeline level (`- parallel:`) with
+/// its own leading indent. The script item is a bare-word assignment,
+/// verbatim-safe: neither package-name grammar the selection carries
+/// (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set) contains a shell
+/// metacharacter. The pipeline's 100-step cap ("The 100-step limit on
+/// pipelines includes each step in a parallel group") is the consumer's
+/// policy; the adapter renders the grammar, never the guard.
+pub struct BitbucketSelector;
+
+impl CiSelectorAdapter for BitbucketSelector {
+    fn system(&self) -> &'static str {
+        "bitbucket"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = vec!["parallel:".to_owned(), "  steps:".to_owned()];
+        lines.extend(affected.iter().flat_map(|package| {
+            [
+                "    - step:".to_owned(),
+                "        script:".to_owned(),
+                format!("          - export HALYARD_PKG={}", package.name),
+            ]
+        }));
+        lines
+    }
+}
+
 /// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`,
-/// `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins` — anything
-/// else is `None` (an unknown system is a caller bug the CLI's value
-/// enum refuses before this point).
+/// `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins`, `bitbucket`
+/// — anything else is `None` (an unknown system is a caller bug the
+/// CLI's value enum refuses before this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
@@ -511,6 +584,7 @@ pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapte
         "circleci" => Some(&CircleciSelector),
         "buildkite" => Some(&BuildkiteSelector),
         "jenkins" => Some(&JenkinsSelector),
+        "bitbucket" => Some(&BitbucketSelector),
         _ => None,
     }
 }
