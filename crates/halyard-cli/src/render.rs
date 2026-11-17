@@ -1214,17 +1214,17 @@ pub fn pr_effect_json(effect: &MachineEffect) -> serde_json::Value {
         MachineEffect::ReleaseExisted { tag } => {
             serde_json::json!({ "type": "release_existed", "tag": tag })
         }
-        MachineEffect::PrOpened { number } => {
-            serde_json::json!({ "type": "pr_opened", "number": number })
+        MachineEffect::PrOpened { number, url } => {
+            serde_json::json!({ "type": "pr_opened", "number": number, "url": url })
         }
-        MachineEffect::PrUpdated { number } => {
-            serde_json::json!({ "type": "pr_updated", "number": number })
+        MachineEffect::PrUpdated { number, url } => {
+            serde_json::json!({ "type": "pr_updated", "number": number, "url": url })
         }
-        MachineEffect::PrUnchanged { number } => {
-            serde_json::json!({ "type": "pr_unchanged", "number": number })
+        MachineEffect::PrUnchanged { number, url } => {
+            serde_json::json!({ "type": "pr_unchanged", "number": number, "url": url })
         }
-        MachineEffect::PrClosed { number } => {
-            serde_json::json!({ "type": "pr_closed", "number": number })
+        MachineEffect::PrClosed { number, url } => {
+            serde_json::json!({ "type": "pr_closed", "number": number, "url": url })
         }
     }
 }
@@ -1236,12 +1236,14 @@ fn pr_effect_gha(effect: &MachineEffect) -> String {
             format!("would create release `{tag}` ({url})")
         }
         MachineEffect::ReleaseExisted { tag } => format!("release `{tag}` exists"),
-        MachineEffect::PrOpened { number } => format!("would open PR #{number} (preview)"),
-        MachineEffect::PrUpdated { number } => format!("would update PR #{number}"),
-        MachineEffect::PrUnchanged { number } => {
+        MachineEffect::PrOpened { number, url: _ } => {
+            format!("would open PR #{number} (preview)")
+        }
+        MachineEffect::PrUpdated { number, url: _ } => format!("would update PR #{number}"),
+        MachineEffect::PrUnchanged { number, url: _ } => {
             format!("PR #{number} already current (no mutating calls)")
         }
-        MachineEffect::PrClosed { number } => format!("would close PR #{number}"),
+        MachineEffect::PrClosed { number, url: _ } => format!("would close PR #{number}"),
     }
 }
 
