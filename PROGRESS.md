@@ -58,6 +58,8 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) | done | (tree left dirty; no commits) | M1: `halyard-config::init` — `InitSurvey` (plain data; the shell's discovery fills it, the engine stays pure) → `plan_init` (refuses a zero-package survey with the new `ConfigError::Init` = `E-CFG-INIT` + page + index; renders the deterministic shape line keyed on the same count-based rule the planner's `auto` tag template applies — `effective_template` — so the shape and the tag names can never disagree; renders the comment-only `halyard.toml` skeleton whose defaults load as the built-in defaults EXACTLY — the key-free invariant re-checked at plan time by re-loading the rendered draft) → `InitPlan` (shape + ordered `ScaffoldFile`s) → `run_init` (gates EVERY target's existence through the injected `DraftSink` before the first write — a refusal never leaves a half-scaffold — then writes in plan order) → `InitReport`; `AtomicScaffoldSink` = the §9.1 atomic protocol with the one scaffold-specific difference: the target's parent directories are created (`.github/workflows/` does not exist yet — the migration's `AtomicDraftSink` deliberately never mkdirs, hence two types, the trait doc now says "the sink's stable code"); `--github` appends the §16.1 one-file release workflow VERBATIM (`halyard/action@v1` referenced per the architecture's finished surface — the human render says the glue lands with its milestone); CLI `init [--github]` (needs no git repo, reads no config): the `.config/halyard.toml` shadow footgun refuses first (resolve_config prefers the root file), then survey → plan → effect → three-format render (`init_report`/`_json`/`_gha`); 11 engine tests + 9 CLI gates (red→green on record: E0432 on the missing `halyard_config::init` API + E0599 on `INIT_CODE`, 9 CLI fails on `unrecognized subcommand`; one test-side correction during green — the npm fixture had a stray Cargo.toml, discovery was honestly reporting 2 packages) + bench group `init` (plan_single_package ≈3.4 µs, plan_workspace_40 ≈3.8 µs, plan_and_run over the memory sink ≈3.9 µs — the loader round-trip stays cheap) + example `init_scaffold` (MemoryDraftSink — nothing touches the disk) + ADR-0029. Micro-debt + drift fixed (additive, not milestone substitutes): the halyard-cache process-global hit/miss statics removed (`global_stats`/`reset_stats` had zero callers — the per-instance counters the header round-trips were the live surface), `halyard-changelog::releases_by_version` removed (its doc claimed the idempotence tests used it — they never did), the xtask member-guard test list now names all 18 members (`halyard-config` was missing), arch §7.1 rewritten (the phantom `halyard-action`/`halyard-plugin-host` rows and the nonexistent `docs/spec/` + `action/` paths replaced by an as-built note; `halyard-forge-github` added to the tree), arch §15.1 fuzz row as-built (3 real targets, not 5 aspirational) + the `shuttle` row corrected (loom only, documented-exclusive with miri, the manual invocation spelled), the errors-README intro's `include_str!` claim replaced with the actual linkage (rustdoc `code()` + pages), README status/layout/commands rows, CLI README row + a Zero-config scaffold section, CLI crate description | M2 (M1 green end-to-end first, same session, ADR-0030): the documented miri/loom exclusion is now a `compile_error!` guard in `halyard-cache/src/lib.rs` (a combined build fails loudly with the two documented invocations in the message — verified: `cargo check -p halyard-cache --features miri,loom` exits 101 with the guard, each lane alone passes); `ci-bundle` as the CI gate feature (core/config map it to `schema-gen`, cache's is deliberately empty — the exclusive pair stays out; workspace-wide `--features ci-bundle` enables per member, skips the rest); CI's clippy/test/nextest/doc jobs moved off `--all-features` onto `--features ci-bundle` and a new `loom` job runs the suite's own documented invocation on stable (the suite previously compiled only as an `--all-features` side effect — it gains a spelled lane instead of losing one); arch §15.1 rows + cache manifest notes + README daily-commands updated to the ci-bundle spelling; gates re-run under the new spelling (the guard makes `--all-features` an invalid gate invocation by design). M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-16; session log below |
 
 | Bitbucket parallel-steps adapter (ADR-0041) + the `halyard bench` measurement command (ADR-0042) | done | (tree left dirty; no commits) | M1: `BitbucketSelector` (`affected --ci bitbucket`) — one paste-ready `parallel:` block over the affected closure, name-sorted, one `export HALYARD_PKG=<name>` script line per affected package (support.atlassian.com VERIFIED 2026-11-17: "Parallel steps allow you to group pipeline steps that can run at the same time"; the required `steps:` property "contains the lists of `step`s in a `stage` or a `parallel`. At least 1 `step` is required within the steps list"; the docs' own example varies the steps **in the script** (`--batch 1` / `--batch 2`); no per-step `env` exists — `variables` is a `pipe`-only option — so the assignment rides the script line the consumer's tool invocation reads; the relative indentation follows the documented example exactly; the "100-step limit on pipelines includes each step in a parallel group" cap is the consumer's policy, the render never the guard), lookup + trait/module docs + CLI value enum + flag doc + the `affected_ci` example + bench `ci_selector_bitbucket_40chain` all moved one row over; the refused-unknown pin moved `bitbucket` → `drone` (an unrecorded system — the recorded CI surface ADR-0034→0041 is complete). M2 (M1 green end-to-end first): the §16.2 declared-absent `bench` command landed — the §14 model pipeline (`discover` → `config` → `history` → `plan`) timed per pass over the current repo's real shape, one untimed warmup before the timed passes (the §14.1 no-op-warm model; `--no-cache` = the cold measurement, the posture reported either way), the stage names riding the `--profile` trace's span vocabulary through the new read-only `Profiler::recorded_spans()` accessor, the nearest-rank percentiles the §14.1 budget table speaks; the aggregation is pure data on the lib target (`halyard_cli::bench` — the man renderer's rationale: bench harness and bin share one implementation) + `bench_report` criterion bench (8/200 passes); a measurement never a gate — the §14.1 budgets stay shape-bound to the xtask fixtures and the render says so; `E-CLI-BENCH` (zero-iteration refusal) + page + index row; 5 CLI gates + 5 module tests; the man bench's mirror tree repaired to the real 20-command count (it had drifted by one, missing `action`) | The M5.4 provenance/SLSA (live-CI lane), the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
+| Drone environment adapter (ADR-0045) + the §12 `release` mode (ADR-0046) | done | (tree left dirty; no commits) | M1: `DroneSelector` (`affected --ci drone`) — one step-scoped `environment:` fragment per affected package (docs.drone.io VERIFIED 2026-11-17: "Drone provides the ability to define environment variables scoped to individual build steps", the documented per-step mapping; "the environment section cannot expand environment variables or evaluate shell expressions" — the bare-word `HALYARD_PKG` value rides verbatim; steps are "executed sequentially by default" and the `depends_on` DAG — "you must configure dependencies for all pipeline steps" — is the consumer's policy), lookup entry + CLI value-enum variant + flag doc, the refused-unknown pin moved `drone` → `travis` (the contract-test loop names twelve systems), `affected_ci` example row + `ci_selector_drone_40chain` bench (≈82 ns, the 40-package chain) + research-note section + ADR-0045 + README/CLI-README/arch rows. M2 (M1 green end-to-end first): the §12 `release` mode (ADR-0046) — `cmd_release` extracted into the shared `run_release_pass` (one plan + one reconciliation feeding the tag phase, the §11.2 push, the forge half; the forge half's internal re-plan/re-reconcile deleted), `ReleasePass`/`ForgePosture` plain-data view (the created tags in the tag phase's name-sorted order I3, the minted URLs by tag, the skip's reason verbatim, `released` honest — a dry forecast stays false, I5), `release_outputs`/`release_summary` renderers (the plan vocabulary minus the PR keys — the release mode opens no Release PR), `ActionMode::Release` + `cmd_action_release` wired (`--dry` forecasts over the preview writer/pusher), `release` reports byte-identical (the `cli_release` suite pins them); 3 action contract tests + 3 CLI gates (red→green on record: E0432 on the missing API + `invalid value 'release'`; the red phase corrected two test fixtures, not the design — the fully-tagged shape forecasts zero creations honestly, the ahead-of-tags shape names the would-create tag), bench `release_outputs`/`release_summary_40_releases` (≈45 µs outputs), example `release_forecast`; `--dry` flag doc now names both modes. Micro-debt cleaned (additive, not milestone substitutes): the bench aggregation's `unreachable!` panic surface replaced with the fail-closed `E-CLI-BENCH` taxonomy error (the guarantee lives in the error, not a panic) and `commit_typo_message`'s `unreachable!` guard deleted — the typo parts ride in from the caller's own map-first match (no re-match, no panic surface) | The §12 `auto` mode (the trigger-policy composition, its own ADR), M5.4 provenance/SLSA (VERIFY first), the M2.6 dhat re-audit, the corpus-wide pnpm differential (no pnpm in the sandbox), the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
+
 
 ### 2026-11-16 — §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) (tree left dirty, no commits)
 
@@ -2747,5 +2749,88 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   made).
 - **Next session start point.** (1) the §12 `release` mode (the
   natural reuse: its plan rows always match its minted tags), (2) M5.4:
+  provenance/SLSA for halyard's own release artifacts (VERIFY first),
+  (3) the M2.6 dhat re-audit with the cache warm.
+
+### 2026-11-17 — Drone environment adapter (ADR-0045) + the §12 `release` mode (ADR-0046) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `b3a8df4` (the
+  bitbucket + bench session): fresh stable toolchain 1.100.0, the
+  full gate battery green at base. The survey classified the tree:
+  zero `todo!`/`unimplemented!`/`#[allow]` anywhere; all 18 library
+  crates carry consumer examples; the command surface is the twenty
+  wired commands (README's list exact); the §16.2 table's declared
+  gaps are the two §12 modes (`auto|release`) and M5.4. The refused-
+  unknown pin sat at `drone` ("the recorded CI surface ADR-0034→0041
+  is complete"), the research note carried no Drone section, and the
+  root README's affected sentence cited ADRs only through 0038 while
+  already naming the buildkite/jenkins/bitbucket grammars (drift).
+  Feature surface: `miri`/`loom` machine-enforced exclusive
+  (`ci-bundle` is the conflict-free gate spelling); no bench requires
+  nightly. Micro-debt candidates found: two `unreachable!` panic
+  surfaces in production paths (the bench aggregation's shape and the
+  commit-typo diagnosis guard) — the class the M4.7 session replaced
+  with map-first builds.
+- **M1 implemented (no stubs), one full red→green cycle.** The red
+  was the missing adapter itself (4 `ci_selector` failures on the
+  unknown lookup name + 1 CLI gate on `invalid value 'drone'`),
+  captured on both suites before any implementation. The green landed
+  the ADR-0045 design: the grammar VERIFIED live (the three
+  docs.drone.io pages, quotes in the research note) — the per-step
+  `environment` mapping is a documented first-class mechanism
+  (unlike Bitbucket's `pipe`-only `variables`), so the render is one
+  step-scoped fragment per affected package rather than a script-line
+  assignment; a full step entry was rejected (it would guess the
+  consumer's `image`/`commands` and invent step names). One test-side
+  correction during green: none needed — the fragment shape landed
+  first try. The refused-unknown pin moved `drone` → `travis`
+  (verified unrecorded and unpinned anywhere else).
+- **M2 implemented (M1 green end-to-end first), one red→green cycle.**
+  The red was the missing mode (E0432 on the unresolved
+  `ForgePosture`/`ReleasePass`/`release_outputs`/`release_summary`
+  imports + both CLI gates on `invalid value 'release'`). The green
+  landed ADR-0046. Two test-side corrections during green (the red
+  phase corrected the tests, not the design): the action fixture's
+  `created_tags` carried the plan's row order instead of the tag
+  phase's name-sorted order (I3), and the CLI forecast fixture was
+  the fully-tagged two-package shape — where the §11.1 reconciliation
+  honestly forecasts zero creations; the manifest-ahead shape is the
+  fixture with a would-create tag, and the fully-tagged shape became
+  its own no-creation gate. The extraction also deleted the forge
+  half's internal re-plan/re-reconcile (one plan, one reconciliation
+  feeds every half); `halyard release` reports stayed byte-identical.
+- **Tests/bench/example totals.** M1: 2 adapter contract tests + the
+  widened empty-selection loop + the twelve-system lookup pin (24
+  `ci_selector` tests green) + 1 CLI end-to-end gate + bench
+  `ci_selector_drone_40chain` (≈82 ns) + the example row. M2: 3
+  action contract tests (20 green) + 3 CLI gates (15 green, one new
+  no-creation gate) + benches `release_outputs`/`release_summary_40_
+  releases` (≈45 µs outputs) + example `release_forecast`. Micro-debt:
+  the two panic surfaces converted (the fail-closed `E-CLI-BENCH`
+  error; the typo diagnosis taking the caller's matched parts), the
+  `cli_check`/`cli_bench` suites green after the refactor.
+- **Docs.** ADR-0045 + ADR-0046; the research note's Drone section
+  (verbatim quotes) + the header's fetch record; root README (the
+  affected sentence's ADR citation now runs through 0045 — the drift
+  fixed — plus the drone grammar and the release-mode status rows,
+  the crate row, the example list); CLI README (the adapters section,
+  the command row, the example list); arch §16.2 (the affected row's
+  ADR list, the §12 release-mode as-built note, `auto` the only
+  declared-absent §12 mode); PROGRESS.md row. No new error code —
+  the release mode rides the existing taxonomy (`E-GIT-TAG*`,
+  `E-GIT-PUSH`, `E-FORGE-*`, `E-ACTION-*`), the bench shape refusal
+  rides the existing `E-CLI-BENCH`.
+- **Honest state at cut-off.** The §12 modes render
+  `plan|pr|check|release`; `auto` is the only declared-absent §12
+  mode (its trigger-policy composition is its own ADR). The release
+  mode's live path is wired through the same fail-closed orderings
+  the `release` command applies and is covered by the dry gates +
+  the report byte-stability pins; a real-forge live pass stays the
+  nightly forge-smoke lane's probe, by design. Bench numbers are the
+  sandbox's (debuginfo off, LTO off for the bench profile — disk
+  pressure); the budgets stay shape-bound to the xtask fixtures, so
+  no budget claim rides on them. Tree left dirty (no commits made).
+- **Next session start point.** (1) the §12 `auto` mode (the
+  composition policy over the two shipped executors), (2) M5.4:
   provenance/SLSA for halyard's own release artifacts (VERIFY first),
   (3) the M2.6 dhat re-audit with the cache warm.
