@@ -3,10 +3,13 @@
 //! own grammars — the `--filter` dependent filters (Turborepo), the
 //! `run-many --projects` list (Nx), the `rdeps` query (Bazel), the
 //! matrix-output JSON array (GitHub Actions), the `parallel:matrix`
-//! hashes (GitLab) and the `task.setvariable` logging command (Azure
-//! Pipelines). Grammars VERIFIED per §0.4, fetched quotes in
-//! `docs/research/ci-selector-grammars.md`. Written first (red on the
-//! unresolved `halyard_core` API), implemented second.
+//! hashes (GitLab), the `task.setvariable` logging command (Azure
+//! Pipelines), the `param(...)` matrix line (`TeamCity`), the
+//! dynamic-config `parameters` line (`CircleCI`), the `matrix.setup`
+//! dimension block (`Buildkite`) and the `axis` directive block
+//! (`Jenkins`). Grammars VERIFIED per §0.4, fetched
+//! quotes in `docs/research/ci-selector-grammars.md`. Written first
+//! (red on the unresolved `halyard_core` API), implemented second.
 
 use halyard_core::ci_selector::{CiSelectorAdapter, SelectedPackage, ci_selector_adapter};
 
@@ -99,7 +102,16 @@ fn an_empty_selection_renders_nothing() {
     // CI step skips itself (the CLI prints nothing, exit 0, the
     // existing empty-selection contract).
     for system in [
-        "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci",
+        "turbo",
+        "nx",
+        "bazel",
+        "gha",
+        "gitlab",
+        "azure",
+        "teamcity",
+        "circleci",
+        "buildkite",
+        "jenkins",
     ] {
         let adapter = ci_selector_adapter(system).expect("known adapter");
         assert!(
@@ -287,9 +299,130 @@ fn circleci_renders_one_line_for_many_packages() {
 }
 
 #[test]
-fn the_adapter_lookup_names_eight_systems_and_refuses_the_rest() {
+fn buildkite_renders_the_matrix_dimension_over_the_affected_closure() {
+    // buildkite.com/docs (VERIFIED 2026-11-17): build matrices "expand a
+    // step template and array of matrix elements into multiple jobs" —
+    // the documented multi-dimension shape carries `matrix: setup:` with
+    // dimension keys mapping to lists of values, interpolated as
+    // `{{matrix.<key>}}`. Buildkite computes no dependency closure of
+    // its own, so the `halyard_pkg` dimension encodes the **full
+    // affected closure**, name-sorted (the docs' own lower-snake
+    // dimension spelling — `arch`, `os`, `test` — so the identifier
+    // cannot collide with the pipeline's own dimensions); the consumer
+    // pastes the block under a step and interpolates
+    // `{{ matrix.halyard_pkg }}` per cell.
+    let (changed, affected) = lib_app();
+    let adapter = ci_selector_adapter("buildkite").expect("buildkite is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "matrix:".to_owned(),
+            "  setup:".to_owned(),
+            "    halyard_pkg:".to_owned(),
+            "      - \"app\"".to_owned(),
+            "      - \"lib\"".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn buildkite_renders_one_matrix_element_per_affected_package() {
+    // One quoted-string element per affected package (the documented
+    // shape: every example's values are quoted strings); the block
+    // stays paste-ready modulo the step's own indentation. The docs
+    // cap a dimension at 25 elements — the consumer's policy, not the
+    // adapter's (the render stays the grammar, never the guard).
+    let changed = vec![pkg("lib", "crates/lib")];
+    let affected = vec![
+        pkg("app", "crates/app"),
+        pkg("cli", "crates/cli"),
+        pkg("lib", "crates/lib"),
+    ];
+    let adapter = ci_selector_adapter("buildkite").expect("buildkite is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "matrix:".to_owned(),
+            "  setup:".to_owned(),
+            "    halyard_pkg:".to_owned(),
+            "      - \"app\"".to_owned(),
+            "      - \"cli\"".to_owned(),
+            "      - \"lib\"".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn jenkins_renders_the_axis_block_over_the_affected_closure() {
+    // jenkins.io/doc/book/pipeline/syntax (VERIFIED 2026-11-17): the
+    // declarative `matrix` section defines "a multi-dimensional matrix
+    // of name-value combinations to be run in parallel" ("cells"); the
+    // `axes` section "specifies one or more `axis` directives" and
+    // "Each `axis` consists of a `name` and a list of `values`" (the
+    // documented one-axis example is `values 'linux', 'mac',
+    // 'windows'`), and the declarative grammar's own rules say "No
+    // semicolons as statement separators. Each statement has to be on
+    // its own line." Jenkins computes no dependency closure of its own,
+    // so the axis encodes the **full affected closure**, name-sorted;
+    // the consumer pastes the block inside its `matrix { axes { … } }`
+    // and each cell reads `$HALYARD_PKG` (the ADR-0035 identifier
+    // policy, spelled upper-snake like the docs' own `PLATFORM` /
+    // `BROWSER` axis names).
+    let (changed, affected) = lib_app();
+    let adapter = ci_selector_adapter("jenkins").expect("jenkins is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "axis {".to_owned(),
+            "    name 'HALYARD_PKG'".to_owned(),
+            "    values 'app', 'lib'".to_owned(),
+            "}".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn jenkins_renders_one_axis_value_per_affected_package() {
+    // One `values` statement listing every affected package (the
+    // documented comma-separated single-quoted grammar); the block
+    // stays paste-ready modulo the `axes` block's own indentation. The
+    // declarative "no semicolons" rule keeps each statement on its own
+    // line — the render never joins them.
+    let changed = vec![pkg("lib", "crates/lib")];
+    let affected = vec![
+        pkg("app", "crates/app"),
+        pkg("cli", "crates/cli"),
+        pkg("lib", "crates/lib"),
+    ];
+    let adapter = ci_selector_adapter("jenkins").expect("jenkins is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "axis {".to_owned(),
+            "    name 'HALYARD_PKG'".to_owned(),
+            "    values 'app', 'cli', 'lib'".to_owned(),
+            "}".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn the_adapter_lookup_names_ten_systems_and_refuses_the_rest() {
     let systems: Vec<&'static str> = [
-        "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci",
+        "turbo",
+        "nx",
+        "bazel",
+        "gha",
+        "gitlab",
+        "azure",
+        "teamcity",
+        "circleci",
+        "buildkite",
+        "jenkins",
     ]
     .iter()
     .filter_map(|system| ci_selector_adapter(system).map(CiSelectorAdapter::system))
@@ -297,11 +430,20 @@ fn the_adapter_lookup_names_eight_systems_and_refuses_the_rest() {
     assert_eq!(
         systems,
         vec![
-            "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci"
+            "turbo",
+            "nx",
+            "bazel",
+            "gha",
+            "gitlab",
+            "azure",
+            "teamcity",
+            "circleci",
+            "buildkite",
+            "jenkins"
         ]
     );
     assert!(
-        ci_selector_adapter("buildkite").is_none(),
+        ci_selector_adapter("bitbucket").is_none(),
         "an unknown system is None — the adapter surface is closed, extending one is an ADR"
     );
 }
