@@ -296,12 +296,13 @@ halyard/
 ├─ bench/  corpus/  fuzz/  docs/{adr,research,errors}/
 ```
 
-*(As-built note, 2026-11: the 18-member workspace is exactly this list
-minus the two planned-but-unbuilt slots — `halyard-action` (the §12
-action glue) and `halyard-plugin-host` (Year 2) land with their
-milestones and are absent rather than stubbed; `docs/` carries `adr/`,
+*(As-built note, 2026-11: the 19-member workspace is exactly this list
+minus the one remaining planned-but-unbuilt slot — `halyard-plugin-host`
+(Year 2) lands with its milestone and is absent rather than stubbed;
+`halyard-action` (the §12 action-output seam, ADR-0037) joined in its
+session; `docs/` carries `adr/`,
 `research/` and `errors/` — no `spec/` — and the `action/` directory
-lands with the action.)*
+lands with the composite distribution (M5.4's own-artifact slice).)*
 ```
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
@@ -617,6 +618,34 @@ Squash-merge repos get the bump from the **PR title**. `halyard check --pr-title
     run: ./build-docker.sh
   ```
 
+*(As-built note, 2026-11 (ADR-0037): the outputs contract ships as the
+`halyard-action` crate — the §12 outputs vocabulary over the injected
+`ActionWriter` (`set_output` / `append_summary` / `emit_warning`): the
+real `GithubActionsWriter` rides the `GITHUB_OUTPUT` env file (the
+documented `{name}={value}` line and the documented
+`{name}<<{delimiter}` heredoc for multi-line values, fixed `HALYARD`
+delimiter, values that cannot ride verbatim refuse `E-ACTION-OUTPUT`
+— never rewritten) and the `GITHUB_STEP_SUMMARY` env file (the §12 job
+summary, the runner's automatic-newline append semantics honored), and
+the `PreviewActionWriter` records the ordered call log (the
+`MemoryForge` convention) so local runs observe exactly what a real
+step would receive — `from_env()` is honestly `None` outside a
+workflow step. The §12 `plan` mode lands as `halyard action [--mode
+plan] [--plan-out PATH]`: plan → the canonical plan file (the
+`plan_json` pointer's target, `E-ACTION-PLAN` on an unwritable path) →
+the outputs (`released`/`published` honestly `false`, `releases_json`
+with the url empty until a forge mode fills it, the per-package
+`--version`/`--tag` keys, `paths_released` = the distinct edit sites
+sorted and deduplicated) → the job summary (the release table, the
+honest counts, the walk's own work counters standing in for the timing
+breakdown — wall-clock would break I3). The degraded-mode annotation
+wires to the walk's own `HistoryStats::degraded` marker (`::warning::`,
+never a guess). The composite distribution (binary download, checksum +
+attestation) stays with M5.4's own-artifact slice, and the remaining
+§12 modes (`auto|pr|release|check`) land with their executors — absent
+rather than stubbed; VERIFIED quotes in
+`docs/research/github-actions-outputs.md`.)*
+
 ---
 
 ## 13. Publish engine (`halyard-publish`)
@@ -762,14 +791,14 @@ Global flags: `--format human|json|gha`, `--color`, `-C <dir>`, `--config`, `--o
 
 *(As-built note, 2026-11: the wired commands are `plan`, `apply [--dry]`, `pr [--dry | live]`, `release [--dry | live] [--no-push]`, `fetch` (§8.8), `publish [--dry | live]` (M5.2: the §13 engine — verified-plan layers, registry resume, the visibility wait, the verified-argv tool spawn; ADR-0018), `explain`, `check`, `status`, `graph`, `doctor`, `schema`, `completions`, `forge-smoke`, `migrate` (M4.7, ADR-0022 + ADR-0023 + ADR-0024 — the
 release-please/changesets/knope/release-plz configs are surveyed into
-mapped rows, semantic differences and a validated draft `halyard.toml`; `--write` lands the reviewed draft at `halyard.toml` through the injected `DraftSink` — atomic, create-only, a refusal when the target exists or two tools are configured) — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; and `init` (ADR-0029, §16.1: discovery surveys the repo, the engine plans the create-only zero-config scaffold — the documented `halyard.toml` skeleton whose commented defaults load as the built-in defaults exactly, plus the one-file release workflow with `--github`; refusals carry `E-CFG-INIT` and never leave a half-scaffold); `check --commits` (M2: the §16.2 row's commits half — the pending history's own subjects through the same title machinery, the typo gate refusing `E-CLI-COMMIT`) landed with its session; `affected [--base <ref>] [--ci SYSTEM]` (ADR-0032, §16.3/M10 step 1: the CI selector — the pending-commit attribution closed over the workspace's reverse dependency edges, dev edges included, `--base` walking one explicit ref instead of the release bases with `E-GIT-REF` fail-closed on an unresolvable one); and `man [<command>]` (§16.2 shell integration: the `halyard(1)` page and one page per subcommand, roff, derived from the clap definition itself — the completions renderer's single-source-of-truth rule — pages byte-stable I3, printed to stdout); `bench` and the `action` glue land with their milestones and are absent rather than stubbed — see `crates/halyard-cli/README.md`.)*
+mapped rows, semantic differences and a validated draft `halyard.toml`; `--write` lands the reviewed draft at `halyard.toml` through the injected `DraftSink` — atomic, create-only, a refusal when the target exists or two tools are configured) — the live `pr`/`release` modes run the §11.1 machine over the M4.1b GitHub REST adapter, the release live mode writes tags and pushes (ADR-0012) and creates forge releases when credentials allow; and `init` (ADR-0029, §16.1: discovery surveys the repo, the engine plans the create-only zero-config scaffold — the documented `halyard.toml` skeleton whose commented defaults load as the built-in defaults exactly, plus the one-file release workflow with `--github`; refusals carry `E-CFG-INIT` and never leave a half-scaffold); `check --commits` (M2: the §16.2 row's commits half — the pending history's own subjects through the same title machinery, the typo gate refusing `E-CLI-COMMIT`) landed with its session; `affected [--base <ref>] [--ci SYSTEM]` (ADR-0032, §16.3/M10 step 1: the CI selector — the pending-commit attribution closed over the workspace's reverse dependency edges, dev edges included, `--base` walking one explicit ref instead of the release bases with `E-GIT-REF` fail-closed on an unresolvable one); and `man [<command>]` (§16.2 shell integration: the `halyard(1)` page and one page per subcommand, roff, derived from the clap definition itself — the completions renderer's single-source-of-truth rule — pages byte-stable I3, printed to stdout); `bench` lands with its milestone and is absent rather than stubbed; and `action` (§12 step 1, ADR-0037: the plan-mode forecast — plan → the canonical plan file → the §12 outputs (`released`/`published` honestly `false`, `releases_json`, the per-package `--version`/`--tag` keys, `paths_released`) and the §12 job summary through the action-output seam, the env-file sinks inside a workflow step, the preview call log outside, `--plan-out` naming the plan file) joined in its session — see `crates/halyard-cli/README.md`.)*
 
 ### 16.3 DX principles
 - Errors teach: every error includes *what we looked at*, *what we expected*, *the exact fix*.
 - Output is skimmable (aligned tables, color with `NO_COLOR` support) and machine-readable (`--format json` stable).
 - `halyard plan` always shows **what was ignored and why** (`docs:`, `chore:`, outside include paths) behind `-v`.
 - First-class monorepo ergonomics: `--package`, `--since`, `--changed` selectors.
-  *(As-built note, 2026-11 (ADR-0032): the `--changed` selector ships as the `affected` command — `halyard_core::affected` closes the pending-commit attribution (`changed_from_digest`) over the workspace's reverse dependency edges (`affected_selection`, dev edges included, the nearest affected ancestor as `via`), and `--base` selects against an explicit ref through the git engine's `base_override` walk option; `--package` exists on `plan`, `--since` stays open with its milestone. The CI adapters (M10 step 2, ADR-0034 + the matrix-jobs adapters of ADR-0035 + the azure/teamcity adapters of ADR-0036) render the selection in the CI systems' own grammars — `affected --ci turbo|nx|bazel|gha|gitlab|azure|teamcity` (Turborepo's `--filter=...pkg` dependent filters, Nx's `run-many --projects=` list, Bazel's `rdeps(//…)` query over the recursive patterns, GitHub Actions' matrix-output value — the affected closure as one compact JSON array fed to `fromJSON` inside the downstream `strategy.matrix` — GitLab's `parallel:matrix` hashes, one `- HALYARD_PKG: <name>` line per affected package, Azure Pipelines' `##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]` output variable — the closure comma-joined, consumed with the documented `split` + `${{ each }}` shape — and TeamCity's Matrix Build `param("env.HALYARD_PKG", listOf(value(…), …))` line; VERIFIED quotes in `docs/research/ci-selector-grammars.md`) — the closed `CiSelectorAdapter` seam in `halyard_core::ci_selector`, an empty selection rendering nothing; the closure-vs-roots split follows the consuming system (turbo/bazel compute dependencies themselves and take the change roots; nx/gha/gitlab/azure/teamcity compute nothing and take the full closure).)*
+  *(As-built note, 2026-11 (ADR-0032): the `--changed` selector ships as the `affected` command — `halyard_core::affected` closes the pending-commit attribution (`changed_from_digest`) over the workspace's reverse dependency edges (`affected_selection`, dev edges included, the nearest affected ancestor as `via`), and `--base` selects against an explicit ref through the git engine's `base_override` walk option; `--package` exists on `plan`, `--since` stays open with its milestone. The CI adapters (M10 step 2, ADR-0034 + the matrix-jobs adapters of ADR-0035 + the azure/teamcity adapters of ADR-0036, the circleci adapter of ADR-0038) render the selection in the CI systems' own grammars — `affected --ci turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci` (Turborepo's `--filter=...pkg` dependent filters, Nx's `run-many --projects=` list, Bazel's `rdeps(//…)` query over the recursive patterns, GitHub Actions' matrix-output value — the affected closure as one compact JSON array fed to `fromJSON` inside the downstream `strategy.matrix` — GitLab's `parallel:matrix` hashes, one `- HALYARD_PKG: <name>` line per affected package, Azure Pipelines' `##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]` output variable — the closure comma-joined, consumed with the documented `split` + `${{ each }}` shape — and TeamCity's Matrix Build `param("env.HALYARD_PKG", listOf(value(…), …))` line, CircleCI's dynamic-config continuation `parameters: '{ "halyard_pkgs": [...] }'` line — the documented continuation-orb `parameters` value (a JSON object as a string, pasted into the setup workflow and declared as a pipeline parameter in the continuation config); VERIFIED quotes in `docs/research/ci-selector-grammars.md`) — the closed `CiSelectorAdapter` seam in `halyard_core::ci_selector`, an empty selection rendering nothing; the closure-vs-roots split follows the consuming system (turbo/bazel compute dependencies themselves and take the change roots; nx/gha/gitlab/azure/teamcity compute nothing and take the full closure).)*
 - Editor integration (Year 2): JSON Schema for `halyard.toml` published to SchemaStore, VS Code extension showing the live plan, LSP for PR title lint.
 
 ### 16.4 Configuration (`halyard.toml`, everything optional)
