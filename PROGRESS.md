@@ -2419,3 +2419,100 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   halyard's own release artifacts (VERIFY first), (2) the corpus-wide
   pnpm differential as an xtask subcommand, (3) the M2.6 dhat
   re-audit with the cache warm.
+
+### 2026-11-17 — the buildkite + jenkins CI adapters (ADR-0039 + ADR-0040, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `2c715c4` (the
+  action-seam + circleci-adapter session). Baseline
+  `cargo check --workspace --all-targets --features ci-bundle --locked`
+  exit 0 before any edit. The declared next work (the ADR-0038
+  consequence) was the seam's own "more adapters" extension — the two
+  remaining recorded systems, Buildkite and Jenkins. The other recorded
+  start points stay open for their own sessions: M5.4 provenance/SLSA
+  (VERIFY research + external tooling), the corpus-wide pnpm
+  differential (sandbox lacks pnpm, as recorded), the M2.6 dhat
+  re-audit (profiling, not a capability). Survey notes: the lint
+  surface stays structurally clean (zero `todo!`/`unimplemented!`/
+  `#[allow]` anywhere; the miri/loom exclusion machine-enforced per
+  ADR-0030; no bench or test requires nightly); benches registered 1:1
+  with files across all crates; the errors taxonomy exact (73 codes ↔
+  76 pages, one retired); every non-xtask crate carries consumer
+  examples.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing API itself, captured on both suites before any
+  implementation: `ci_selector.rs` contract tests 4 failed / 14 passed
+  (`buildkite_renders_the_matrix_dimension_over_the_affected_closure`
+  + the many-packages variant panicking "buildkite is a known adapter",
+  the empty-selection loop, the lookup 8→9 assertion), the CLI gate
+  failing on `error: invalid value 'buildkite' for '--ci <SYSTEM>'`
+  (the value enum refuses before the lookup, exactly as designed). The
+  green landed **ADR-0039, the Buildkite adapter (`affected --ci
+  buildkite`)** — one paste-ready `matrix: setup: halyard_pkg:` block
+  over the affected closure, name-sorted, one quoted-string element per
+  package (buildkite.com/docs VERIFIED 2026-11-17: matrices "expand a
+  step template and array of matrix elements into multiple jobs";
+  dimension keys map to lists of values interpolated as
+  `{{matrix.<key>}}`; the documented 25-elements-per-dimension and
+  50-jobs caps are the consumer's policy — the adapter renders the
+  grammar, never the guard). The lookup, the trait/lookup/module docs,
+  the CLI value enum + flag doc, the bench
+  (`ci_selector_buildkite_40chain` ≈132 ns) and the `affected_ci`
+  example all moved one row over; the refused-unknown pin moved
+  `buildkite` → `jenkins` (the ADR-0036→0038 trail).
+- **M2 implemented (M1 green end-to-end first: 18/18 core, 11/11 CLI,
+  bench + example verified), red→green.** The red: 4 core failures +
+  the CLI gate's `invalid value 'jenkins'`. The green landed **ADR-0040,
+  the Jenkins adapter (`affected --ci jenkins`)** — one paste-ready
+  declarative `axis { name 'HALYARD_PKG' values 'app', 'lib' }` block
+  over the affected closure, name-sorted (jenkins.io/doc/book/
+  pipeline/syntax VERIFIED 2026-11-17: the `matrix` section defines "a
+  multi-dimensional matrix of name-value combinations to be run in
+  parallel" ("cells"); "Each `axis` consists of a `name` and a list of
+  `values`"; and the grammar's own rule "No semicolons as statement
+  separators. Each statement has to be on its own line." pins the
+  one-statement-per-line render shape). The pin moved `jenkins` →
+  `bitbucket` (the next unrendered recorded system; its grammar VERIFY
+  precedes any adapter); the contract loop names ten systems.
+- **Tests/bench/example totals.** +4 core contract tests (buildkite
+  block + many-packages, jenkins block + many-packages), the
+  empty-selection loop extended to ten systems, the lookup pins flipped
+  twice on record (buildkite refused → jenkins refused → bitbucket
+  refused); +2 CLI e2e gates (`affected_ci_buildkite_renders_the_
+  matrix_dimension_block`, `affected_ci_jenkins_renders_the_axis_block`)
+  — 20/20 core + 17/17 `cli_affected` green; benches
+  `ci_selector_buildkite_40chain` (≈132 ns) + `ci_selector_jenkins_
+  40chain` (≈182 ns) registered over the same 40-package chain shape;
+  example `affected_ci` prints all ten adapters.
+- **Docs drift fixed / micro-debt cleaned (additive, not milestone
+  substitutes).** Drift: the `CiSelectorAdapter::system()` doc and the
+  module doc's flag spelling (both omitted `circleci` after ADR-0038
+  landed), the `affected_ci` bench's stale "seven adapters" header, arch
+  §16.2 `affected` row (ADR-0038/0039/0040 added) and §16.3 as-built
+  note (buildkite + jenkins rows, the closure-vs-roots list extended),
+  CLI README status row (the `--ci` grammar list stopped at teamcity) +
+  adapters section + example commands, root README status row (the CI
+  enumeration stopped at circleci), root README Layout CLI command list
+  (the shipped `action` command was missing), root README status
+  paragraph (the shipped OIDC trusted publishing of ADR-0031 and the
+  npm publish-options row of ADR-0033 had zero mentions), the
+  `E-CFG-TOML` and `E-TEST-FIXTURE` error pages gained their "Raised
+  by" producer lines (the page-format invariant the other 74 pages
+  follow). Micro-debt: three zero-caller public items removed —
+  `FixedHistory::digest_mut` (its doc claimed a test-fixture consumer
+  that never existed), `halyard_core::edit::slice_span` (its doc
+  claimed it was "shared by adapter implementations"; no adapter calls
+  it), `halyard_core::discover::ResolvedDep` (constructed and consumed
+  by nothing, not even re-exported) — and one weak error repaired: the
+  `HALYARD_APP_INSTALLATION_ID` parse failure now carries the offending
+  value (`got {raw:?}`), the file's own house standard one screen down
+  (the `map_err(|_|)` dropped it).
+- **Honest state at cut-off.** The adapters render only — no CI system
+  is executed by halyard (I5 — the consumers wire the lines into their
+  own pipelines). Buildkite's documented 25-element/50-job caps and
+  Jenkins' declarative-plugin availability are consumer-side concerns,
+  recorded in the ADRs. The lookup stays closed: `bitbucket` is the
+  contract tests' refused unknown. Tree left dirty (no commits made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for
+  halyard's own release artifacts (VERIFY first), (2) the corpus-wide
+  pnpm differential as an xtask subcommand, (3) the M2.6 dhat re-audit
+  with the cache warm.
