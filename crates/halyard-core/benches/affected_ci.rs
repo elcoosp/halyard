@@ -1,6 +1,7 @@
-//! The CI-selector adapters' render cost (§16.3/M10 step 2, ADR-0034).
+//! The CI-selector adapters' render cost (§16.3/M10 step 2, ADR-0034
+//! + the ADR-0035/0036 adapters).
 //!
-//! Measures the three adapters over the affected bench's shape (the
+//! Measures the seven adapters over the affected bench's shape (the
 //! 40-package chain): the render must stay free — it runs on every CI
 //! step, and a nanosecond-scale projection must never become the step's
 //! cost.
@@ -109,6 +110,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     let Some(gitlab) = ci_selector_adapter("gitlab") else {
         return;
     };
+    let Some(azure) = ci_selector_adapter("azure") else {
+        return;
+    };
+    let Some(teamcity) = ci_selector_adapter("teamcity") else {
+        return;
+    };
     let mut group = c.benchmark_group("core");
     group.bench_function("ci_selector_turbo_40chain", |b| {
         b.iter(|| black_box(turbo.render(black_box(&changed), black_box(&affected))));
@@ -124,6 +131,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     });
     group.bench_function("ci_selector_gitlab_40chain", |b| {
         b.iter(|| black_box(gitlab.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_azure_40chain", |b| {
+        b.iter(|| black_box(azure.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_teamcity_40chain", |b| {
+        b.iter(|| black_box(teamcity.render(black_box(&changed), black_box(&affected))));
     });
     group.finish();
 }
