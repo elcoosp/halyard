@@ -1,7 +1,7 @@
 //! The CI-selector adapters' render cost (§16.3/M10 step 2, ADR-0034
-//! + the ADR-0035/0036 adapters).
+//! + the ADR-0035/0036/0038/0039/0040 adapters).
 //!
-//! Measures the seven adapters over the affected bench's shape (the
+//! Measures the ten adapters over the affected bench's shape (the
 //! 40-package chain): the render must stay free — it runs on every CI
 //! step, and a nanosecond-scale projection must never become the step's
 //! cost.
@@ -119,6 +119,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     let Some(circleci) = ci_selector_adapter("circleci") else {
         return;
     };
+    let Some(buildkite) = ci_selector_adapter("buildkite") else {
+        return;
+    };
+    let Some(jenkins) = ci_selector_adapter("jenkins") else {
+        return;
+    };
     let mut group = c.benchmark_group("core");
     group.bench_function("ci_selector_turbo_40chain", |b| {
         b.iter(|| black_box(turbo.render(black_box(&changed), black_box(&affected))));
@@ -143,6 +149,12 @@ fn bench_affected_ci(c: &mut Criterion) {
     });
     group.bench_function("ci_selector_circleci_40chain", |b| {
         b.iter(|| black_box(circleci.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_buildkite_40chain", |b| {
+        b.iter(|| black_box(buildkite.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_jenkins_40chain", |b| {
+        b.iter(|| black_box(jenkins.render(black_box(&changed), black_box(&affected))));
     });
     group.finish();
 }
