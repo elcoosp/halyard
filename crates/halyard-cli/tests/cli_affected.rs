@@ -422,3 +422,27 @@ fn affected_ci_jenkins_renders_the_axis_block() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_bitbucket_renders_the_parallel_steps_block() -> Result<(), BoxError> {
+    // support.atlassian.com/bitbucket-cloud (VERIFIED 2026-11-17):
+    // "Parallel steps allow you to group pipeline steps that can run at
+    // the same time (concurrently) to reduce build time" — the required
+    // `steps:` property carries the step list and each step's script
+    // differs literally (the docs' own `--batch 1` / `--batch 2`
+    // example). One paste-ready `parallel:` block over the affected
+    // closure; the consumer pastes it at pipeline level and appends its
+    // own tool invocation after the `HALYARD_PKG` assignment.
+    let fx = two_package_fixture("cli-affected-ci-bitbucket")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "bitbucket"])?;
+    assert!(ok, "the bitbucket adapter renders: {text}");
+    assert!(
+        text.contains(
+            "parallel:\n  steps:\n    - step:\n        script:\n          - export HALYARD_PKG=app"
+        ),
+        "the affected closure as the parallel-steps block: {text}"
+    );
+    Ok(())
+}
