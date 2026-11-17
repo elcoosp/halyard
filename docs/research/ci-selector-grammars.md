@@ -1,6 +1,7 @@
 # Research: CI selector grammars (VERIFY, M10 step 2)
 
-**Checked:** 2026-11-16 · Sources fetched live per §0.4.
+**Checked:** 2026-11-16 · Sources fetched live per §0.4 (the Azure
+Pipelines and TeamCity sections fetched 2026-11-17 for ADR-0036).
 
 ## Turborepo — <https://turborepo.dev/docs/crafting-your-repository/running-tasks>
 
@@ -57,6 +58,58 @@
   script (`environment: $PROVIDER/$STACK`) — a one-dimensional matrix
   is one hash per instance.
 
+## Azure Pipelines — <https://learn.microsoft.com/en-us/azure/devops/pipelines/scripts/logging-commands> + <https://learn.microsoft.com/en-us/azure/devops/pipelines/process/expressions>
+
+- The emission command (Logging commands, "SetVariable", VERIFIED):
+  `##vso[task.setvariable variable=shouldrun;isOutput=true]true` —
+  "Sets a variable in the variable service of taskcontext. The first
+  task can set a variable, and following tasks are able to use the
+  variable." Properties: "`variable` = variable name (Required)",
+  "`isOutput` = boolean (Optional, defaults to false)".
+- The cross-job consumption (Expressions, "Dependencies", VERIFIED):
+  "Reference an output variable in a different job in the same stage"
+  — Syntax: `dependencies.<job-name>.outputs['<step-name>.<variable-name>']`
+  (the documented example pairs the exact same `setvariable …
+  isOutput=true` emission with the reference).
+- The comma-joined consumption (Expressions, `split`, VERIFIED):
+  "Splits a string into substrings based on the specified delimiting
+  characters" — the documented example iterates a comma-joined
+  variable with the loop keyword: `variables: environments: prod1,prod2`
+  → `- ${{ each env in split(variables.environments, ',')}}: - script:
+  ./deploy.sh --environment ${{ env }}`; the `each` keyword "loops
+  through parameters with the object type".
+- The command's escape table (Logging commands, "Special characters in
+  values", VERIFIED) escapes `;`→`%3B`, `\n`→`%0A`, `\r`→`%0D`,
+  `]`→`%5D` and `%`→`%AZP25` — none of which can appear in a cargo
+  (`[A-Za-z0-9_-]`) or npm (URL-safe) package name, so the emitted
+  value needs no escaping.
+
+## TeamCity — <https://www.jetbrains.com/help/teamcity/service-messages.html> + <https://www.jetbrains.com/help/teamcity/matrix-build.html>
+
+- The Matrix Build feature (VERIFIED): "The Matrix Build build
+  feature enables you to define a collection of builds by iterating
+  over specified parameter values and generating a build for every
+  combination." The documented sample iteration set carries an
+  `env.*` parameter (`Browser: Chrome, Safari, Firefox`,
+  `env.ShouldFail: true, false`).
+- The documented Kotlin DSL entry (VERIFIED): "add a matrix block to
+  the features block in the build type configuration", containing
+  `param(...)` entries — `param("Browser", listOf(value("Chrome"),
+  value("Firefox")))`; a value "consists of a single line of text and
+  (optionally) some parameter references".
+- The `setParameter` service message (VERIFIED, the alternative
+  considered): `##teamcity[setParameter name='ddd' value='fff']`
+  "lets a build script dynamically update build parameters of the
+  build right from a build step" — the changed parameters are
+  "available in the build steps following the modifying one" and "can
+  be used in the dependent builds via `%dep.*%` parameter
+  references". Rejected as the adapter's grammar: a per-package
+  fan-out needs build-configuration-level iteration, which the Matrix
+  Build feature owns (and the same page documents the limitation
+  "Reverse dependency parameters, reverse.dep.*, do not work
+  correctly in matrix builds" — so the fan-out is the feature's, not
+  a script's, to shape).
+
 ## Design consequences (feeds ADR-0034 + ADR-0035)
 
 - Turbo consumes **change roots** (its own dependent closure + union
@@ -65,8 +118,14 @@
   query; GitHub Actions consumes the **affected closure as the bare
   JSON array** (the matrix-output value; Actions computes nothing);
   GitLab consumes the **affected closure as one variable hash per
-  package** under `parallel: matrix:`. One seam carries name + root;
-  empty selection ⇒ empty output. The closure-vs-roots split is a
-  property of the consuming system: tools that compute dependencies
-  themselves (turbo, bazel) get the roots; tools that compute nothing
-  (nx, gha, gitlab) get the closure.
+  package** under `parallel: matrix:`. Azure Pipelines consumes the
+  **affected closure as one comma-joined output variable** (the
+  `split` + `each` consumption; Pipelines computes nothing). TeamCity
+  consumes the **affected closure as one `env.HALYARD_PKG` matrix
+  parameter** (the Matrix Build feature fans the values out; TeamCity
+  computes nothing). One seam
+  carries name + root; empty selection ⇒ empty output. The
+  closure-vs-roots split is a property of the consuming system: tools
+  that compute dependencies themselves (turbo, bazel) get the roots;
+  tools that compute nothing (nx, gha, gitlab, azure, teamcity) get
+  the closure.
