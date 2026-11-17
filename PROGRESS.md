@@ -2196,3 +2196,101 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   halyard's own release artifacts (VERIFY first), (2) the corpus-wide
   pnpm differential as an xtask subcommand, (3) the M2.6 dhat
   re-audit with the cache warm.
+
+### 2026-11-17 — the azure/teamcity CI adapters (ADR-0036, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `597777b` (the
+  matrix-jobs adapters session). Baseline gates re-run green before any
+  edit. The declared next work (the ADR-0034/0035 consequence) was the
+  seam's own "more CI systems" extension — the two remaining recorded
+  systems, Azure Pipelines and TeamCity. The other recorded start
+  points stay open for their own sessions: M5.4 provenance/SLSA
+  (VERIFY research + external tooling), the corpus-wide pnpm
+  differential (sandbox lacks pnpm, as recorded), the M2.6 dhat
+  re-audit (profiling, not a capability).
+- **M1 implemented (no stubs), one full red→green cycle** (the core
+  adapter contract tests, the empty-selection loop entry and the two
+  CLI e2e gates written first — red on the unresolved `azure` lookup
+  and `invalid value 'azure' for '--ci <SYSTEM>'`, on record — then
+  implemented in dependency order): **the Azure Pipelines adapter
+  (`affected --ci azure`, ADR-0036)** — one
+  `##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]`
+  logging command whose value is the affected closure, name-sorted and
+  comma-joined (learn.microsoft.com VERIFIED: the command "sets a
+  variable in the variable service of taskcontext"; the cross-job
+  reference is `dependencies.<job-name>.outputs['<step-name>.
+  <variable-name>']`; the documented consumption of a comma-joined
+  variable is the `split(variables.environments, ',')` + `${{ each }}`
+  example). The command's escape sequences (`;`→`%3B`, `\n`→`%0A`,
+  `\r`→`%0D`, `]`→`%5D`, `%`→`%AZP25`) never fire — neither
+  package-name grammar carries an escapable character, so the value
+  rides verbatim. `HALYARD_PKGS` is the halyard-owned identifier
+  (the ADR-0035 policy carried over).
+- **M2 implemented (M1 green end-to-end first), red→green**: **the
+  TeamCity adapter (`affected --ci teamcity`, ADR-0036)** — one
+  `param("env.HALYARD_PKG", listOf(value(…), …))` line over the
+  affected closure (jetbrains.com VERIFIED: the Matrix Build feature
+  "define a collection of builds by iterating over specified parameter
+  values and generating a build for every combination"; the documented
+  DSL entry is `param("Browser", listOf(value("Chrome"),
+  value("Firefox")))` and the documented sample iteration set carries
+  an `env.*` parameter, `env.ShouldFail: true, false`). The consumer
+  pastes the line inside its `matrix { }` block and each instance
+  reads `$HALYARD_PKG` — the ADR-0035 identifier policy carried over.
+  The base's refusal pin (`ci_selector_adapter("teamcity").is_none()`)
+  was the red hook — flipped to the seven-system lookup with
+  `circleci` as the refused unknown.
+- **Design record.** ADR-0036 (azure/teamcity adapters) under the
+  unchanged ADR-0034 seam: trait, inputs and the empty-renders-nothing
+  contract untouched; the closure-vs-roots split documented as a
+  property of the consuming system (turbo/bazel compute dependencies
+  themselves and take the change roots; nx/gha/gitlab/azure/teamcity
+  compute nothing and take the full closure). The alternatives
+  considered and rejected are recorded in the ADR: the JSON-array shape
+  for Azure (the docs' own end-to-end example is the comma-join +
+  `split`), the `setParameter` service-message path for TeamCity
+  (runtime steps, not build-configuration iteration — and
+  `reverse.dep.*` "do not work correctly in matrix builds"), one
+  `value(…)` atom per package (the matrix block consumes a
+  `param(name, listOf(…))` entry). The ci-selector-grammars research
+  note carries both systems' fetched quotes (checked line updated to
+  2026-11-17).
+- **Tests/bench/example totals.** +2 core contract tests (azure
+  setvariable line over the closure, one-line-many-packages) + 2
+  teamcity tests (the param line, one-line-many-packages) + the
+  extended empty-selection loop (seven systems) + the flipped lookup
+  pin (seven named, `circleci` refused); +3 CLI e2e gates (azure
+  render, azure honest empty, teamcity render) — 14 core + 14 CLI
+  green; benches `ci_selector_azure_40chain` + `ci_selector_teamcity_40chain`
+  registered over the same 40-package chain shape (≈86 ns / ≈146 ns —
+  the render stays free); example `affected_ci` prints all seven
+  adapters.
+- **Docs drift fixed / micro-debt cleaned (additive, not milestone
+  substitutes).** The stale "three adapters" bench header and the
+  stale test-file header (both still named the ADR-0034 trio after the
+  ADR-0035 adapters landed) rewritten to the current reality; the
+  trait's `system()` doc (still enumerating only the original trio)
+  rewritten to point at the lookup's keys; the CLI `--ci` flag doc and
+  the `cmd_affected` doc (ADR-0034-only) extended to the seven-system
+  reality; root README status row gains `--ci SYSTEM` (stale since
+  ADR-0034) and the Layout section's `halyard-cli` command list gains
+  the landed-but-unlisted `affected`/`man`; arch §16.2 command table
+  gains the missing `affected` row and the §16.3 as-built note extends
+  to the seven adapters; CLI README: the `affected` status row carries
+  `--ci SYSTEM`, the affected section gains the `--ci` example, the
+  CI-adapters section rewritten to the seven systems (and the ADR-0033
+  npm-options note moved out of it into the Publishing section where it
+  belongs — the structural debt of the section-after-`## Errors`-with-
+  no-blank-line also fixed); the E-GIT-REF error page's "Raised by"
+  gains the `affected --base` unresolvable-ref refusal and the `fetch`
+  tag probe (the page predated both callers); ADR-0036 recorded.
+- **Honest state at cut-off.** The adapters render only; no CI system
+  is executed by halyard (I5 — the consumers wire the lines into their
+  own pipelines). More adapters (CircleCI dynamic config, Buildkite,
+  Jenkins) remain behind the closed ADR-0036 lookup — `circleci` is
+  the contract tests' refused unknown. Tree left dirty (no commits
+  made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for
+  halyard's own release artifacts (VERIFY first), (2) the corpus-wide
+  pnpm differential as an xtask subcommand, (3) the M2.6 dhat
+  re-audit with the cache warm.
