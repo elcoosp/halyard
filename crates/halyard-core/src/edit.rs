@@ -117,14 +117,6 @@ impl std::error::Error for EditFailure {
     }
 }
 
-/// Byte span accessor shared by adapter implementations: slices `bytes`
-/// at `span`, returning `None` when the span is out of bounds (defensive:
-/// span-produced patches always round-trip).
-pub fn slice_span(bytes: &[u8], span: Span) -> Option<&[u8]> {
-    let (start, end) = span_range(span);
-    bytes.get(start..end)
-}
-
 /// Widens a [`Span`] to `usize` range bounds (`u32` offsets never exceed
 /// `usize` on the platforms this tool targets; an oversized span reads as
 /// "past the end").
