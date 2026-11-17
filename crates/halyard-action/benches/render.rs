@@ -1,7 +1,8 @@
 //! The §12 forecast renderer's cost (ADR-0037): `plan_outputs` over a
 //! 40-release plan and the env-file entry grammar must stay free — the
 //! action renders on every CI run, and a microsecond-scale projection
-//! must never become the step's cost.
+//! must never become the step's cost. The §12 `pr`/`release`/`check`
+//! mode renderers (ADR-0043/0046/0044) ride the same budget.
 
 use std::hint::black_box;
 use std::path::Path;
@@ -73,6 +74,50 @@ fn output_name() -> Option<halyard_action::OutputName> {
     halyard_action::OutputName::new("released").ok()
 }
 
+/// The §12 `release` mode's renderers (ADR-0046): the release pass view
+/// over the same 40-release plan — the release run renders these on
+/// every CI pass, so they ride the same microsecond-scale budget as
+/// the plan forecast. Own function: the bench entries stay grouped by
+/// mode, the way the `pr` and `check` entries are.
+fn bench_release_render<M: criterion::measurement::Measurement>(
+    group: &mut criterion::BenchmarkGroup<'_, M>,
+    plan: &Plan,
+) {
+    let release_pass = halyard_action::ReleasePass {
+        released: true,
+        forecast: false,
+        created_tags: (0..40).map(|idx| format!("pkg{idx:04}-v0.2.0")).collect(),
+        release_urls: std::collections::BTreeMap::from([(
+            "pkg0000-v0.2.0".to_owned(),
+            "https://github.com/example/monorepo/releases/tag/pkg0000-v0.2.0".to_owned(),
+        )]),
+        forge: halyard_action::ForgePosture::Ran {
+            repo: "example/monorepo".to_owned(),
+            releases: 1,
+        },
+    };
+    group.bench_function("release_outputs_40_releases", |b| {
+        b.iter(|| {
+            black_box(
+                halyard_action::release_outputs(
+                    black_box(plan),
+                    Path::new("halyard-plan.json"),
+                    black_box(&release_pass),
+                )
+                .unwrap_or_default(),
+            )
+        });
+    });
+    group.bench_function("release_summary_40_releases", |b| {
+        b.iter(|| {
+            black_box(halyard_action::release_summary(
+                black_box(plan),
+                black_box(&release_pass),
+            ))
+        });
+    });
+}
+
 fn bench(c: &mut Criterion) {
     let plan = plan_with_releases(40);
     let mut group = c.benchmark_group("action_render");
@@ -132,6 +177,7 @@ fn bench(c: &mut Criterion) {
             ))
         });
     });
+    bench_release_render(&mut group, &plan);
     // The §12 `check` mode's renderer (ADR-0044): the verdict beside the
     // 40-release table — the pull_request-event render, same budget.
     let verdict = halyard_action::CheckVerdict {
