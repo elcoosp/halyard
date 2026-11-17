@@ -2,7 +2,9 @@
 
 **Code:** `E-TEST-FIXTURE` · **Area:** `halyard-test-support` (test
 infrastructure) · **Kinds:** `git_invocation`, `git_output`, `io`,
-`scenario`
+`scenario` · **Raised by:** `halyard_test_support::error`
+(`FixtureError` — the GitFixture DSL's build/inspect paths; test
+infrastructure only, never an end-user taxonomy code)
 
 ## What it means
 
