@@ -799,6 +799,132 @@ fn pr_pass_line(pass: &PrPass) -> String {
     line
 }
 
+/// The §12 view of one release pass (ADR-0046): plain, deterministic
+/// data (I3) — the git-side tags the §11.1 tag phase created, the forge
+/// half's posture and the forecast marker. The shell runs the pass and
+/// maps its reports onto it; this crate renders the vocabulary and
+/// stays git-free and forge-free (the layer note).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleasePass {
+    /// `true` when the live tag phase created at least one tag — the
+    /// release act. A dry forecast stays `false`: nothing was executed
+    /// (I5), even though its would-create tags ride
+    /// [`ReleasePass::created_tags`].
+    pub released: bool,
+    /// `true` for a dry forecast — the summary states the posture.
+    pub forecast: bool,
+    /// The tags the pass created (would create, in the forecast), in
+    /// the tag phase's own name-sorted row order.
+    pub created_tags: Vec<String>,
+    /// The release URLs minted by the forge half this pass, keyed by
+    /// tag (the created releases; rows the forge half did not touch
+    /// keep the empty `url` in `releases_json`).
+    pub release_urls: std::collections::BTreeMap<String, String>,
+    /// The forge half's posture (§11.1 step 2, M4.1b): what ran, or the
+    /// honest skip's reason — never a pretended release.
+    pub forge: ForgePosture,
+}
+
+/// The forge half's posture for one release pass (plain data — the
+/// summary renders the reason verbatim, so a skip is observable with
+/// its cause).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForgePosture {
+    /// The forge half executed over the adapter: the repo slug and how
+    /// many releases it minted this pass.
+    Ran {
+        /// The `owner/repo` slug the half operated on.
+        repo: String,
+        /// The releases the half minted this pass.
+        releases: usize,
+    },
+    /// The forge half did not run — the reason is stated, never implied
+    /// (the dry forecast's I5 posture, missing credentials, a foreign
+    /// origin).
+    Skipped {
+        /// The honest skip's reason.
+        reason: String,
+    },
+}
+
+/// The §12 outputs for the `release` mode (ADR-0046), in the documented
+/// order: `released` (the pass's honest execution value), `published`
+/// (always `false` — the release mode never publishes), `plan_json`,
+/// `releases_json` (the pass's minted URLs filled by tag), the
+/// per-package keys and `paths_released` — the plan vocabulary
+/// unchanged. No `pr_number`/`pr_url` keys exist: the release mode
+/// opens no Release PR.
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when a key violates the output-key grammar
+/// or the rows fail to serialize.
+pub fn release_outputs(
+    plan: &Plan,
+    plan_json_path: &Path,
+    pass: &ReleasePass,
+) -> Result<Vec<(OutputName, String)>, ActionError> {
+    let mut outputs = Vec::new();
+    let released = if pass.released { "true" } else { "false" };
+    outputs.push((OutputName::new("released")?, released.to_owned()));
+    outputs.push((OutputName::new("published")?, "false".to_owned()));
+    outputs.push((
+        OutputName::new("plan_json")?,
+        plan_json_path.display().to_string(),
+    ));
+    let release_urls = &pass.release_urls;
+    outputs.push(releases_json(plan, |row| {
+        release_urls.get(&row.tag).cloned().unwrap_or_default()
+    })?);
+    outputs.extend(package_keys(plan)?);
+    outputs.push(paths_released(plan)?);
+    Ok(outputs)
+}
+
+/// The §12 job summary for the `release` mode: the release table (the
+/// plan vocabulary's layout) and the pass line — the created tags, the
+/// forge half's posture and the forecast marker, byte-stable (I3).
+#[must_use]
+pub fn release_summary(plan: &Plan, pass: &ReleasePass) -> String {
+    let mut summary = String::from("## halyard release\n\n");
+    summary.push_str(&release_table(plan));
+    let planned = plan.releases.len();
+    let skipped = plan.skipped.len();
+    let _ = writeln!(summary);
+    let _ = writeln!(
+        summary,
+        "{planned} planned, {skipped} skipped · {}",
+        release_pass_line(pass)
+    );
+    summary
+}
+
+/// The pass line the `release` summary renders: the created tags (the
+/// git-side half's rows), the forge half's posture (the skip's reason
+/// verbatim, so a forecast or a credential gap is observable) and the
+/// forecast marker.
+fn release_pass_line(pass: &ReleasePass) -> String {
+    let mut line = if pass.created_tags.is_empty() {
+        "no tags created (nothing pending, already tagged or failed rows — the report names them)"
+            .to_owned()
+    } else {
+        format!("created {}", pass.created_tags.join(", "))
+    };
+    line.push_str(" · ");
+    match &pass.forge {
+        ForgePosture::Ran { repo, releases } => {
+            let _ = write!(line, "forge releases in {repo} ({releases} minted)");
+        }
+        ForgePosture::Skipped { reason } => {
+            let _ = write!(line, "forge releases skipped ({reason})");
+        }
+    }
+    if pass.forecast {
+        line.push_str(" · forecast (nothing executed)");
+    }
+    line
+}
+
 /// One package's conveyed-bump row of the §12 `check` verdict (the
 /// plain view of the check surface's prediction — the shell maps its
 /// own prediction type onto it; this crate stays check-logic-free).
