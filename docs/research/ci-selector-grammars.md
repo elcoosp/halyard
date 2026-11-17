@@ -201,3 +201,63 @@ Jenkins sections fetched 2026-11-17 for ADR-0039/0040).
 - The declarative grammar's own statement rules pin the render shape:
   "No semicolons as statement separators. Each statement has to be on
   its own line."
+
+## Bitbucket Pipelines — <https://support.atlassian.com/bitbucket-cloud/docs/parallel-step-options/> + <https://support.atlassian.com/bitbucket-cloud/docs/step-options/> + <https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/>
+
+(Fetched 2026-11-17 for ADR-0041.)
+
+- "Parallel steps allow you to group pipeline steps that can run at the
+  same time (concurrently) to reduce build time."
+- The group's shape (the documented example, verbatim indentation):
+  `- parallel:` as a pipeline list item, the required `steps:` property
+  under it, the step list under `steps:`:
+
+  ```yaml
+  - parallel:      # these 2 steps will run in parallel
+      steps:
+        - step:
+            script:
+              - ./integration-tests.sh --batch 1
+        - step:
+            script:
+              - ./integration-tests.sh --batch 2
+  ```
+
+  The docs' own example differentiates the group's steps **in the
+  script itself** (`--batch 1` / `--batch 2` as literal per-step
+  arguments) — per-step script differences are the grammar's native
+  way to carry a varying value.
+- The `steps` property is required: "The `steps` property contains the
+  lists of `step`s in a `stage` or a `parallel`. At least 1 `step` is
+  required within the steps list." (Required — Yes.)
+- **No per-step `env` property exists**: the `step` option's child
+  properties enumerate `after-script, artifacts, caches, clone,
+  config, condition, deployment, fail-fast, …` (no `env`), and the
+  `variables` option states "Allowed parent properties — `[pipe]`"
+  ("The pipe variables options is used to configure the environmental
+  variables of a pipe"). A per-step value therefore rides the script
+  line itself.
+- Script lines consume variables natively (the documented example
+  `echo "Building commit $BITBUCKET_COMMIT"`), so a script-line
+  assignment (`export HALYARD_PKG=app`) is readable in the same
+  script's later lines.
+- The parallel group's default variables: "In addition to the standard
+  pipelines variables, parallel step groups also have the following
+  default variables:" — `BITBUCKET_PARALLEL_STEP` ("zero-based index
+  of the current step in the group (such as 0, 1, 2, …)") and
+  `BITBUCKET_PARALLEL_STEP_COUNT` ("total number of steps in the
+  group"). Availability: "Only pipelines within a parallel step";
+  "Not available outside a parallel step."
+- Variable-name rule (the `output-variables` section): "Names can only
+  contain ASCII letters, digits and underscores" / "Names can't start
+  with a digit" — `HALYARD_PKG` complies.
+- The step cap: "The 100-step limit on pipelines includes each step in
+  a parallel group." (The workspace concurrency numbers — "Standard
+  and premium workspaces can support 600 steps running concurrently",
+  "Free workspaces can support 10 steps" — are plan-dependent consumer
+  policy.)
+- Design consequence: no matrix grammar and no per-step `env` means
+  the selection can only ride literal per-step script content — one
+  step per affected package, each carrying `export HALYARD_PKG=<name>`
+  (the relative indentation of the docs' example preserved), the
+  consumer's tool invocation appended in the same script.
