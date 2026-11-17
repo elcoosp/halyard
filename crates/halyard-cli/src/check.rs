@@ -293,11 +293,16 @@ pub(crate) fn classify_commit(subject: &str, config: &PlanConfig) -> CommitFindi
 
 /// The single-sourced `E-CLI-COMMIT` diagnosis for a typo'd pending
 /// commit (the exit error's message — the same wording the renderers
-/// surface on the typo row).
-pub(crate) fn commit_typo_message(row: &CommitRow, config: &PlanConfig) -> String {
-    let CommitFinding::Typo { kind, closest } = &row.finding else {
-        unreachable!("commit_typo_message is only called on typo rows")
-    };
+/// surface on the typo row). The typo parts ride in from the caller's
+/// own match (the selection site destructures once) — the function
+/// cannot be called with a non-typo row, so there is no panic surface
+/// to guard.
+pub(crate) fn commit_typo_message(
+    row: &CommitRow,
+    kind: &str,
+    closest: &str,
+    config: &PlanConfig,
+) -> String {
     format!(
         "pending commit {} on {} — {} — type {kind:?} is not a known release type — did you          mean {closest:?}? Known types: {}. The planner ignores unmapped types, so this          commit releases nothing; reword the subject (`git rebase -i`) or map the type in          `[versioning].commit_types` (see E-CLI-COMMIT)",
         row.oid,
