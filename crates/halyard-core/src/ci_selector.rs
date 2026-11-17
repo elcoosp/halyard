@@ -2,7 +2,7 @@
 //! selection rendered in a CI system's **own** grammar — the
 //! machine-consumer surface beside the human/json/gha renderings (the
 //! CLI's `affected --ci
-//! turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins|bitbucket`).
+//! turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins|bitbucket|drone`).
 //!
 //! Each adapter is a pure projection over two name-sorted inputs (the
 //! change roots and the closed selection, both as [`SelectedPackage`])
@@ -154,6 +154,28 @@
 //!   (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set) contains a shell
 //!   metacharacter, so the bare-word value is emitted unquoted.
 //!
+//! - **`Drone`** (docs.drone.io, VERIFIED 2026-11-17): "Drone provides
+//!   the ability to define environment variables scoped to individual
+//!   build steps" — the documented per-step `environment` key (the
+//!   docs' own example maps `GOOS: linux` / `GOARCH: amd64` beside a
+//!   step's `commands:`), where "the environment section cannot expand
+//!   environment variables or evaluate shell expressions". One
+//!   step-scoped `environment:` fragment per affected package — the
+//!   halyard-owned `HALYARD_PKG` identifier the consumer reads as
+//!   `$HALYARD_PKG` in that step's `commands` — carries the full
+//!   affected closure, name-sorted: the consumer pastes one fragment
+//!   under one step per package (the Buildkite `matrix:` convention —
+//!   the fragment is paste-ready modulo the step's own indentation).
+//!
+//!   Drone's steps are "executed sequentially by default" and
+//!   parallelism is the documented `depends_on` DAG ("you must
+//!   configure dependencies for all pipeline steps") — the consumer's
+//!   parallelism policy; the adapter renders the grammar, never the
+//!   guard. The mapping value is verbatim-safe: it cannot expand (the
+//!   documented no-expansion rule) and neither package-name grammar
+//!   the selection carries contains a shell metacharacter, so the
+//!   bare-word value is emitted unquoted.
+//!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
 //! empty-selection contract). The surface is closed: an unknown system
@@ -180,8 +202,8 @@ pub struct SelectedPackage {
 pub trait CiSelectorAdapter: Send + Sync {
     /// The CI system this adapter speaks — one of the lookup's keys
     /// (`turbo`, `nx`, `bazel`, `gha`, `gitlab`, `azure`, `teamcity`,
-    /// `circleci`, `buildkite`, `jenkins`, `bitbucket`; the closed
-    /// surface [`ci_selector_adapter`] names).
+    /// `circleci`, `buildkite`, `jenkins`, `bitbucket`, `drone`; the
+    /// closed surface [`ci_selector_adapter`] names).
     fn system(&self) -> &'static str;
 
     /// Renders the selection: `changed` are the packages with pending
@@ -567,10 +589,52 @@ impl CiSelectorAdapter for BitbucketSelector {
     }
 }
 
+/// The `Drone` adapter: one step-scoped `environment:` fragment per
+/// affected package, name-sorted — the documented per-step environment
+/// mechanism (docs.drone.io/pipeline/environment/syntax, VERIFIED
+/// 2026-11-17: "Drone provides the ability to define environment
+/// variables scoped to individual build steps"; the docs' own example
+/// maps `GOOS: linux` / `GOARCH: amd64` beside a step's `commands:`).
+/// `Drone` computes no dependency closure of its own, so the fragments
+/// over the affected closure carry the **full affected closure**; the
+/// consumer pastes one fragment under one step per package and reads
+/// `$HALYARD_PKG` in that step's `commands` (the ADR-0035 identifier
+/// policy carried over).
+///
+/// The fragment is paste-ready modulo the step's own indentation (the
+/// Buildkite `matrix:` convention). The mapping value cannot expand —
+/// "the environment section cannot expand environment variables or
+/// evaluate shell expressions" — and neither package-name grammar the
+/// selection carries (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set)
+/// contains a shell metacharacter, so the bare-word value is emitted
+/// unquoted. Steps are "executed sequentially by default"; the
+/// `depends_on` DAG ("you must configure dependencies for all pipeline
+/// steps") is the consumer's parallelism policy — the adapter renders
+/// the grammar, never the guard.
+pub struct DroneSelector;
+
+impl CiSelectorAdapter for DroneSelector {
+    fn system(&self) -> &'static str {
+        "drone"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        affected
+            .iter()
+            .flat_map(|package| {
+                [
+                    "environment:".to_owned(),
+                    format!("  HALYARD_PKG: {}", package.name),
+                ]
+            })
+            .collect()
+    }
+}
+
 /// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`,
-/// `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins`, `bitbucket`
-/// — anything else is `None` (an unknown system is a caller bug the
-/// CLI's value enum refuses before this point).
+/// `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins`, `bitbucket`,
+/// `drone` — anything else is `None` (an unknown system is a caller bug
+/// the CLI's value enum refuses before this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
@@ -585,6 +649,7 @@ pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapte
         "buildkite" => Some(&BuildkiteSelector),
         "jenkins" => Some(&JenkinsSelector),
         "bitbucket" => Some(&BitbucketSelector),
+        "drone" => Some(&DroneSelector),
         _ => None,
     }
 }
