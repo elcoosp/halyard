@@ -12,6 +12,10 @@ name = "halyard"
 path = "src/main.rs"
 
 [dependencies]
+# M10/§12 step 1 (ADR-0037): the `action` command renders the §12
+# outputs through the action-output seam (the writer + forecast
+# renderer live in the crate; the shell owns the wire-up).
+halyard-action = { workspace = true }
 halyard-config = { workspace = true }
 halyard-core = { workspace = true }
 halyard-discover = { workspace = true }
