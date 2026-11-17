@@ -23,7 +23,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use bstr::BString;
 use semver::Version;
 
-use crate::id::{PkgId, Sym};
 use crate::package::{DepKind, Ecosystem, ManifestSite, PathFilter, ReqSpec, Span, TagTemplate};
 
 /// The orchestrator-provided view of the repository (§6.1/§7.3): the
@@ -191,7 +190,7 @@ pub struct DiscoveryWarning {
 }
 
 /// One discovered package row (§5.3, pre-merge). The orchestrator assigns
-/// [`PkgId`]s, interns names and resolves `deps` against the merged set.
+/// [`crate::id::PkgId`]s, interns names and resolves `deps` against the merged set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawPackage {
     /// Package name (crate name or npm name, scoped names included).
@@ -458,22 +457,6 @@ pub trait EcosystemAdapter: Send + Sync {
             adapter: self.id().to_owned(),
         })
     }
-}
-
-/// Merge-time context: links a [`RawPackage`]/[`RawDep`] name to the
-/// interned forms the [`Workspace`](crate::package::Workspace) stores.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedDep {
-    /// Target package id.
-    pub to: PkgId,
-    /// Interned dependency name.
-    pub name: Sym,
-    /// Edge kind.
-    pub kind: DepKind,
-    /// Requirement as written.
-    pub req: ReqSpec,
-    /// Where the requirement text lives.
-    pub site: ManifestSite,
 }
 
 #[cfg(test)]
