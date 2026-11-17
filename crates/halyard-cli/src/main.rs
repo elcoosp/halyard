@@ -21,10 +21,12 @@ use miette::Diagnostic;
 
 use crate::profile::Profiler;
 // M10/§12 step 1 (ADR-0037): the `action` command renders the §12
-// outputs through the action-output seam.
+// outputs through the action-output seam. The §12 `pr` mode (ADR-0043)
+// renders the §11.1 machine pass's view through the same seam.
 use halyard_action::{
-    ActionCall, ActionWriter, GithubActionsWriter, PreviewActionWriter, env_file_entry,
-    plan_outputs, plan_summary, write_plan_file,
+    ActionCall, ActionWriter, GithubActionsWriter, OutputName, PrEffect, PrPass,
+    PreviewActionWriter, env_file_entry, plan_outputs, plan_summary, pr_outputs, pr_summary,
+    write_plan_file,
 };
 use halyard_changelog::load_change_files;
 use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, resolve};
@@ -119,8 +121,8 @@ struct Cli {
     command: Command,
 }
 
-/// The v1 command surface (§16.2; `bench` — the M10+ perf surface —
-/// remains absent rather than stubbed; `apply` joined
+/// The v1 command surface (§16.2; all twenty commands are wired —
+/// `apply` joined
 /// in M3.6, `pr` in M4.2b, `check` in M4.3, `release --dry` (the
 /// §11.1 git-side tag-phase forecast) in the tag-phase slice, `fetch`
 /// (§8.8) in the smart-minimal-fetch slice, `publish` (§13, the
@@ -129,8 +131,10 @@ struct Cli {
 /// M4.7 slices, `init` (the §16.1 zero-config scaffold) in the
 /// ADR-0029 slice, `affected` (the §16.3/M10 CI selector) in the
 /// ADR-0032 slice, `man` (the §16.2 shell-integration pages) in
-/// its session and `action` (the §12 forecast mode) in the
-/// ADR-0037 slice.
+/// its session, `action` (the §12 forecast mode) in the
+/// ADR-0037 slice, and `bench` (the §16.2 pipeline measurement) in the
+/// ADR-0042 slice; the §12 modes grew from `plan` to
+/// `plan|pr|check` across ADR-0037/0043/0044).
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Compute and print the release plan (pure, offline).
@@ -304,16 +308,26 @@ enum Command {
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
     },
-    /// The §12 action surface (§12 step 1, ADR-0037): the plan-mode
-    /// forecast rendered through the action-output seam — plan → the
-    /// canonical plan file → the §12 outputs (`released`, `published`,
-    /// `plan_json`, `releases_json`, the per-package `--version` /
-    /// `--tag` keys, `paths_released`) and the §12 job summary. Inside
-    /// a workflow step (`GITHUB_OUTPUT` set) the calls land in the env
-    /// files verbatim; outside, the preview call log prints them
-    /// (nothing is written but the plan file). Offline (I5). The
-    /// remaining §12 modes (`auto|pr|release|check`) land with their
-    /// milestones and are absent rather than stubbed.
+    /// The §12 action surface (§12 step 1, ADR-0037): the §12 outputs
+    /// and job summary rendered through the action-output seam, over
+    /// the mode's executor. The `plan` mode (ADR-0037) is the offline
+    /// forecast: plan → the canonical plan file → the §12 outputs
+    /// (`released`, `published`, `plan_json`, `releases_json`, the
+    /// per-package `--version` / `--tag` keys, `paths_released`). The
+    /// `pr` mode (ADR-0043) drives the §11.1 release machine — the
+    /// §11.2 branch, the §11.3 Release PR, the PROPAGATE tag phase —
+    /// and renders its pass view (`pr_number` / `pr_url` carry the
+    /// forge's own values; `releases_json` fills the URLs the pass
+    /// minted; `released` is `true` only when a release was executed).
+    /// The `check` mode (ADR-0044) is the check surface's verdict: the
+    /// squash-merge title lint (`--pr-title`) plus the conveyed bumps
+    /// per pending package, beside the pending forecast — a rejected
+    /// title refuses `E-CLI-TITLE` before anything is written. Inside
+    /// a workflow step (`GITHUB_OUTPUT` set) the calls land in
+    /// the env files verbatim; outside, the preview call log prints
+    /// them (nothing is written but the plan file). The remaining §12
+    /// modes (`auto|release`) land with their milestones and are
+    /// absent rather than stubbed.
     Action {
         /// The §12 behavior mode.
         #[arg(long, value_enum, default_value = "plan")]
@@ -324,6 +338,20 @@ enum Command {
         /// `E-ACTION-PLAN`, the caller's contract is never invented).
         #[arg(long, value_name = "PATH")]
         plan_out: Option<PathBuf>,
+        /// The `pr` mode's forecast posture: the §11.1 machine pass
+        /// runs over the preview adapter (I5 — no network, no effects,
+        /// `preview://` URLs and PR number `0` mark the forecast). The
+        /// `plan` mode is always offline, so the flag is a no-op there.
+        #[arg(long)]
+        dry: bool,
+        /// The `check` mode's squash-merge title to lint (the `check`
+        /// command's own `--pr-title`): the verdict rides the job
+        /// summary and the conveyed bumps are predicted per pending
+        /// package; a rejected title refuses `E-CLI-TITLE` before
+        /// anything is written (§11.6's fail-closed rule). Absent —
+        /// the pending forecast is the verdict.
+        #[arg(long, value_name = "TITLE")]
+        pr_title: Option<String>,
     },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
@@ -555,12 +583,19 @@ impl CiSelector {
 }
 
 /// The §12 behavior modes (§12 inputs: `auto|pr|release|plan|check`).
-/// `plan` lands with ADR-0037; the remaining §12 modes land with their
-/// milestones and are absent rather than stubbed.
+/// `plan` lands with ADR-0037, `pr` with ADR-0043, `check` with
+/// ADR-0044; the remaining §12 modes land with their milestones and
+/// are absent rather than stubbed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum ActionMode {
     /// The offline forecast: plan → the §12 outputs + job summary.
     Plan,
+    /// The release-PR executor's pass view: the §11.1 machine over the
+    /// selected adapter → the §12 outputs + job summary (ADR-0043).
+    Pr,
+    /// The check surface's verdict: the title lint + the conveyed
+    /// bumps beside the pending forecast (ADR-0044).
+    Check,
 }
 
 /// `schema` targets (§16.2; the frozen documents live under `schemas/`).
@@ -656,8 +691,20 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_affected(cli, profiler, base.as_deref(), *ci)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Action { mode, plan_out } => {
-            cmd_action(cli, profiler, *mode, plan_out.as_deref())?;
+        Command::Action {
+            mode,
+            plan_out,
+            dry,
+            pr_title,
+        } => {
+            cmd_action(
+                cli,
+                profiler,
+                *mode,
+                *dry,
+                pr_title.as_deref(),
+                plan_out.as_deref(),
+            )?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Explain { package } => {
@@ -817,6 +864,81 @@ fn reconcile_snapshot(
 /// credentials (`E-FORGE-AUTH`) and on a non-GitHub origin
 /// (`E-CLI-PR`).
 fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError> {
+    let outcome = run_pr_pass(cli, profiler, dry)?;
+    let mut extras = serde_json::json!({
+        "dry": outcome.dry,
+        "repo": outcome.slug,
+        "pending_plan": !outcome.plan.releases.is_empty(),
+        "pending_releases": pending_rows_json(&outcome.pending, &outcome.notes_by_tag),
+        "history": outcome.stats_json,
+        "walk_line": outcome.walk_line,
+    });
+    // The §11.5 governor keys ride the live extras only — a dry run has
+    // no governor, and the dry JSON schema stays byte-stable.
+    if let Some(summary) = outcome.governor_summary.as_ref()
+        && let Some(map) = extras.as_object_mut()
+    {
+        map.insert(
+            "governor_line".to_owned(),
+            serde_json::Value::String(summary.line()),
+        );
+        map.insert("governor".to_owned(), summary.json());
+    }
+    render_pr_report(
+        cli,
+        &outcome.title,
+        &outcome.branch,
+        &outcome.states,
+        &outcome.report,
+        outcome.body.as_deref(),
+        &extras,
+    )?;
+    Ok(())
+}
+
+/// The shared §11.1 machine pass behind `pr` and `action --mode pr`
+/// (ADR-0043): one executor, two renderers — the adapter is the
+/// posture's choice (M4.1b swaps the adapter, not the machine), the
+/// §11.2/§11.3 input assembly is the same. Everything the report
+/// renderers observe rides the outcome; nothing here reads the CLI
+/// flags beyond the dry posture.
+struct PrPassOutcome {
+    /// The plan the pass renders (the §11.3 body's source and the
+    /// `pending_plan` flag).
+    plan: halyard_core::Plan,
+    /// The §11.2 release branch.
+    branch: halyard_forge::BranchName,
+    /// The §11.3 Release-PR title.
+    title: String,
+    /// The §11.3 body (`None` under an empty plan — the machine runs
+    /// the close probe instead, §11.1 step 3).
+    body: Option<String>,
+    /// The manifest-vs-tags reconciliation rows (the report's view).
+    states: Vec<halyard_core::PackageTagState>,
+    /// The tag-phase queue (the PROPAGATE pass's input).
+    pending: Vec<halyard_core::PendingRelease>,
+    /// The §9.4 notes keyed by tag (the pending rows' view).
+    notes_by_tag: std::collections::BTreeMap<String, String>,
+    /// The machine's report (the effects + the §11.5 call budget).
+    report: halyard_forge::MachineReport,
+    /// The §11.5 governor's end-of-run summary (live only).
+    governor_summary: Option<render::GovernorSummary>,
+    /// The forge slug (live only — the report's `repo` field).
+    slug: Option<String>,
+    /// The posture (dry forecast vs live effect).
+    dry: bool,
+    /// The walk provenance the report tails carry.
+    stats_json: serde_json::Value,
+    /// The walk provenance line the report tails carry.
+    walk_line: String,
+    /// The walk's own degraded marker (§12's annotation rides it).
+    degraded: bool,
+}
+
+/// Runs the shared §11.1 machine pass (the `pr` executor): context →
+/// plan → reconcile → the §11.3 spec assembly → the adapter the
+/// posture selects → the §11.5-governed machine pass.
+fn run_pr_pass(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<PrPassOutcome, CliError> {
     let context = context(cli, profiler)?;
     let plan = plan_from_context(&context, profiler)?;
     let plan_config: PlanConfig = context.config.plan_config();
@@ -913,37 +1035,25 @@ fn cmd_pr(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliError>
     // The governor's run summary (§11.5 end-of-run usage summary): the
     // live documents carry it, the dry run has no governor to report.
     let governor_summary = governor.as_ref().map(render::GovernorSummary::of);
-    let pending_rows = pending_rows_json(&pending, &notes_by_tag);
-    let history_json = context.stats.json();
-    let mut extras = serde_json::json!({
-        "dry": dry,
-        "repo": slug,
-        "pending_plan": !plan.releases.is_empty(),
-        "pending_releases": pending_rows,
-        "history": history_json,
-        "walk_line": context.stats.human_line(),
-    });
-    // The §11.5 governor keys ride the live extras only — a dry run has
-    // no governor, and the dry JSON schema stays byte-stable.
-    if let Some(summary) = governor_summary.as_ref()
-        && let Some(map) = extras.as_object_mut()
-    {
-        map.insert(
-            "governor_line".to_owned(),
-            serde_json::Value::String(summary.line()),
-        );
-        map.insert("governor".to_owned(), summary.json());
-    }
-    render_pr_report(
-        cli,
-        &title,
-        &branch,
-        &states,
-        &report,
-        body.as_deref(),
-        &extras,
-    )?;
-    Ok(())
+    let walk_provenance = context.stats.json();
+    let walk_line = context.stats.human_line();
+    let degraded = context.stats.degraded;
+    Ok(PrPassOutcome {
+        plan,
+        branch,
+        title,
+        body,
+        states,
+        pending,
+        notes_by_tag,
+        report,
+        governor_summary,
+        slug,
+        dry,
+        stats_json: walk_provenance,
+        walk_line,
+        degraded,
+    })
 }
 
 /// The pending-release JSON rows (the pr report's `pending_releases`):
@@ -2554,9 +2664,9 @@ fn cmd_doctor(cli: &Cli, profiler: &mut Profiler, registries: bool) -> Result<()
 /// gates CI on a pending release (§15.4 exit code 3). A rejected title
 /// fails with the `E-CLI-TITLE` diagnosis (§11.6: errors teach).
 ///
-/// The `action` command (§12 step 1, ADR-0037): the plan-mode forecast
-/// over the action-output seam — plan → the canonical plan file → the
-/// §12 outputs and job summary. The sink follows the environment: the
+/// The `action` command (§12): the mode's executor rendered through
+/// the action-output seam — the canonical plan file, the §12 outputs
+/// and job summary. The sink follows the environment: the
 /// `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY` env files when the workflow
 /// step provides them, the preview call log otherwise (the honest
 /// local shape — the outputs are the same, only the sink differs).
@@ -2566,14 +2676,18 @@ fn cmd_action(
     cli: &Cli,
     profiler: &mut Profiler,
     mode: ActionMode,
+    dry: bool,
+    pr_title: Option<&str>,
     plan_out: Option<&std::path::Path>,
 ) -> Result<(), CliError> {
     match mode {
         ActionMode::Plan => cmd_action_plan(cli, profiler, plan_out),
+        ActionMode::Pr => cmd_action_pr(cli, profiler, dry, plan_out),
+        ActionMode::Check => cmd_action_check(cli, profiler, pr_title, plan_out),
     }
 }
 
-/// The §12 `plan` mode: forecast, write, render, deliver.
+/// The §12 `plan` mode (ADR-0037): forecast, write, render, deliver.
 fn cmd_action_plan(
     cli: &Cli,
     profiler: &mut Profiler,
@@ -2586,26 +2700,233 @@ fn cmd_action_plan(
     let outputs =
         plan_outputs(&plan, &plan_path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let summary = plan_summary(&plan);
-    // The sink: the env files inside a workflow step, the preview call
-    // log outside — one seam, two postures, the outputs identical.
-    let real = GithubActionsWriter::from_env();
-    let in_step = real.is_some();
-    let preview = PreviewActionWriter::new();
-    let sink: &dyn ActionWriter = if let Some(writer) = &real {
-        writer
-    } else {
-        &preview
+    render_action_run(
+        cli,
+        "plan",
+        &outputs,
+        &summary,
+        &plan_path,
+        context.stats.degraded,
+        &serde_json::Value::Null,
+    )
+}
+
+/// The §12 `pr` mode (ADR-0043): the §11.1 machine pass over the
+/// adapter the posture selects — the preview adapter forecasts offline
+/// (`--dry`, I5), the live adapter executes — with the pass view
+/// rendered through the action-output seam. The `pr_number` / `pr_url`
+/// pair carries the forge's own values (the preview's `0` /
+/// `preview://` shape marks a forecast), `releases_json` fills the
+/// URLs the pass minted, and `released` is `true` only when a release
+/// was actually created.
+fn cmd_action_pr(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    dry: bool,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let outcome = run_pr_pass(cli, profiler, dry)?;
+    let plan_path = plan_out.map_or_else(|| PathBuf::from("halyard-plan.json"), PathBuf::from);
+    write_plan_file(&outcome.plan, &plan_path)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The plain §12 view of the machine pass: the first Release-PR
+    // effect and the pass's minted release URLs ride the report.
+    let pr_effect = outcome
+        .report
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            halyard_forge::MachineEffect::PrOpened { number, url } => Some(PrEffect::Opened {
+                number: *number,
+                url: url.clone(),
+            }),
+            halyard_forge::MachineEffect::PrUpdated { number, url } => Some(PrEffect::Updated {
+                number: *number,
+                url: url.clone(),
+            }),
+            halyard_forge::MachineEffect::PrUnchanged { number, url } => {
+                Some(PrEffect::Unchanged {
+                    number: *number,
+                    url: url.clone(),
+                })
+            }
+            halyard_forge::MachineEffect::PrClosed { number, url } => Some(PrEffect::Closed {
+                number: *number,
+                url: url.clone(),
+            }),
+            _ => None,
+        });
+    let release_urls: std::collections::BTreeMap<String, String> = outcome
+        .report
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            halyard_forge::MachineEffect::ReleaseCreated { tag, url } => {
+                Some((tag.clone(), url.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let released =
+        !outcome.dry
+            && outcome.report.effects.iter().any(|effect| {
+                matches!(effect, halyard_forge::MachineEffect::ReleaseCreated { .. })
+            });
+    let pass = PrPass {
+        pr_effect,
+        propagated: outcome.report.propagated,
+        released,
+        release_urls,
+        branch: outcome.branch.as_str().to_owned(),
+        forecast: outcome.dry,
     };
-    for (name, value) in &outputs {
+    let outputs = pr_outputs(&outcome.plan, &plan_path, &pass)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let summary = pr_summary(&outcome.plan, &pass);
+    let mut extras = serde_json::json!({
+        "dry": outcome.dry,
+        "branch": pass.branch,
+        "propagated": outcome.report.propagated,
+    });
+    if let (Some(view), Some(map)) = (
+        pass.pr_effect.as_ref().map(PrEffect::view),
+        extras.as_object_mut(),
+    ) {
+        map.insert(
+            "pr".to_owned(),
+            serde_json::json!({ "number": view.number, "url": view.url }),
+        );
+    }
+    render_action_run(
+        cli,
+        "pr",
+        &outputs,
+        &summary,
+        &plan_path,
+        outcome.degraded,
+        &extras,
+    )
+}
+
+/// The §12 `check` mode (ADR-0044): the check surface's verdict through
+/// the action-output seam — the squash-merge title lint (the same
+/// classification and conveyed-bump prediction the `check` command
+/// applies, §11.6) beside the pending forecast's plan vocabulary.
+/// Fail-closed ordering: the classification precedes every effect, so
+/// a rejected title refuses `E-CLI-TITLE` before the plan file or any
+/// sink call exists. Offline (I5) — the verdict is a pure function of
+/// the title, the resolved config and the plan.
+fn cmd_action_check(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    pr_title: Option<&str>,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    let plan_config: PlanConfig = context.config.plan_config();
+    // The verdict first (fail-closed): a rejected title is the command's
+    // failure before anything is written (§11.6's rule over the §12
+    // surface — a workflow step must not gate on outputs the mode
+    // refused to stand behind).
+    let verdict = match pr_title {
+        Some(title) => match check::classify_title(title, &plan_config) {
+            check::TitleClassification::Rejected(message) => {
+                return Err(CliError::new("E-CLI-TITLE", message));
+            }
+            check::TitleClassification::Accepted(lint) => {
+                let predictions = check::predict(&plan, &lint, &plan_config)
+                    .into_iter()
+                    .map(|prediction| halyard_action::CheckRow {
+                        package: prediction.package,
+                        from: prediction.from,
+                        bump: check::bump_str(prediction.bump).to_owned(),
+                    })
+                    .collect();
+                halyard_action::CheckVerdict {
+                    title: Some(halyard_action::TitleOutcome::Accepted {
+                        kind: lint.kind.clone(),
+                        level: check::bump_str(check::bump_of(lint.level)).to_owned(),
+                        predictions,
+                    }),
+                }
+            }
+        },
+        None => halyard_action::CheckVerdict { title: None },
+    };
+    let plan_path = plan_out.map_or_else(|| PathBuf::from("halyard-plan.json"), PathBuf::from);
+    write_plan_file(&plan, &plan_path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The outputs ride the plan vocabulary unchanged — the check mode's
+    // verdict is the summary's own surface (ADR-0044).
+    let outputs =
+        plan_outputs(&plan, &plan_path).map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let summary = halyard_action::check_summary(&plan, &verdict);
+    let extras = serde_json::json!({
+        "pr_title": pr_title,
+        "verdict": match verdict.title {
+            Some(halyard_action::TitleOutcome::Accepted { .. }) => "accepted",
+            Some(halyard_action::TitleOutcome::Rejected { .. }) => "rejected",
+            None => "none",
+        },
+    });
+    render_action_run(
+        cli,
+        "check",
+        &outputs,
+        &summary,
+        &plan_path,
+        context.stats.degraded,
+        &extras,
+    )
+}
+
+/// The sink selection every §12 mode shares: the env files inside a
+/// workflow step, the preview call log outside — one seam, two
+/// postures, the outputs identical.
+struct ActionSink {
+    /// The real writer when the step provides `GITHUB_OUTPUT`.
+    real: Option<GithubActionsWriter>,
+    /// The preview the non-step runs render through.
+    preview: PreviewActionWriter,
+}
+
+impl ActionSink {
+    /// Resolves the sink from the workflow-step environment.
+    fn resolve() -> Self {
+        Self {
+            real: GithubActionsWriter::from_env(),
+            preview: PreviewActionWriter::new(),
+        }
+    }
+
+    /// The sink the calls deliver to.
+    fn sink(&self) -> &dyn ActionWriter {
+        self.real
+            .as_ref()
+            .map_or_else(|| &self.preview as &dyn ActionWriter, |writer| writer)
+    }
+
+    /// Whether the run is inside a workflow step.
+    fn in_step(&self) -> bool {
+        self.real.is_some()
+    }
+}
+
+/// Delivers the §12 outputs, the job summary and the degraded-mode
+/// annotation to `sink` (the shared tail of the §12 modes; the
+/// degraded flag rides the walk's own provenance, never a guess).
+fn deliver_outputs(
+    sink: &dyn ActionWriter,
+    outputs: &[(OutputName, String)],
+    summary: &str,
+    degraded: bool,
+) -> Result<(), CliError> {
+    for (name, value) in outputs {
         sink.set_output(name, value)
             .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     }
-    sink.append_summary(&summary)
+    sink.append_summary(summary)
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    // §12's degraded-mode annotation rides the walk's own marker (the
-    // engine's §8.3 honesty: the commit-graph is an optimization, its
-    // absence is surfaced, correctness unaffected).
-    let degraded = context.stats.degraded;
     if degraded {
         sink.emit_warning(
             "the history walk ran without a commit-graph (degraded mode — correctness \
@@ -2613,64 +2934,108 @@ fn cmd_action_plan(
         )
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     }
+    Ok(())
+}
+
+/// The `--format json` §12 document's outputs map (the string values
+/// exactly as delivered).
+fn outputs_map(outputs: &[(OutputName, String)]) -> serde_json::Map<String, serde_json::Value> {
+    outputs
+        .iter()
+        .map(|(name, value)| (name.to_string(), serde_json::Value::String(value.clone())))
+        .collect()
+}
+
+/// The in-step confirmation: the sinks the run wrote and the plan
+/// file's path, plus the degraded marker.
+fn print_in_step_confirmation(
+    writer: &GithubActionsWriter,
+    outputs: usize,
+    plan_file: &std::path::Path,
+    degraded: bool,
+) {
+    let outputs_path = writer.outputs_path().display();
+    match writer.summary_path() {
+        Some(summary_path) => {
+            println!(
+                "wrote {outputs} outputs → $GITHUB_OUTPUT ({outputs_path}), job summary → \
+                 $GITHUB_STEP_SUMMARY ({})",
+                summary_path.display(),
+            );
+        }
+        None => println!("wrote {outputs} outputs → $GITHUB_OUTPUT ({outputs_path})"),
+    }
+    println!("plan file → {}", plan_file.display());
+    if degraded {
+        println!("degraded-mode warning emitted (::warning:: — no commit-graph)");
+    }
+}
+
+/// The preview call log printed as the exact env-file entries a real
+/// step would receive, then the job summary under its marker (the
+/// local §12 posture — the outputs are the same, only the sink differs).
+fn print_preview_calls(preview: &PreviewActionWriter) -> Result<(), CliError> {
+    for call in preview.calls() {
+        match call {
+            ActionCall::SetOutput { name, value } => {
+                let entry = env_file_entry(&name, &value)
+                    .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+                print!("{entry}");
+            }
+            ActionCall::AppendSummary { markdown } => {
+                println!("# >> $GITHUB_STEP_SUMMARY");
+                println!("{markdown}");
+            }
+            ActionCall::Warning { message } => println!("::warning::{message}"),
+        }
+    }
+    Ok(())
+}
+
+/// The §12 delivery tail shared by the modes: the sink selection, the
+/// delivery, the `--format json` document (the mode's `extras` keys
+/// ride beside the fixed shape) and the human postures — the in-step
+/// confirmation or the preview call log.
+fn render_action_run(
+    cli: &Cli,
+    mode: &str,
+    outputs: &[(OutputName, String)],
+    summary: &str,
+    plan_path: &std::path::Path,
+    degraded: bool,
+    extras: &serde_json::Value,
+) -> Result<(), CliError> {
+    let sink = ActionSink::resolve();
+    deliver_outputs(sink.sink(), outputs, summary, degraded)?;
 
     if cli.format == Format::Json {
-        let mut map = serde_json::Map::new();
-        for (name, value) in &outputs {
-            map.insert(name.to_string(), serde_json::Value::String(value.clone()));
-        }
-        let sink_name = if in_step { "env-files" } else { "preview" };
-        let document = serde_json::json!({
-            "mode": "plan",
+        let sink_name = if sink.in_step() {
+            "env-files"
+        } else {
+            "preview"
+        };
+        let mut document = serde_json::json!({
+            "mode": mode,
             "sink": sink_name,
-            "outputs": map,
+            "outputs": serde_json::Value::Object(outputs_map(outputs)),
             "summary_md": summary,
             "plan_file": plan_path.display().to_string(),
         });
+        if let (Some(map), Some(extra)) = (document.as_object_mut(), extras.as_object()) {
+            for (key, value) in extra {
+                map.insert(key.clone(), value.clone());
+            }
+        }
         print_pretty_json(&document)?;
         return Ok(());
     }
 
-    if in_step {
-        if let Some(writer) = real.as_ref() {
-            let outputs_path = writer.outputs_path().display();
-            match writer.summary_path() {
-                Some(summary_path) => {
-                    println!(
-                        "wrote {} outputs → $GITHUB_OUTPUT ({outputs_path}), job summary → \
-                         $GITHUB_STEP_SUMMARY ({})",
-                        outputs.len(),
-                        summary_path.display(),
-                    );
-                }
-                None => println!(
-                    "wrote {} outputs → $GITHUB_OUTPUT ({outputs_path})",
-                    outputs.len(),
-                ),
-            }
-            println!("plan file → {}", plan_path.display());
-            if degraded {
-                println!("degraded-mode warning emitted (::warning:: — no commit-graph)");
-            }
+    if sink.in_step() {
+        if let Some(writer) = sink.real.as_ref() {
+            print_in_step_confirmation(writer, outputs.len(), plan_path, degraded);
         }
     } else {
-        // Outside a workflow step the preview call log is the report:
-        // the exact env-file entries a real step would receive, then
-        // the job summary under its marker.
-        for call in preview.calls() {
-            match call {
-                ActionCall::SetOutput { name, value } => {
-                    let entry = env_file_entry(&name, &value)
-                        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-                    print!("{entry}");
-                }
-                ActionCall::AppendSummary { markdown } => {
-                    println!("# >> $GITHUB_STEP_SUMMARY");
-                    println!("{markdown}");
-                }
-                ActionCall::Warning { message } => println!("::warning::{message}"),
-            }
-        }
+        print_preview_calls(&sink.preview)?;
     }
     Ok(())
 }
