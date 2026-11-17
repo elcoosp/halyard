@@ -7,7 +7,8 @@
 //! Pipelines), the `param(...)` matrix line (`TeamCity`), the
 //! dynamic-config `parameters` line (`CircleCI`), the `matrix.setup`
 //! dimension block (`Buildkite`), the `axis` directive block
-//! (`Jenkins`) and the `parallel: steps:` block (`Bitbucket`).
+//! (`Jenkins`), the `parallel: steps:` block (`Bitbucket`) and the
+//! step-scoped `environment` fragment (`Drone`).
 //! Grammars VERIFIED per §0.4, fetched
 //! quotes in `docs/research/ci-selector-grammars.md`. Written first
 //! (red on the unresolved `halyard_core` API), implemented second.
@@ -114,6 +115,7 @@ fn an_empty_selection_renders_nothing() {
         "buildkite",
         "jenkins",
         "bitbucket",
+        "drone",
     ] {
         let adapter = ci_selector_adapter(system).expect("known adapter");
         assert!(
@@ -482,7 +484,67 @@ fn bitbucket_renders_one_parallel_step_per_affected_package() {
 }
 
 #[test]
-fn the_adapter_lookup_names_eleven_systems_and_refuses_the_rest() {
+fn drone_renders_the_environment_fragment_over_the_affected_closure() {
+    // docs.drone.io/pipeline/environment/syntax (VERIFIED 2026-11-17):
+    // "Drone provides the ability to define environment variables
+    // scoped to individual build steps" — the documented `environment`
+    // key sits under an individual step (the docs' own example maps
+    // `GOOS: linux` / `GOARCH: amd64` beside a step's `commands:`).
+    // Drone computes no dependency closure of its own (the affected
+    // closure rides the halyard selection), so one step-scoped
+    // `environment` fragment per affected package — the halyard-owned
+    // `HALYARD_PKG` identifier — carries the **full affected closure**,
+    // name-sorted; the consumer pastes the fragment under one step per
+    // package and reads `$HALYARD_PKG` in that step's `commands`.
+    let (changed, affected) = lib_app();
+    let adapter = ci_selector_adapter("drone").expect("drone is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "environment:".to_owned(),
+            "  HALYARD_PKG: app".to_owned(),
+            "environment:".to_owned(),
+            "  HALYARD_PKG: lib".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn drone_renders_one_environment_fragment_per_affected_package() {
+    // One step-scoped fragment per affected package, in the caller's
+    // name-sorted order (I3); the fragment is paste-ready modulo the
+    // step's own indentation (the Buildkite `matrix:` convention). The
+    // docs' rules the render leans on: "the environment section cannot
+    // expand environment variables or evaluate shell expressions" (the
+    // bare-word value rides verbatim — neither package-name grammar
+    // carries a shell metacharacter), and steps are "executed
+    // sequentially by default" with the `depends_on` DAG — "you must
+    // configure dependencies for all pipeline steps" — the consumer's
+    // parallelism policy, never the adapter's guard.
+    let changed = vec![pkg("lib", "crates/lib")];
+    let affected = vec![
+        pkg("app", "crates/app"),
+        pkg("cli", "crates/cli"),
+        pkg("lib", "crates/lib"),
+    ];
+    let adapter = ci_selector_adapter("drone").expect("drone is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "environment:".to_owned(),
+            "  HALYARD_PKG: app".to_owned(),
+            "environment:".to_owned(),
+            "  HALYARD_PKG: cli".to_owned(),
+            "environment:".to_owned(),
+            "  HALYARD_PKG: lib".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn the_adapter_lookup_names_twelve_systems_and_refuses_the_rest() {
     let systems: Vec<&'static str> = [
         "turbo",
         "nx",
@@ -495,6 +557,7 @@ fn the_adapter_lookup_names_eleven_systems_and_refuses_the_rest() {
         "buildkite",
         "jenkins",
         "bitbucket",
+        "drone",
     ]
     .iter()
     .filter_map(|system| ci_selector_adapter(system).map(CiSelectorAdapter::system))
@@ -512,11 +575,12 @@ fn the_adapter_lookup_names_eleven_systems_and_refuses_the_rest() {
             "circleci",
             "buildkite",
             "jenkins",
-            "bitbucket"
+            "bitbucket",
+            "drone"
         ]
     );
     assert!(
-        ci_selector_adapter("drone").is_none(),
+        ci_selector_adapter("travis").is_none(),
         "an unknown system is None — the adapter surface is closed, extending one is an ADR"
     );
 }
