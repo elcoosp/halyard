@@ -682,7 +682,13 @@ forge-free view `CheckVerdict`/`TitleOutcome`/`CheckRow` +
 `check_summary`. Fail-closed ordering is the contract: the
 classification precedes every effect, so a rejected title refuses
 `E-CLI-TITLE` before the plan file or any sink call exists. The §12
-modes `auto|release` stay absent rather than stubbed.)**
+`release` mode ships with its executor (ADR-0046, as-built): the release
+pass (`run_release_pass` — one plan, one reconciliation, the §11.1
+step-2 tag phase, the §11.2 push, the forge half) extracted from
+`cmd_release` renders as the §12 vocabulary through the same seam
+(`released` honest, the minted URLs by tag, the `ForgePosture` skip
+reason verbatim, no PR keys); the §12 `auto` mode stays absent rather
+than stubbed.)**
 
 ---
 
@@ -820,7 +826,7 @@ lands create-only, verbatim, with the parent directories created.)*
 | `doctor` | env diagnostics: shallow?, commit-graph?, tags?, token scopes?, config lint |
 | `migrate` | import from release-please/changesets/knope/release-plz configs, write `halyard.toml` + report of semantic differences |
 | `init` | scaffold workflow/config (never required) |
-| `affected [--base <ref>] [--ci SYSTEM]` | the affected-package selector (§16.3): `--ci` renders the selection in a CI system's own grammar (ADR-0032 + ADR-0034/0035/0036/0038/0039/0040/0041) |
+| `affected [--base <ref>] [--ci SYSTEM]` | the affected-package selector (§16.3): `--ci` renders the selection in a CI system's own grammar (ADR-0032 + ADR-0034/0035/0036/0038/0039/0040/0041/0045) |
 | `schema` | emit JSON Schemas (config, plan) |
 | `bench` | run built-in micro/macro benchmarks on the current repo |
 | `completions`, `man` | shell integration |
