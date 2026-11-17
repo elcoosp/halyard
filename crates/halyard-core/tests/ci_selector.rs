@@ -98,7 +98,9 @@ fn an_empty_selection_renders_nothing() {
     // An honest no-op: no affected packages ⇒ no CI expression — the
     // CI step skips itself (the CLI prints nothing, exit 0, the
     // existing empty-selection contract).
-    for system in ["turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity"] {
+    for system in [
+        "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci",
+    ] {
         let adapter = ci_selector_adapter(system).expect("known adapter");
         assert!(
             adapter.render(&[], &[]).is_empty(),
@@ -245,17 +247,61 @@ fn teamcity_renders_one_param_line_for_many_packages() {
 }
 
 #[test]
-fn the_adapter_lookup_names_seven_systems_and_refuses_the_rest() {
-    let systems: Vec<&'static str> = ["turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity"]
-        .iter()
-        .filter_map(|system| ci_selector_adapter(system).map(CiSelectorAdapter::system))
-        .collect();
+fn circleci_renders_the_continuation_parameters_line_over_the_affected_closure() {
+    // circleci.com/docs/guides/orchestrate/using-dynamic-configuration
+    // (VERIFIED 2026-11-17): the continuation orb's `continue` command
+    // takes a `parameters` value — "The `parameters` parameter accepts
+    // a JSON object as a string. Note the single quote encapsulating
+    // the full JSON object" — the documented shape is
+    // `parameters: '{ "further": true }'`. CircleCI computes no
+    // dependency closure of its own, so the object's `halyard_pkgs`
+    // array encodes the **full affected closure**, name-sorted, in the
+    // docs' own lower-snake pipeline-parameter spelling.
+    let (changed, affected) = lib_app();
+    let adapter = ci_selector_adapter("circleci").expect("circleci is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![r#"parameters: '{ "halyard_pkgs": ["app", "lib"] }'"#.to_owned()]
+    );
+}
+
+#[test]
+fn circleci_renders_one_line_for_many_packages() {
+    // One paste-ready `parameters:` entry per render (the documented
+    // continuation/continue shape); the consumer pastes it into the
+    // setup workflow's `continuation/continue` step and declares the
+    // matching pipeline parameter in the continuation config.
+    let changed = vec![pkg("lib", "crates/lib")];
+    let affected = vec![
+        pkg("app", "crates/app"),
+        pkg("cli", "crates/cli"),
+        pkg("lib", "crates/lib"),
+    ];
+    let adapter = ci_selector_adapter("circleci").expect("circleci is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![r#"parameters: '{ "halyard_pkgs": ["app", "cli", "lib"] }'"#.to_owned()]
+    );
+}
+
+#[test]
+fn the_adapter_lookup_names_eight_systems_and_refuses_the_rest() {
+    let systems: Vec<&'static str> = [
+        "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci",
+    ]
+    .iter()
+    .filter_map(|system| ci_selector_adapter(system).map(CiSelectorAdapter::system))
+    .collect();
     assert_eq!(
         systems,
-        vec!["turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity"]
+        vec![
+            "turbo", "nx", "bazel", "gha", "gitlab", "azure", "teamcity", "circleci"
+        ]
     );
     assert!(
-        ci_selector_adapter("circleci").is_none(),
+        ci_selector_adapter("buildkite").is_none(),
         "an unknown system is None — the adapter surface is closed, extending one is an ADR"
     );
 }
