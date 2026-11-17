@@ -116,6 +116,9 @@ fn bench_affected_ci(c: &mut Criterion) {
     let Some(teamcity) = ci_selector_adapter("teamcity") else {
         return;
     };
+    let Some(circleci) = ci_selector_adapter("circleci") else {
+        return;
+    };
     let mut group = c.benchmark_group("core");
     group.bench_function("ci_selector_turbo_40chain", |b| {
         b.iter(|| black_box(turbo.render(black_box(&changed), black_box(&affected))));
@@ -137,6 +140,9 @@ fn bench_affected_ci(c: &mut Criterion) {
     });
     group.bench_function("ci_selector_teamcity_40chain", |b| {
         b.iter(|| black_box(teamcity.render(black_box(&changed), black_box(&affected))));
+    });
+    group.bench_function("ci_selector_circleci_40chain", |b| {
+        b.iter(|| black_box(circleci.render(black_box(&changed), black_box(&affected))));
     });
     group.finish();
 }
