@@ -45,6 +45,10 @@ mod publish_effect;
 mod render;
 
 use halyard_cli::man;
+// The §16.2 `bench` command's aggregation lives on the lib target so
+// the bench harness and the bin share one implementation (the man
+// renderer's rationale).
+use halyard_cli::bench;
 
 /// Output format (§16.2 global flags).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -287,14 +291,15 @@ enum Command {
         #[arg(long, value_name = "REF")]
         base: Option<String>,
         /// Render the selection in a CI system's own grammar (M10 step
-        /// 2, ADR-0034 + the ADR-0035/0036/0038/0039/0040 adapters):
-        /// turbo's `--filter=...pkg` dependent filters, nx's `run-many
-        /// --projects=` list, bazel's `rdeps(//…)` query, gha's
-        /// matrix-output JSON array, gitlab's `parallel:matrix` hashes,
-        /// azure's `task.setvariable` output variable, teamcity's
-        /// matrix-build `param(...)` line, circleci's dynamic-config
-        /// continuation `parameters` line, buildkite's `matrix.setup`
-        /// dimension block, jenkins' declarative `axis` block — the
+        /// 2, ADR-0034 + the ADR-0035/0036/0038/0039/0040/0041
+        /// adapters): turbo's `--filter=...pkg` dependent filters, nx's
+        /// `run-many --projects=` list, bazel's `rdeps(//…)` query,
+        /// gha's matrix-output JSON array, gitlab's `parallel:matrix`
+        /// hashes, azure's `task.setvariable` output variable,
+        /// teamcity's matrix-build `param(...)` line, circleci's
+        /// dynamic-config continuation `parameters` line, buildkite's
+        /// `matrix.setup` dimension block, jenkins' declarative `axis`
+        /// block, bitbucket's `parallel: steps:` block — the
         /// machine-consumer surface beside `--format`.
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
@@ -322,6 +327,23 @@ enum Command {
     },
     /// Table: package, version, last tag, unreleased commits, pending.
     Status,
+    /// Run built-in micro/macro benchmarks on the current repo (§16.2,
+    /// ADR-0042): the §14 model pipeline (`discover` → `config` →
+    /// `history` → `plan`) timed per pass over this repo's real shape
+    /// and aggregated with the nearest-rank percentiles the §14.1
+    /// budget table speaks. One untimed warmup precedes the timed
+    /// passes (the no-op-warm model); `--no-cache` turns the run into
+    /// the cold measurement. The report is a **measurement**, never a
+    /// gate — the §14.1 budgets are shape-bound to the synthetic
+    /// fixtures the xtask harness measures, so the repo-shaped bench
+    /// reports its own shape (packages, pending commits, cache
+    /// posture) beside the timings and borrows no budget.
+    Bench {
+        /// Timed pipeline passes (one untimed warmup precedes them;
+        /// zero refuses `E-CLI-BENCH` — a measurement needs a basis).
+        #[arg(long, default_value_t = 8, value_name = "N")]
+        iterations: u32,
+    },
     /// Print the dependency graph in the given rendering (`--graph-format`:
     /// the rendering vocabulary lives on its own flag — the global
     /// `--format` owns the output-format vocabulary `human|json|gha`,
@@ -409,10 +431,14 @@ enum ManTopic {
     Check,
     /// The `halyard affected` page.
     Affected,
+    /// The `halyard action` page.
+    Action,
     /// The `halyard fetch` page.
     Fetch,
     /// The `halyard status` page.
     Status,
+    /// The `halyard bench` page.
+    Bench,
     /// The `halyard graph` page.
     Graph,
     /// The `halyard doctor` page.
@@ -501,6 +527,12 @@ enum CiSelector {
     /// consumer pastes inside its `matrix { axes { … } }`, each cell
     /// reading `$HALYARD_PKG` in its stages.
     Jenkins,
+    /// `Bitbucket`: one paste-ready `parallel:` block (the required
+    /// `steps:` property) over the affected closure — one step per
+    /// affected package whose script assigns `HALYARD_PKG` literally
+    /// (no per-step `env` exists in the documented grammar), which the
+    /// consumer's own tool invocation reads in the same script.
+    Bitbucket,
 }
 
 impl CiSelector {
@@ -517,6 +549,7 @@ impl CiSelector {
             Self::Circleci => "circleci",
             Self::Buildkite => "buildkite",
             Self::Jenkins => "jenkins",
+            Self::Bitbucket => "bitbucket",
         }
     }
 }
@@ -648,6 +681,10 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_status(cli, profiler)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Bench { iterations } => {
+            cmd_bench(cli, profiler, *iterations)?;
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Graph { graph_format } => {
             cmd_graph(cli, profiler, *graph_format)?;
             Ok(ExitCode::SUCCESS)
@@ -656,33 +693,41 @@ fn run(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
             cmd_doctor(cli, profiler, *registries)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::Schema { what } => {
-            let document = match what {
-                SchemaKind::Plan => include_str!("../../../schemas/halyard-plan-v1.json"),
-                SchemaKind::Config => include_str!("../../../schemas/halyard-config-v1.json"),
-            };
-            println!("{document}");
-            Ok(ExitCode::SUCCESS)
-        }
+        Command::Schema { what } => Ok(cmd_schema(*what)),
         Command::Completions { shell } => {
             let mut command = Cli::command();
             generate(*shell, &mut command, "halyard", &mut std::io::stdout());
             Ok(ExitCode::SUCCESS)
         }
-        Command::Man { what } => {
-            let root = Cli::command();
-            let page = match what.command_name() {
-                None => man::top_page(&root),
-                // Unreachable through the closed value enum; the
-                // fallback keeps the shell total over any name.
-                Some(name) => {
-                    man::command_page(&root, &name).unwrap_or_else(|| man::top_page(&root))
-                }
-            };
-            print!("{page}");
-            Ok(ExitCode::SUCCESS)
-        }
+        Command::Man { what } => Ok(cmd_man(*what)),
     }
+}
+
+/// The `schema` command: prints the frozen §16.2 schema documents (the
+/// single source of truth lives in `schemas/`, generated from the Rust
+/// types and drift-checked by `xtask schema-check`).
+fn cmd_schema(what: SchemaKind) -> ExitCode {
+    let document = match what {
+        SchemaKind::Plan => include_str!("../../../schemas/halyard-plan-v1.json"),
+        SchemaKind::Config => include_str!("../../../schemas/halyard-config-v1.json"),
+    };
+    println!("{document}");
+    ExitCode::SUCCESS
+}
+
+/// The `man` command (§16.2): the `halyard(1)` page or one subcommand's
+/// page, derived from the clap tree (the completions renderer's
+/// single-source-of-truth rule), printed to stdout.
+fn cmd_man(what: ManTopic) -> ExitCode {
+    let root = Cli::command();
+    let page = match what.command_name() {
+        None => man::top_page(&root),
+        // Unreachable through the closed value enum; the
+        // fallback keeps the shell total over any name.
+        Some(name) => man::command_page(&root, &name).unwrap_or_else(|| man::top_page(&root)),
+    };
+    print!("{page}");
+    ExitCode::SUCCESS
 }
 
 /// Serializes `value` into a `serde_json::Value` (`E-CLI-RENDER` on
@@ -2348,6 +2393,67 @@ fn cmd_status(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
         Format::Json => print_pretty_json(&json_value(&render::status_rows(&context))?)?,
         Format::Gha => print!("{}", render::status_gha(&context)),
         Format::Human => print!("{}", render::status_human(&context)),
+    }
+    Ok(())
+}
+
+/// The `bench` command (§16.2, ADR-0042): the built-in measurement of
+/// the planning pipeline over the current repo. One untimed warmup
+/// pass (page cache + the §8.7 per-commit cache warm — the no-op-warm
+/// model) precedes `iterations` timed passes; each pass runs the same
+/// `discover` → `config` → `history` → `plan` pipeline every planning
+/// command runs, timed through the same span vocabulary the
+/// `--profile` trace emits, and reduced by the pure aggregation
+/// (`crate::bench`) to the nearest-rank percentiles the §14.1 budget
+/// table speaks. The report carries the repo's shape beside the
+/// timings — the budgets stay xtask-side (shape-bound), so this is a
+/// measurement surface, never a gate.
+fn cmd_bench(cli: &Cli, _profiler: &mut Profiler, iterations: u32) -> Result<(), CliError> {
+    if iterations == 0 {
+        return Err(CliError::new(
+            "E-CLI-BENCH",
+            "bench measures at least one timed pass; --iterations 0 has no basis. \
+             Pass a positive count (the default is 8)",
+        ));
+    }
+    // The warmup pass: untimed by construction (a disabled profiler
+    // records no spans), its only effect is the warm state the §14.1
+    // warm model measures against.
+    let mut warmup = Profiler::start(false);
+    compute_plan(cli, &mut warmup)?;
+    let mut samples: Vec<bench::StageSample> = Vec::new();
+    // The shape rides the last timed pass (deterministic: the pipeline
+    // is pure over the same repo state — the digests agree pass to
+    // pass).
+    let mut shape: Option<(usize, usize)> = None;
+    for _ in 0..iterations {
+        let mut pass = Profiler::start(true);
+        let context = context(cli, &mut pass)?;
+        let plan = plan_from_context(&context, &mut pass)?;
+        shape = Some((
+            context.discovery.workspace.packages().len(),
+            context.history.digest().commits.len(),
+        ));
+        samples.extend(
+            pass.recorded_spans()
+                .into_iter()
+                .map(|(stage, duration_us)| bench::StageSample { stage, duration_us }),
+        );
+        drop(plan);
+    }
+    let (packages, pending_commits) =
+        shape.unwrap_or_else(|| unreachable!("at least one timed pass ran"));
+    let report = bench::BenchReport {
+        iterations,
+        cache_warm: !cli.no_cache,
+        packages,
+        pending_commits,
+        stages: bench::aggregate(&samples),
+    };
+    match cli.format {
+        Format::Json => print_pretty_json(&render::bench_json(&report))?,
+        Format::Gha => print!("{}", render::bench_gha(&report)),
+        Format::Human => print!("{}", render::bench_human(&report)),
     }
     Ok(())
 }
