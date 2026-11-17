@@ -446,3 +446,25 @@ fn affected_ci_bitbucket_renders_the_parallel_steps_block() -> Result<(), BoxErr
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_drone_renders_the_environment_fragments() -> Result<(), BoxError> {
+    // docs.drone.io/pipeline/environment/syntax (VERIFIED 2026-11-17):
+    // "Drone provides the ability to define environment variables
+    // scoped to individual build steps" — one step-scoped `environment`
+    // fragment per affected package, name-sorted; the consumer pastes
+    // the fragment under one step per package (steps are "executed
+    // sequentially by default"; the `depends_on` DAG is the consumer's
+    // parallelism policy) and reads `$HALYARD_PKG` in that step's
+    // commands.
+    let fx = two_package_fixture("cli-affected-ci-drone")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "drone"])?;
+    assert!(ok, "the drone adapter renders: {text}");
+    assert!(
+        text.contains("environment:\n  HALYARD_PKG: app\nenvironment:\n  HALYARD_PKG: lib"),
+        "the affected closure as the step-scoped environment fragments: {text}"
+    );
+    Ok(())
+}
