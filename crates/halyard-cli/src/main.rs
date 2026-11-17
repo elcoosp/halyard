@@ -281,9 +281,13 @@ enum Command {
         #[arg(long, value_name = "REF")]
         base: Option<String>,
         /// Render the selection in a CI system's own grammar (M10 step
-        /// 2, ADR-0034): turbo's `--filter=...pkg` dependent filters,
-        /// nx's `run-many --projects=` list, bazel's `rdeps(//…)`
-        /// query — the machine-consumer surface beside `--format`.
+        /// 2, ADR-0034 + the ADR-0035/0036 adapters): turbo's
+        /// `--filter=...pkg` dependent filters, nx's `run-many
+        /// --projects=` list, bazel's `rdeps(//…)` query, gha's
+        /// matrix-output JSON array, gitlab's `parallel:matrix` hashes,
+        /// azure's `task.setvariable` output variable, teamcity's
+        /// matrix-build `param(...)` line — the machine-consumer
+        /// surface beside `--format`.
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
     },
@@ -441,6 +445,16 @@ enum CiSelector {
     /// the `parallel:matrix` array-of-hashes the consumer pastes under
     /// `matrix:` and reads as `$HALYARD_PKG` in the script.
     Gitlab,
+    /// Azure Pipelines: one `##vso[task.setvariable
+    /// variable=HALYARD_PKGS;isOutput=true]` logging command over the
+    /// affected closure — the documented output variable the consumer
+    /// iterates with `split(…, ',')` + `${{ each }}`.
+    Azure,
+    /// `TeamCity`: one `param("env.HALYARD_PKG", listOf(value(…), …))`
+    /// matrix-build line over the affected closure — the documented
+    /// Kotlin DSL entry the consumer pastes inside its `matrix { }`
+    /// block, each instance reading `$HALYARD_PKG`.
+    Teamcity,
 }
 
 impl CiSelector {
@@ -452,6 +466,8 @@ impl CiSelector {
             Self::Bazel => "bazel",
             Self::Gha => "gha",
             Self::Gitlab => "gitlab",
+            Self::Azure => "azure",
+            Self::Teamcity => "teamcity",
         }
     }
 }
@@ -2277,9 +2293,10 @@ fn cmd_status(cli: &Cli, profiler: &mut Profiler) -> Result<(), CliError> {
 /// runs — discover → git history → selection — with no network and no
 /// subprocess (I5/I6); `--base` attributes against an explicit ref
 /// (the PR-selection shape) and refuses an unresolvable ref
-/// fail-closed `E-GIT-REF`. `--ci` (M10 step 2, ADR-0034) renders the
-/// selection in a CI system's own grammar — the machine-consumer
-/// surface beside the `--format` renderings.
+/// fail-closed `E-GIT-REF`. `--ci` (M10 step 2, ADR-0034 + the
+/// ADR-0035/0036 adapters) renders the selection in a CI system's own
+/// grammar — the machine-consumer surface beside the `--format`
+/// renderings.
 fn cmd_affected(
     cli: &Cli,
     profiler: &mut Profiler,
