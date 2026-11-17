@@ -84,24 +84,34 @@ pub enum MachineEffect {
     PrOpened {
         /// The forge's PR number.
         number: u64,
+        /// The forge's own PR URL — the report carries what the forge
+        /// minted, never a composed guess (the §12 `pr_url` output
+        /// renders it verbatim, ADR-0043).
+        url: String,
     },
     /// The Release PR's body/title differed and was rewritten in place —
     /// same number, no duplicate (I1).
     PrUpdated {
         /// The forge's PR number.
         number: u64,
+        /// The forge's own PR URL (unchanged by the rewrite).
+        url: String,
     },
     /// The Release PR already carried exactly this title and body:
     /// no mutating call was made (the §11.5 no-op path).
     PrUnchanged {
         /// The forge's PR number.
         number: u64,
+        /// The forge's own PR URL.
+        url: String,
     },
     /// The stale Release PR was closed under an empty plan (§11.1 step 3);
     /// the re-run finds nothing and never double-closes.
     PrClosed {
         /// The forge's PR number.
         number: u64,
+        /// The forge's own PR URL of the closed PR.
+        url: String,
     },
 }
 
@@ -209,14 +219,23 @@ pub fn run_release_machine(
         // already carries exactly this title+body (I1: a no-op pass
         // makes zero mutating calls; the §11.5 budget says find only).
         (Some(spec), Some(pr)) if pr.title == spec.title && pr.body == spec.body => {
-            effects.push(MachineEffect::PrUnchanged { number: pr.number });
+            effects.push(MachineEffect::PrUnchanged {
+                number: pr.number,
+                url: pr.url.clone(),
+            });
         }
         (Some(spec), found) => {
             let pr = forge.upsert_pr(spec)?;
             effects.push(if found.is_some() {
-                MachineEffect::PrUpdated { number: pr.number }
+                MachineEffect::PrUpdated {
+                    number: pr.number,
+                    url: pr.url.clone(),
+                }
             } else {
-                MachineEffect::PrOpened { number: pr.number }
+                MachineEffect::PrOpened {
+                    number: pr.number,
+                    url: pr.url.clone(),
+                }
             });
         }
         // Plan empty: close the stale Release PR if one exists (§11.1
@@ -224,12 +243,18 @@ pub fn run_release_machine(
         (None, Some(pr)) => {
             let closed = forge.close_pr(&input.branch)?;
             effects.push(if closed {
-                MachineEffect::PrClosed { number: pr.number }
+                MachineEffect::PrClosed {
+                    number: pr.number,
+                    url: pr.url.clone(),
+                }
             } else {
                 // The PR vanished between the find and the close (a
                 // racing actor closed it): the end state is already the
                 // intended one, so the pass reports nothing (I1).
-                MachineEffect::PrUnchanged { number: pr.number }
+                MachineEffect::PrUnchanged {
+                    number: pr.number,
+                    url: pr.url.clone(),
+                }
             });
         }
         // Plan empty and no stale PR: exit having spent the one find
