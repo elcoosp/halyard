@@ -144,10 +144,11 @@ halyard affected --format gha
 
 # The CI-consumer surface: render the selection in a CI system's own
 # grammar — one line per argv atom / the one expression the step
-# consumes (ADR-0034/0035/0036; the seven systems are turbo, nx, bazel,
-# gha, gitlab, azure, teamcity).
+# consumes (ADR-0034/0035/0036/0038; the eight systems are turbo, nx,
+# bazel, gha, gitlab, azure, teamcity, circleci).
 halyard affected --ci turbo
 halyard affected --ci azure
+halyard affected --ci circleci
 ```
 
 ## Man pages (§16.2)
@@ -162,6 +163,45 @@ halyard man affected
 # Pages derive from the parser itself, so they never drift from --help.
 halyard man plan | groff -mandoc -T ascii | less
 ```
+
+## The §12 action forecast (ADR-0037)
+
+`halyard action` renders the §12 outputs contract offline (I5): plan →
+the canonical plan file → the §12 outputs + job summary. Outside a
+workflow step the preview call log is the report — the exact env-file
+entries a real step would receive:
+
+```bash
+$ halyard action
+released=false
+published=false
+plan_json=halyard-plan.json
+releases_json=[{"ecosystem":"cargo","name":"lib","tag":"lib-v0.1.1","url":"","version":"0.1.1"}]
+lib--version=0.1.1
+lib--tag=lib-v0.1.1
+paths_released<<HALYARD
+crates/lib/Cargo.toml
+HALYARD
+# >> $GITHUB_STEP_SUMMARY
+## halyard plan
+
+| package | version | bump | tag |
+|---|---|---|---|
+| lib | 0.1.0 → 0.1.1 | patch | lib-v0.1.1 |
+
+1 planned, 1 skipped · zero API calls (offline forecast, I5)
+```
+
+Inside a workflow step (`GITHUB_OUTPUT` / `GITHUB_STEP_SUMMARY` set)
+the same calls land in the env files verbatim and the run reports the
+sinks; a walk without a commit-graph emits the §12 `::warning::`
+annotation (the engine's own degraded marker). Downstream steps gate
+on the outputs (`steps.hly.outputs.lib--version`, `fromJSON(...)` over
+`releases_json`), and `--plan-out PATH` names the canonical plan file
+(the `plan_json` value) whose parent directory must exist
+(`E-ACTION-PLAN` — the caller's contract, never invented). The
+remaining §12 modes (`auto|pr|release|check`) land with their
+executors and are absent rather than stubbed.
 
 ## Command status (honest)
 
@@ -185,7 +225,8 @@ halyard man plan | groff -mandoc -T ascii | less
 | `migrate` | available (M4.7 step 1, ADR-0022 + ADR-0024): the release-please (`release-please-config.json` + `.release-please-manifest.json`), changesets (`.changeset/config.json`), knope (`knope.toml`) and release-plz (`release-plz.toml` / `.release-plz.toml` / `.config/release-plz.toml`, the documented top-down search order) configurations are surveyed against the `halyard.toml` v1 surface — every mappable foreign key is a mapped row with the pinned value (the foreign tool's documented defaults preserved where they differ from halyard's, the note saying which side is the foreign default), every semantic difference is an unmapped row with its reason, and a validated draft `halyard.toml` rides the report; `--write` lands the reviewed draft at `halyard.toml` through the engine's `DraftSink` — atomic (temp sibling → fsync → rename), create-only: an existing config is never clobbered and two configured tools are a refusal naming every candidate, never a guess (`E-CFG-MIGRATE`; nothing configured is an honest `nothing_configured` no-op; ADR-0023); without the flag the command stays report-only; needs no git repo and no existing `halyard.toml`; a configured-but-unparseable foreign file refuses fail-closed `E-CFG-MIGRATE`, an absent one is `not detected` in the report |
 | `init [--github]` | available (ADR-0029, §16.1/§16.2): discovery surveys the repository and the engine plans a create-only write — the documented `halyard.toml` skeleton (every key optional; the defaults ride as comments and loading it yields the built-in defaults exactly, so zero-config stays zero-config) and, with `--github`, the §16.1 one-file release workflow (`.github/workflows/release.yml`); atomic (temp sibling → fsync → rename) with the workflow's parent directories created; gated before any write — a refusal never leaves a half-scaffold (`E-CFG-INIT`); an existing `.config/halyard.toml` refuses first (a root scaffold would shadow it); needs no git repo and reads no config |
 | `man [<command>]` | available (§16.2 shell integration): `halyard man` renders the `halyard(1)` page and `halyard man <command>` one subcommand's page — roff, derived from the clap definition itself (the completions renderer's single-source-of-truth rule, so a flag added to the parser appears on the page without a second edit), byte-stable across runs (I3), printed to stdout (the `schema`/`completions` convention); an unknown topic is clap's own usage error naming the valid values |
-| `bench` / `action` | **(their milestones)** — absent rather than stubbed (§16.2) |
+| `action [--mode plan] [--plan-out PATH]` | available (§12 step 1, ADR-0037): the plan-mode forecast through the action-output seam — plan → the canonical plan file (`plan_json`, default `halyard-plan.json`, `--plan-out` overrides, `E-ACTION-PLAN` on an unwritable path) → the §12 outputs (`released`/`published` honestly `false`, `releases_json` with the `url` empty until a forge mode fills it, the per-package `--version`/`--tag` keys, `paths_released`) and the §12 job summary; inside a workflow step (`GITHUB_OUTPUT` set) the calls land in the env files verbatim, outside, the preview call log prints them (nothing written but the plan file); offline (I5); the remaining §12 modes (`auto\|pr\|release\|check`) are absent rather than stubbed |
+| `bench` | **(its milestone)** — absent rather than stubbed (§16.2) |
 
 ## Forge credentials (M4.1c, ADR-0014)
 
@@ -330,10 +371,11 @@ Failures carry the §15.4 stable codes (`E-DISC-*`, `E-GIT-*`, `E-PLAN-*`,
 `E-CLI-*`, …) and render through `miette`; every code has a page under
 [docs/errors](../../docs/errors/README.md).
 
-## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035 + ADR-0036)
+## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035 + ADR-0036 + ADR-0038)
 
-`halyard affected --ci turbo|nx|bazel|gha|gitlab|azure|teamcity` renders
-the selection in the CI system's own grammar — turbo's `--filter=...pkg`
+`halyard affected
+--ci turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci` renders the
+selection in the CI system's own grammar — turbo's `--filter=...pkg`
 dependent filters (one per change root, unioned by turbo), nx's
 `run-many --projects=a,b` list (the affected closure), bazel's
 `rdeps(//..., //pkg/...)` query, GitHub Actions' matrix-output value
@@ -342,8 +384,13 @@ inside the downstream `strategy.matrix`), GitLab's `parallel:matrix`
 hashes (one `- HALYARD_PKG: <name>` line per affected package), Azure
 Pipelines' `##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]`
 output variable (the closure comma-joined; the documented consumption is
-the `split(…, ',')` + `${{ each }}` example) and TeamCity's Matrix Build
+the `split(…, ',')` + `${{ each }}` example), TeamCity's Matrix Build
 `param("env.HALYARD_PKG", listOf(value(…), …))` line (pasted inside the
-`matrix { }` block; each instance reads `$HALYARD_PKG`). The grammars
+`matrix { }` block; each instance reads `$HALYARD_PKG`) and CircleCI's
+dynamic-config continuation line
+`parameters: '{ "halyard_pkgs": [...] }'` (the documented
+`continuation/continue` step's `parameters` value — a JSON object as a
+string; pasted into the setup workflow, declared as a pipeline
+parameter in the continuation config). The grammars
 are VERIFIED in `docs/research/ci-selector-grammars.md`; an empty
 selection prints nothing (the CI step skips itself, exit 0).
