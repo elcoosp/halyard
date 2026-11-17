@@ -147,13 +147,6 @@ impl FixedHistory {
     pub fn new(head: Option<Oid>, digest: HistoryDigest) -> Self {
         Self { head, digest }
     }
-
-    /// Mutable digest access for test-fixture construction (the fields of
-    /// [`HistoryDigest`] are public; this keeps `FixedHistory`'s own
-    /// fields private so invariants stay with the constructors).
-    pub fn digest_mut(&mut self) -> &mut HistoryDigest {
-        &mut self.digest
-    }
 }
 
 impl HistoryProvider for FixedHistory {
