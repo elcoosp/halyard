@@ -661,3 +661,178 @@ fn check_summary_renders_the_rejected_and_no_title_postures() {
         "the counts ride in every posture: {summary}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The §12 `release` mode's renderer (ADR-0046): the §11.1 tag phase's
+// pass view — the git-side tags, the push posture and the forge half —
+// through the same seam. The outputs ride the plan vocabulary (no PR
+// keys — the release mode opens none); `released` is the pass's honest
+// execution value. Written first (red on the unresolved API),
+// implemented second.
+// ---------------------------------------------------------------------------
+
+use std::path::Path as ReleasePath;
+
+use halyard_action::{ForgePosture, ReleasePass, release_outputs, release_summary};
+
+/// A live release pass: two tags created, the push phase pushed them,
+/// the forge half minted one URL (the other release's URL rides the
+/// next machine pass — the honest per-tag map carries only what ran).
+/// The created tags ride the tag phase's own name-sorted row order
+/// (I3 — `app-v1.1.0` sorts before `core-v0.5.0`).
+fn live_release_pass() -> ReleasePass {
+    ReleasePass {
+        released: true,
+        forecast: false,
+        created_tags: vec!["app-v1.1.0".to_owned(), "core-v0.5.0".to_owned()],
+        release_urls: BTreeMap::from([(
+            "core-v0.5.0".to_owned(),
+            "https://github.com/example/monorepo/releases/tag/core-v0.5.0".to_owned(),
+        )]),
+        forge: ForgePosture::Ran {
+            repo: "example/monorepo".to_owned(),
+            releases: 1,
+        },
+    }
+}
+
+#[test]
+fn release_outputs_carry_the_tag_phase_keys_in_documented_order() -> Result<(), BoxError> {
+    let plan = sample_plan();
+    let pass = live_release_pass();
+    let outputs = release_outputs(&plan, ReleasePath::new("out/plan.json"), &pass)?;
+    let flat: Vec<(String, String)> = outputs
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+    let entry = |idx: usize| -> Option<(String, String)> { flat.get(idx).cloned() };
+    // The documented order: released, published, plan_json,
+    // releases_json — no `pr_number`/`pr_url` (the release mode opens
+    // no Release PR) — then the per-package keys and `paths_released`.
+    assert_eq!(entry(0), Some(("released".to_owned(), "true".to_owned())));
+    assert_eq!(entry(1), Some(("published".to_owned(), "false".to_owned())));
+    assert_eq!(
+        entry(2),
+        Some(("plan_json".to_owned(), "out/plan.json".to_owned()))
+    );
+    assert!(entry(3).is_some_and(|(name, _)| name == "releases_json"));
+    assert!(
+        outputs.iter().all(|(name, _)| name.as_str() != "pr_number"),
+        "the release mode opens no Release PR — no PR keys: {flat:?}"
+    );
+    assert!(
+        flat.iter()
+            .any(|(name, value)| name == "core--tag" && value == "core-v0.5.0"),
+        "the per-package tag key: {flat:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_outputs_fill_the_minted_urls_and_keep_the_honest_released_value() -> Result<(), BoxError>
+{
+    let plan = sample_plan();
+    // Live pass: the forge-minted URL fills the core row by tag; the
+    // app row keeps the empty url (its forge release lands on the next
+    // pass or was already present — nothing invented).
+    let outputs = release_outputs(
+        &plan,
+        ReleasePath::new("out/plan.json"),
+        &live_release_pass(),
+    )?;
+    let releases = outputs
+        .iter()
+        .find(|(name, _)| name.as_str() == "releases_json")
+        .map(|(_, value)| value.clone())
+        .expect("releases_json is present");
+    let rows: serde_json::Value = serde_json::from_str(&releases)?;
+    let array = rows.as_array().expect("releases_json is an array");
+    let url_of = |name: &str| -> Option<&serde_json::Value> {
+        array
+            .iter()
+            .find(|row| row.get("name") == Some(&serde_json::json!(name)))
+            .and_then(|row| row.get("url"))
+    };
+    assert_eq!(
+        url_of("core"),
+        Some(&serde_json::json!(
+            "https://github.com/example/monorepo/releases/tag/core-v0.5.0"
+        ))
+    );
+    assert_eq!(url_of("app"), Some(&serde_json::json!("")));
+
+    // The dry forecast: `released` stays false — nothing was executed
+    // (I5), even though the git-side rows are the forecast's own.
+    let forecast = ReleasePass {
+        released: false,
+        forecast: true,
+        created_tags: vec!["core-v0.5.0".to_owned()],
+        release_urls: BTreeMap::from([(
+            "core-v0.5.0".to_owned(),
+            "preview://core-v0.5.0".to_owned(),
+        )]),
+        forge: ForgePosture::Skipped {
+            reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
+        },
+    };
+    let outputs = release_outputs(&plan, ReleasePath::new("out/plan.json"), &forecast)?;
+    let released_value = outputs
+        .iter()
+        .find(|(name, _)| name.as_str() == "released")
+        .map(|(_, value)| value.clone())
+        .expect("released is present");
+    assert_eq!(released_value, "false");
+    Ok(())
+}
+
+#[test]
+fn release_summary_names_the_tags_the_push_and_the_forge_posture() {
+    let plan = sample_plan();
+    let summary = release_summary(&plan, &live_release_pass());
+    assert!(
+        summary.starts_with("## halyard release\n"),
+        "the §12 heading: {summary}"
+    );
+    assert!(
+        summary.contains("| core | 0.4.1 → 0.5.0 | minor | core-v0.5.0 |"),
+        "the release table rides: {summary}"
+    );
+    assert!(
+        summary.contains("created app-v1.1.0, core-v0.5.0"),
+        "the created tags, name-sorted (I3): {summary}"
+    );
+    assert!(
+        summary.contains("forge releases in example/monorepo (1 minted)"),
+        "the forge posture: {summary}"
+    );
+    assert!(
+        summary.contains("2 planned, 1 skipped"),
+        "the honest counts ride: {summary}"
+    );
+    assert!(
+        !summary.contains("forecast"),
+        "a live pass is not labelled a forecast: {summary}"
+    );
+
+    // The dry forecast says so, and the honest skip names its reason.
+    let forecast = ReleasePass {
+        released: false,
+        forecast: true,
+        created_tags: vec!["core-v0.5.0".to_owned()],
+        release_urls: BTreeMap::new(),
+        forge: ForgePosture::Skipped {
+            reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
+        },
+    };
+    let dry_summary = release_summary(&plan, &forecast);
+    assert!(
+        dry_summary.contains("forecast (nothing executed)"),
+        "the forecast posture is stated: {dry_summary}"
+    );
+    assert!(
+        dry_summary.contains(
+            "forge releases skipped (dry run — the forge half is forecast, not executed (I5))"
+        ),
+        "the skip reason rides verbatim: {dry_summary}"
+    );
+}
