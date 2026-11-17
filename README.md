@@ -63,15 +63,22 @@ surveys the repo, the engine plans a create-only write — the documented
 defaults exactly, plus the §16.1 one-file release workflow with
 `--github` — refusals carry `E-CFG-INIT` and never leave a
 half-scaffold)** — and the §16.3/M10 affected-package selector (`halyard
-affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 + ADR-0034/0035/0036:
-the CI question — which packages must rebuild and test? — answered as the
-pending-commit attribution closed over the workspace's reverse
-dependency edges, dev edges included, with an explicit-ref base for
-the PR-selection shape and the selection rendered in the CI systems'
-own grammars — turbo, nx, bazel, GitHub Actions' matrix-output JSON
-array, GitLab's `parallel:matrix` hashes, Azure Pipelines'
-`task.setvariable` output variable and TeamCity's matrix-build
-`param(...)` line).** The
+affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 +
+ADR-0034/0035/0036/0038: the CI question — which packages must rebuild
+and test? — answered as the pending-commit attribution closed over the
+workspace's reverse dependency edges, dev edges included, with an
+explicit-ref base for the PR-selection shape and the selection rendered
+in the CI systems' own grammars — turbo, nx, bazel, GitHub Actions'
+matrix-output JSON array, GitLab's `parallel:matrix` hashes, Azure
+Pipelines' `task.setvariable` output variable, TeamCity's matrix-build
+`param(...)` line and CircleCI's dynamic-config continuation
+`parameters: '{ "halyard_pkgs": [...] }'` line) — and the §12
+action-output seam (M10/§12 step 1,
+ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
+the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
+env-file writers and the ordered-call-log preview, the plan-mode forecast
+wired as `halyard action` with the canonical plan file and the §12 job
+summary).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -210,6 +217,9 @@ crates/
                          change-file grammar (.halyard/changes/*.md, ADR-0028)
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
+  halyard-action         §12 action-output seam (ADR-0037): the outputs vocabulary over the
+                         GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files, the preview call log,
+                         the plan-mode forecast renderer (`halyard action`)
   halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
                          packument `published()` + deterministic visibility wait (§13)
   halyard-publish        Publish engine (M5.2): plan validation (I8), topo layers, resume,
@@ -273,6 +283,8 @@ cargo run -p halyard-eco-cargo --example resolve_registry
 cargo run -p halyard-eco-npm --example scan_package_json
 cargo run -p halyard-eco-npm --example resolve_publish_registry
 cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
+cargo run -p halyard-eco-npm --example publish_argv
+cargo run -p halyard-cache --example cache_roundtrip
 cargo run -p halyard-git --example walk_history
 cargo run -p halyard-git --example cached_walk
 cargo run -p halyard-git --example tag_phase
@@ -300,6 +312,7 @@ cargo run -p halyard-forge --example pr_preview
 cargo run -p halyard-forge --example governed_release
 cargo run -p halyard-forge-github --example forge_exchange
 cargo run -p halyard-forge-github --example app_exchange
+cargo run -p halyard-action --example plan_forecast
 ```
 
 Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
