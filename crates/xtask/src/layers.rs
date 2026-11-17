@@ -40,6 +40,16 @@ struct LayerRule {
 }
 
 const RULES: &[LayerRule] = &[
+    // M10/§12 step 1 (ADR-0037): the action-output seam — the §12
+    // outputs vocabulary rendered from the plan wire contract over the
+    // GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files. Depends on core
+    // (the plan types) + serde_json (the `releases_json` rows); the
+    // env-file grammar is the crate's own surface.
+    LayerRule {
+        name: "halyard-action",
+        workspace: &["halyard-core"],
+        external: Some(&["serde_json"]),
+    },
     LayerRule {
         name: "halyard-core",
         workspace: &[],
@@ -319,6 +329,7 @@ mod tests {
     fn every_current_member_has_a_rule() {
         let names = rule_names();
         for member in [
+            "halyard-action",
             "halyard-cache",
             "halyard-changelog",
             "halyard-cli",
