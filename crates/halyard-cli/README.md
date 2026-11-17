@@ -141,6 +141,13 @@ halyard affected --base origin/main --format json
 # The gha render carries the markdown table plus the machine-readable
 # tally line (affected=N changed=M).
 halyard affected --format gha
+
+# The CI-consumer surface: render the selection in a CI system's own
+# grammar — one line per argv atom / the one expression the step
+# consumes (ADR-0034/0035/0036; the seven systems are turbo, nx, bazel,
+# gha, gitlab, azure, teamcity).
+halyard affected --ci turbo
+halyard affected --ci azure
 ```
 
 ## Man pages (§16.2)
@@ -164,7 +171,7 @@ halyard man plan | groff -mandoc -T ascii | less
 | `explain <pkg>` | available (M1.10) |
 | `status` | available (M1.10) |
 | `graph [--graph-format]` | available (M1.10; the rendering flag is `--graph-format` — text \| mermaid \| dot \| json — while the global `--format` owns the output vocabulary; sharing one flag made every `graph` invocation panic at HEAD, fixed with this rename) |
-| `affected [--base <ref>]` | available (ADR-0032, §16.3/M10 step 1): the CI selector — the packages a change touches, directly (pending commits since the base) and transitively (dependents closed over the workspace's reverse dependency edges, dev edges included, the nearest affected ancestor as `via`); `--base` selects against one explicit ref (branch, remote-tracking ref or tag) instead of the release bases — the PR-selection shape — and refuses an unresolvable ref fail-closed (`E-GIT-REF` naming it); offline (I5), JSON byte-stable (I3) |
+| `affected [--base <ref>] [--ci SYSTEM]` | available (ADR-0032, §16.3/M10 step 1 + ADR-0034/0035/0036 step 2): the CI selector — the packages a change touches, directly (pending commits since the base) and transitively (dependents closed over the workspace's reverse dependency edges, dev edges included, the nearest affected ancestor as `via`); `--base` selects against one explicit ref (branch, remote-tracking ref or tag) instead of the release bases — the PR-selection shape — and refuses an unresolvable ref fail-closed (`E-GIT-REF` naming it); offline (I5), JSON byte-stable (I3); `--ci SYSTEM` renders the selection in the CI system's own grammar (turbo \| nx \| bazel \| gha \| gitlab \| azure \| teamcity — see the adapters section below) |
 | `doctor [--registries]` | available (M1.10; M5.1 adds the opt-in `--registries` probe — crates.io + npm reachability and protocol comprehension through the `Registry` seam, network touched only by the flag, I5) |
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
@@ -302,7 +309,11 @@ halyard publish
 Publishing is opt-in (`[publish] enabled = true`, §16.4); the engine
 refuses a tampered plan (`E-PUB-PLAN`), a target dependency cycle
 (`E-PUB-ORDER`), an unroutable registry (`E-PUB-REGISTRY`) and a failed
-tool (`E-PUB-EFFECT`) with the stable `E-PUB-*` codes.
+tool (`E-PUB-EFFECT`) with the stable `E-PUB-*` codes. The npm rows
+carry the resolved `publish.npm.access`/`provenance` options
+(ADR-0033); an explicit `provenance = true` live run refuses
+`E-PUB-AUTH` outside a supported cloud runtime (the `doctor`
+`publish-provenance` check shows the verdict).
 
 ## Global flags
 
@@ -318,19 +329,21 @@ per-commit cache; leave `$GIT_DIR/halyard/cache/v1/` untouched),
 Failures carry the §15.4 stable codes (`E-DISC-*`, `E-GIT-*`, `E-PLAN-*`,
 `E-CLI-*`, …) and render through `miette`; every code has a page under
 [docs/errors](../../docs/errors/README.md).
-## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035)
 
-`halyard affected --ci turbo|nx|bazel|gha|gitlab` renders the selection
-in the CI system's own grammar — turbo's `--filter=...pkg` dependent
-filters (one per change root, unioned by turbo), nx's
+## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035 + ADR-0036)
+
+`halyard affected --ci turbo|nx|bazel|gha|gitlab|azure|teamcity` renders
+the selection in the CI system's own grammar — turbo's `--filter=...pkg`
+dependent filters (one per change root, unioned by turbo), nx's
 `run-many --projects=a,b` list (the affected closure), bazel's
 `rdeps(//..., //pkg/...)` query, GitHub Actions' matrix-output value
 (the affected closure as one compact JSON array, fed to `fromJSON`
-inside the downstream `strategy.matrix`) and GitLab's `parallel:matrix`
-hashes (one `- HALYARD_PKG: <name>` line per affected package). The
-grammars are VERIFIED in `docs/research/ci-selector-grammars.md`; an
-empty selection prints nothing (the CI step skips itself, exit 0). The
-`publish` command's npm rows carry the resolved `publish.npm.access`/
-`provenance` options (ADR-0033); an explicit `provenance = true` live
-run refuses `E-PUB-AUTH` outside a supported cloud runtime (the
-`doctor` `publish-provenance` check shows the verdict).
+inside the downstream `strategy.matrix`), GitLab's `parallel:matrix`
+hashes (one `- HALYARD_PKG: <name>` line per affected package), Azure
+Pipelines' `##vso[task.setvariable variable=HALYARD_PKGS;isOutput=true]`
+output variable (the closure comma-joined; the documented consumption is
+the `split(…, ',')` + `${{ each }}` example) and TeamCity's Matrix Build
+`param("env.HALYARD_PKG", listOf(value(…), …))` line (pasted inside the
+`matrix { }` block; each instance reads `$HALYARD_PKG`). The grammars
+are VERIFIED in `docs/research/ci-selector-grammars.md`; an empty
+selection prints nothing (the CI step skips itself, exit 0).
