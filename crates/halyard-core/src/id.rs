@@ -38,7 +38,9 @@ impl PkgId {
 pub struct Sym(u32);
 
 impl Sym {
-    /// Raw index value.
+    /// Raw index value (the diagnostics surface for a symbol that
+    /// failed to resolve back through [`Interner::get`]).
+    #[must_use]
     pub const fn to_u32(self) -> u32 {
         self.0
     }
@@ -79,16 +81,6 @@ impl Interner {
     pub fn get(&self, sym: Sym) -> Option<&str> {
         self.strings.get(sym.0 as usize).map(|s| &**s)
     }
-
-    /// Number of interned strings.
-    pub fn len(&self) -> usize {
-        self.strings.len()
-    }
-
-    /// True when nothing has been interned yet.
-    pub fn is_empty(&self) -> bool {
-        self.strings.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -105,14 +97,12 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(interner.get(a), Some("alpha"));
         assert_eq!(interner.get(b), Some("beta"));
-        assert_eq!(interner.len(), 2);
     }
 
     #[test]
     fn unknown_symbol_is_none() {
         let interner = Interner::new();
         assert_eq!(interner.get(Sym(u32::MAX)), None);
-        assert!(interner.is_empty());
     }
 
     #[test]
