@@ -79,8 +79,10 @@ matrix-output JSON array, GitLab's `parallel:matrix` hashes, Azure
 Pipelines' `task.setvariable` output variable, TeamCity's matrix-build
 `param(...)` line, CircleCI's dynamic-config continuation
 `parameters: '{ "halyard_pkgs": [...] }'` line, Buildkite's
-build-matrix `matrix.setup` dimension block and Jenkins' declarative
-`axis` block) — and the §12
+build-matrix `matrix.setup` dimension block, Jenkins' declarative
+`axis` block and Bitbucket's `parallel: steps:` block — one literal
+`export HALYARD_PKG=<name>` script line per affected package, the
+documented grammar having no per-step `env`) — and the §12
 action-output seam (M10/§12 step 1,
 ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
 the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
@@ -243,7 +245,7 @@ crates/
                          discover-diff, git-diff, replay, bench-public, pgo
   halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
                          migrate/explain/status/graph/doctor/schema/completions/
-                         affected/man/action/forge-smoke)
+                         affected/man/action/forge-smoke/bench)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
