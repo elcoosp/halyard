@@ -350,3 +350,314 @@ fn the_plan_file_is_canonical_json() -> Result<(), BoxError> {
     assert_eq!(error.code(), "E-ACTION-PLAN");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §12 `pr` mode renderers (ADR-0043): the §11.1 machine pass viewed as
+// plain §12 data. The shell maps the forge's MachineReport onto
+// `PrPass`; this crate renders the vocabulary and stays forge-free.
+// ---------------------------------------------------------------------------
+
+use std::collections::BTreeMap;
+
+use halyard_action::{PrEffect, PrPass, pr_outputs, pr_summary};
+
+/// A prepare-phase pass: the Release PR was opened (the §11.3 first
+/// pass), nothing was released.
+fn opened_pass(forecast: bool) -> PrPass {
+    PrPass {
+        pr_effect: Some(PrEffect::Opened {
+            number: 7,
+            url: "https://github.com/example/monorepo/pull/7".to_owned(),
+        }),
+        propagated: false,
+        released: false,
+        release_urls: BTreeMap::new(),
+        branch: "halyard/release/main".to_owned(),
+        forecast,
+    }
+}
+
+#[test]
+fn pr_outputs_carry_the_release_pr_keys_in_documented_order() -> Result<(), BoxError> {
+    let plan = sample_plan();
+    let outputs = pr_outputs(&plan, Path::new("out/plan.json"), &opened_pass(false))?;
+    let flat: Vec<(String, String)> = outputs
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
+
+    // The documented order: released, published, the Release-PR keys,
+    // plan_json, releases_json — then the per-package keys and
+    // paths_released (the plan vocabulary's tail).
+    let entry = |idx: usize| -> Option<(String, String)> { flat.get(idx).cloned() };
+    assert_eq!(entry(0), Some(("released".to_owned(), "false".to_owned())));
+    assert_eq!(entry(1), Some(("published".to_owned(), "false".to_owned())));
+    assert_eq!(entry(2), Some(("pr_number".to_owned(), "7".to_owned())));
+    assert_eq!(
+        entry(3),
+        Some((
+            "pr_url".to_owned(),
+            "https://github.com/example/monorepo/pull/7".to_owned()
+        ))
+    );
+    assert_eq!(
+        entry(4),
+        Some(("plan_json".to_owned(), "out/plan.json".to_owned()))
+    );
+    assert!(entry(5).is_some_and(|(name, _)| name == "releases_json"));
+
+    // The per-package keys ride the same grammar as the plan mode.
+    assert!(
+        flat.iter()
+            .any(|(name, value)| name == "core--version" && value == "0.5.0"),
+        "the per-package version key: {flat:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn pr_outputs_report_minted_release_urls_by_tag() -> Result<(), BoxError> {
+    let plan = sample_plan();
+    let pass = PrPass {
+        pr_effect: None,
+        propagated: true,
+        released: false,
+        release_urls: BTreeMap::from([(
+            "core-v0.5.0".to_owned(),
+            "https://github.com/example/monorepo/releases/tag/core-v0.5.0".to_owned(),
+        )]),
+        branch: "halyard/release/main".to_owned(),
+        forecast: true,
+    };
+    let outputs = pr_outputs(&plan, Path::new("out/plan.json"), &pass)?;
+    let releases = outputs
+        .iter()
+        .find(|(name, _)| name.as_str() == "releases_json")
+        .map(|(_, value)| value.clone())
+        .expect("releases_json is present");
+    let rows: serde_json::Value = serde_json::from_str(&releases)?;
+    let array = rows.as_array().expect("releases_json is an array");
+    let url_of = |name: &str| -> Option<&serde_json::Value> {
+        array
+            .iter()
+            .find(|row| row.get("name") == Some(&serde_json::json!(name)))
+            .and_then(|row| row.get("url"))
+    };
+    // The tag phase's minted release URL fills the row; the row the
+    // pass did not touch keeps the empty url (ADR-0037's contract).
+    assert_eq!(
+        url_of("core"),
+        Some(&serde_json::json!(
+            "https://github.com/example/monorepo/releases/tag/core-v0.5.0"
+        ))
+    );
+    assert_eq!(url_of("app"), Some(&serde_json::json!("")));
+    // The PR keys are absent — the tag phase owned the pass (PROPAGATE).
+    assert!(
+        outputs.iter().all(|(name, _)| name.as_str() != "pr_number"),
+        "no PR keys on the propagated pass"
+    );
+    Ok(())
+}
+
+#[test]
+fn pr_outputs_released_only_when_a_pass_executed_a_release() -> Result<(), BoxError> {
+    let plan = sample_plan();
+    // The dry forecast: the machine's minted urls ride, `released`
+    // stays honestly false — nothing was executed (I5).
+    let forecast = PrPass {
+        pr_effect: None,
+        propagated: true,
+        released: false,
+        release_urls: BTreeMap::from([(
+            "core-v0.5.0".to_owned(),
+            "preview://core-v0.5.0".to_owned(),
+        )]),
+        branch: "halyard/release/main".to_owned(),
+        forecast: true,
+    };
+    let outputs = pr_outputs(&plan, Path::new("out/plan.json"), &forecast)?;
+    let released = outputs
+        .iter()
+        .find(|(name, _)| name.as_str() == "released")
+        .map(|(_, value)| value.clone())
+        .expect("released is present");
+    assert_eq!(released, "false");
+
+    // The live tag phase: the creation is the release act.
+    let live = PrPass {
+        released: true,
+        forecast: false,
+        ..forecast
+    };
+    let outputs = pr_outputs(&plan, Path::new("out/plan.json"), &live)?;
+    let released = outputs
+        .iter()
+        .find(|(name, _)| name.as_str() == "released")
+        .map(|(_, value)| value.clone())
+        .expect("released is present");
+    assert_eq!(released, "true");
+    Ok(())
+}
+
+#[test]
+fn pr_summary_names_the_pass_and_its_posture() {
+    let plan = sample_plan();
+    // The opened pass, live.
+    let summary = pr_summary(&plan, &opened_pass(false));
+    assert!(
+        summary.starts_with("## halyard release PR\n"),
+        "the §12 heading: {summary}"
+    );
+    assert!(
+        summary.contains("| core | 0.4.1 → 0.5.0 | minor | core-v0.5.0 |"),
+        "the release table rides: {summary}"
+    );
+    assert!(
+        summary.contains("PR #7 opened (https://github.com/example/monorepo/pull/7)"),
+        "the pass line names the effect and the forge's own URL: {summary}"
+    );
+    assert!(
+        summary.contains("2 planned, 1 skipped"),
+        "the honest counts ride: {summary}"
+    );
+    assert!(
+        !summary.contains("forecast"),
+        "a live pass is not labelled a forecast: {summary}"
+    );
+
+    // The dry forecast says so.
+    let forecast_summary = pr_summary(&plan, &opened_pass(true));
+    assert!(
+        forecast_summary.contains("forecast (nothing executed)"),
+        "the forecast posture is stated: {forecast_summary}"
+    );
+}
+
+#[test]
+fn pr_summary_names_the_propagated_and_noop_passes() {
+    let plan = sample_plan();
+    // PROPAGATE: the tag phase owns the pass; the Release PR lands on
+    // the next one (§11.1 step 2).
+    let propagated = PrPass {
+        pr_effect: None,
+        propagated: true,
+        released: true,
+        release_urls: BTreeMap::from([("core-v0.5.0".to_owned(), "mem://core-v0.5.0".to_owned())]),
+        branch: "halyard/release/main".to_owned(),
+        forecast: false,
+    };
+    let summary = pr_summary(&plan, &propagated);
+    assert!(
+        summary.contains("tag phase owns this pass"),
+        "the PROPAGATE posture: {summary}"
+    );
+
+    // The one-probe no-op: empty plan, no stale PR (§11.1 step 3).
+    let noop = PrPass {
+        pr_effect: None,
+        propagated: false,
+        released: false,
+        release_urls: BTreeMap::new(),
+        branch: "halyard/release/main".to_owned(),
+        forecast: false,
+    };
+    let summary = pr_summary(&plan, &noop);
+    assert!(
+        summary.contains("no Release PR (nothing to open, none stale)"),
+        "the no-op posture: {summary}"
+    );
+
+    // The closed stale PR under an empty plan.
+    let closed = PrPass {
+        pr_effect: Some(PrEffect::Closed {
+            number: 3,
+            url: "https://github.com/example/monorepo/pull/3".to_owned(),
+        }),
+        propagated: false,
+        released: false,
+        release_urls: BTreeMap::new(),
+        branch: "halyard/release/main".to_owned(),
+        forecast: false,
+    };
+    let summary = pr_summary(&plan, &closed);
+    assert!(
+        summary.contains("PR #3 closed"),
+        "the close posture: {summary}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The §12 `check` mode's renderer (ADR-0044): the title verdict beside
+// the pending forecast — the same release table, a verdict line. The
+// outputs ride the plan vocabulary unchanged (check mode reuses
+// `plan_outputs`); the verdict is the mode's own surface.
+// ---------------------------------------------------------------------------
+
+use halyard_action::{CheckRow, CheckVerdict, TitleOutcome, check_summary};
+
+#[test]
+fn check_summary_names_the_verdict_and_the_conveyed_bumps() {
+    let plan = sample_plan();
+    let verdict = CheckVerdict {
+        title: Some(TitleOutcome::Accepted {
+            kind: "feat".to_owned(),
+            level: "minor".to_owned(),
+            predictions: vec![
+                CheckRow {
+                    package: "core".to_owned(),
+                    from: "0.4.1".to_owned(),
+                    bump: "minor".to_owned(),
+                },
+                CheckRow {
+                    package: "app".to_owned(),
+                    from: "1.0.0".to_owned(),
+                    bump: "minor".to_owned(),
+                },
+            ],
+        }),
+    };
+    let summary = check_summary(&plan, &verdict);
+    assert!(
+        summary.starts_with("## halyard check\n"),
+        "the §12 heading: {summary}"
+    );
+    assert!(
+        summary.contains("| core | 0.4.1 → 0.5.0 | minor | core-v0.5.0 |"),
+        "the release table rides: {summary}"
+    );
+    assert!(
+        summary.contains("title accepted: feat → minor"),
+        "the verdict line: {summary}"
+    );
+    assert!(
+        summary.contains("conveyed core minor, app minor"),
+        "the conveyed bumps, plan order: {summary}"
+    );
+}
+
+#[test]
+fn check_summary_renders_the_rejected_and_no_title_postures() {
+    let plan = sample_plan();
+    let rejected = CheckVerdict {
+        title: Some(TitleOutcome::Rejected {
+            message: "not a conventional commit — expected `type: description`".to_owned(),
+        }),
+    };
+    let summary = check_summary(&plan, &rejected);
+    assert!(
+        summary.contains("title rejected: not a conventional commit"),
+        "the diagnosis rides: {summary}"
+    );
+
+    let none = CheckVerdict { title: None };
+    let summary = check_summary(&plan, &none);
+    assert!(
+        summary.contains("no title to lint — the pending forecast is the verdict"),
+        "the no-title posture: {summary}"
+    );
+    assert!(
+        summary.contains("2 planned, 1 skipped"),
+        "the counts ride in every posture: {summary}"
+    );
+}
