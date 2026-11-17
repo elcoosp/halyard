@@ -57,6 +57,8 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | M2: `check --commits` (§16.2's commits half) | done | (tree left dirty; no commits) | M1: the commits lint — `check::pending_commit_rows` (digest attribution, discovery/walk order I3) + `classify_commit` (the title machinery per subject; typo gate → `E-CLI-COMMIT` + page + index row 70→71, mapped-none informational, autosquash dropped at the parser §8.5 — pinned by test), `render_commits_lint` (3 formats, report prints before the refusal), `--exit-code` interplay kept (exit 3 pending); red→green on record (3 fails on the unrecognized flag), bench group `commits_lint/subjects_200`, CLI README section + arch §16.2 + README rows | — | 2026-11-16; session log below |
 | §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) | done | (tree left dirty; no commits) | M1: `halyard-config::init` — `InitSurvey` (plain data; the shell's discovery fills it, the engine stays pure) → `plan_init` (refuses a zero-package survey with the new `ConfigError::Init` = `E-CFG-INIT` + page + index; renders the deterministic shape line keyed on the same count-based rule the planner's `auto` tag template applies — `effective_template` — so the shape and the tag names can never disagree; renders the comment-only `halyard.toml` skeleton whose defaults load as the built-in defaults EXACTLY — the key-free invariant re-checked at plan time by re-loading the rendered draft) → `InitPlan` (shape + ordered `ScaffoldFile`s) → `run_init` (gates EVERY target's existence through the injected `DraftSink` before the first write — a refusal never leaves a half-scaffold — then writes in plan order) → `InitReport`; `AtomicScaffoldSink` = the §9.1 atomic protocol with the one scaffold-specific difference: the target's parent directories are created (`.github/workflows/` does not exist yet — the migration's `AtomicDraftSink` deliberately never mkdirs, hence two types, the trait doc now says "the sink's stable code"); `--github` appends the §16.1 one-file release workflow VERBATIM (`halyard/action@v1` referenced per the architecture's finished surface — the human render says the glue lands with its milestone); CLI `init [--github]` (needs no git repo, reads no config): the `.config/halyard.toml` shadow footgun refuses first (resolve_config prefers the root file), then survey → plan → effect → three-format render (`init_report`/`_json`/`_gha`); 11 engine tests + 9 CLI gates (red→green on record: E0432 on the missing `halyard_config::init` API + E0599 on `INIT_CODE`, 9 CLI fails on `unrecognized subcommand`; one test-side correction during green — the npm fixture had a stray Cargo.toml, discovery was honestly reporting 2 packages) + bench group `init` (plan_single_package ≈3.4 µs, plan_workspace_40 ≈3.8 µs, plan_and_run over the memory sink ≈3.9 µs — the loader round-trip stays cheap) + example `init_scaffold` (MemoryDraftSink — nothing touches the disk) + ADR-0029. Micro-debt + drift fixed (additive, not milestone substitutes): the halyard-cache process-global hit/miss statics removed (`global_stats`/`reset_stats` had zero callers — the per-instance counters the header round-trips were the live surface), `halyard-changelog::releases_by_version` removed (its doc claimed the idempotence tests used it — they never did), the xtask member-guard test list now names all 18 members (`halyard-config` was missing), arch §7.1 rewritten (the phantom `halyard-action`/`halyard-plugin-host` rows and the nonexistent `docs/spec/` + `action/` paths replaced by an as-built note; `halyard-forge-github` added to the tree), arch §15.1 fuzz row as-built (3 real targets, not 5 aspirational) + the `shuttle` row corrected (loom only, documented-exclusive with miri, the manual invocation spelled), the errors-README intro's `include_str!` claim replaced with the actual linkage (rustdoc `code()` + pages), README status/layout/commands rows, CLI README row + a Zero-config scaffold section, CLI crate description | M2 (M1 green end-to-end first, same session, ADR-0030): the documented miri/loom exclusion is now a `compile_error!` guard in `halyard-cache/src/lib.rs` (a combined build fails loudly with the two documented invocations in the message — verified: `cargo check -p halyard-cache --features miri,loom` exits 101 with the guard, each lane alone passes); `ci-bundle` as the CI gate feature (core/config map it to `schema-gen`, cache's is deliberately empty — the exclusive pair stays out; workspace-wide `--features ci-bundle` enables per member, skips the rest); CI's clippy/test/nextest/doc jobs moved off `--all-features` onto `--features ci-bundle` and a new `loom` job runs the suite's own documented invocation on stable (the suite previously compiled only as an `--all-features` side effect — it gains a spelled lane instead of losing one); arch §15.1 rows + cache manifest notes + README daily-commands updated to the ci-bundle spelling; gates re-run under the new spelling (the guard makes `--all-features` an invalid gate invocation by design). M5.3 OIDC (live-CI lane), the M4.7 corpus-lane acceptance, the corpus-wide pnpm differential, the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-16; session log below |
 
+| Bitbucket parallel-steps adapter (ADR-0041) + the `halyard bench` measurement command (ADR-0042) | done | (tree left dirty; no commits) | M1: `BitbucketSelector` (`affected --ci bitbucket`) — one paste-ready `parallel:` block over the affected closure, name-sorted, one `export HALYARD_PKG=<name>` script line per affected package (support.atlassian.com VERIFIED 2026-11-17: "Parallel steps allow you to group pipeline steps that can run at the same time"; the required `steps:` property "contains the lists of `step`s in a `stage` or a `parallel`. At least 1 `step` is required within the steps list"; the docs' own example varies the steps **in the script** (`--batch 1` / `--batch 2`); no per-step `env` exists — `variables` is a `pipe`-only option — so the assignment rides the script line the consumer's tool invocation reads; the relative indentation follows the documented example exactly; the "100-step limit on pipelines includes each step in a parallel group" cap is the consumer's policy, the render never the guard), lookup + trait/module docs + CLI value enum + flag doc + the `affected_ci` example + bench `ci_selector_bitbucket_40chain` all moved one row over; the refused-unknown pin moved `bitbucket` → `drone` (an unrecorded system — the recorded CI surface ADR-0034→0041 is complete). M2 (M1 green end-to-end first): the §16.2 declared-absent `bench` command landed — the §14 model pipeline (`discover` → `config` → `history` → `plan`) timed per pass over the current repo's real shape, one untimed warmup before the timed passes (the §14.1 no-op-warm model; `--no-cache` = the cold measurement, the posture reported either way), the stage names riding the `--profile` trace's span vocabulary through the new read-only `Profiler::recorded_spans()` accessor, the nearest-rank percentiles the §14.1 budget table speaks; the aggregation is pure data on the lib target (`halyard_cli::bench` — the man renderer's rationale: bench harness and bin share one implementation) + `bench_report` criterion bench (8/200 passes); a measurement never a gate — the §14.1 budgets stay shape-bound to the xtask fixtures and the render says so; `E-CLI-BENCH` (zero-iteration refusal) + page + index row; 5 CLI gates + 5 module tests; the man bench's mirror tree repaired to the real 20-command count (it had drifted by one, missing `action`) | The M5.4 provenance/SLSA (live-CI lane), the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
+
 ### 2026-11-16 — §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `299cf47` (the
@@ -2516,3 +2518,132 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   halyard's own release artifacts (VERIFY first), (2) the corpus-wide
   pnpm differential as an xtask subcommand, (3) the M2.6 dhat re-audit
   with the cache warm.
+
+### 2026-11-17 — the Bitbucket parallel-steps adapter (ADR-0041) + the `halyard bench` measurement command (ADR-0042, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `9d420e8` (the
+  buildkite + jenkins session). Baseline
+  `cargo check --workspace --all-targets --features ci-bundle --locked`
+  exit 0 on a fresh stable toolchain 1.100.0 before any edit. The
+  declared next work (the ADR-0040 consequence) was the seam's last
+  recorded system — Bitbucket Pipelines, the contract tests' refused
+  unknown. The other recorded start points stay open for their own
+  sessions (M5.4 provenance/SLSA needs the live-CI lane; the
+  corpus-wide pnpm differential lacks a pnpm binary; the M2.6 dhat
+  re-audit is profiling). Survey notes: the lint surface stays
+  structurally clean (zero `todo!`/`unimplemented!`/`#[allow]`
+  anywhere; the miri/loom exclusion machine-enforced per ADR-0030; no
+  bench or test requires nightly); the errors taxonomy exact (74 codes
+  ↔ 74 pages, one retired); every non-xtask crate carries consumer
+  examples.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing API itself, captured on both suites before any
+  implementation: `ci_selector.rs` contract tests 4 failed / 18 passed
+  (the two `bitbucket` renders panicking "bitbucket is a known
+  adapter", the empty-selection loop, the lookup 10→11 assertion), the
+  CLI gate failing on `error: invalid value 'bitbucket' for '--ci
+  <SYSTEM>'` (the value enum refuses before the lookup, exactly as
+  designed). The green landed **ADR-0041, the Bitbucket adapter
+  (`affected --ci bitbucket`)** — one paste-ready `parallel:` block
+  over the affected closure, name-sorted, one
+  `export HALYARD_PKG=<name>` script line per affected package
+  (support.atlassian.com/bitbucket-cloud VERIFIED 2026-11-17:
+  "Parallel steps allow you to group pipeline steps that can run at
+  the same time (concurrently) to reduce build time"; the required
+  `steps:` property "contains the lists of `step`s in a `stage` or a
+  `parallel`. At least 1 `step` is required within the steps list";
+  the docs' own example varies the steps **in the script**
+  (`--batch 1` / `--batch 2`); there is no per-step `env` property —
+  the `variables` option's "Allowed parent properties" is `[pipe]` —
+  so the selection can only ride literal per-step script content; the
+  relative indentation follows the documented example exactly;
+  `BITBUCKET_PARALLEL_STEP`/`_COUNT` exist for addressing steps, not
+  for building selection arrays — the indexed-array alternative was
+  rejected on record). The "100-step limit on pipelines includes each
+  step in a parallel group" cap is the consumer's policy — the
+  adapter renders the grammar, never the guard. The lookup, the
+  trait/lookup/module docs, the CLI value enum + flag doc, the bench
+  (`ci_selector_bitbucket_40chain`) and the `affected_ci` example all
+  moved one row over; the refused-unknown pin moved `bitbucket` →
+  `drone` (an unrecorded system — no adapter follows from it; the
+  recorded CI surface ADR-0034→0041 is complete).
+- **M2 implemented (M1 green end-to-end first: 22/22 core, 18/18 CLI,
+  bench + example verified), red→green.** The red: 5 CLI gates / 0
+  passed on the unrecognized `bench` subcommand. The green landed
+  **ADR-0042, the §16.2 declared-absent `bench` command** — the
+  built-in measurement of the planning pipeline over the current repo:
+  one untimed warmup pass (page cache + the §8.7 per-commit cache warm
+  — the §14.1 no-op-warm model) precedes `--iterations` timed passes
+  (default 8; zero refuses the new `E-CLI-BENCH` fail-closed before
+  the warmup runs, page + index row on record); each pass runs the
+  same `discover` → `config` → `history` → `plan` pipeline every
+  planning command runs, timed through the same span vocabulary the
+  `--profile` trace emits via the new read-only
+  `Profiler::recorded_spans()` accessor (a disabled profiler records
+  nothing, so the warmup is untimed by construction); `--no-cache` is
+  the cold measurement and the report names the posture either way;
+  the reduction is pure data on the lib target (`halyard_cli::bench`
+  — the man renderer's rationale: the bench harness and the bin share
+  one implementation): per-stage grouping + the nearest-rank
+  percentiles (`ceil(p/100 × n)`, the definition the §14.1 budget
+  table speaks) + min + integer mean, name-sorted (I3), 5 module unit
+  tests (percentile math, grouping, duration formatting); the report
+  carries the repo's shape beside the timings (packages, pending
+  commits, cache posture) — **a measurement, never a gate**: the
+  §14.1 budgets are shape-bound to the xtask fixtures
+  (`bench/budgets.toml`) and both renderings say so verbatim; all
+  three formats (the JSON's schema, stage order and shape are the
+  run-stable contract — the timings are wall-clock, pinned as such by
+  the gates); `bench_report` criterion bench (the aggregation over
+  8/200-pass sample counts) + the `[[bench]]` registration; the man
+  pages/completions gain the command automatically (the
+  clap-derivation rule).
+- **Tests/bench/example totals.** M1: +4 core contract tests
+  (bitbucket block + many-packages, the empty-selection loop to
+  eleven systems, the lookup pin flipped on record: bitbucket refused
+  → drone refused), +1 CLI e2e gate — 22/22 core + 18/18
+  `cli_affected` green; bench `ci_selector_bitbucket_40chain` over the
+  40-package chain; example `affected_ci` prints all eleven adapters.
+  M2: 5 CLI gates (`tests/cli_bench.rs`: the human stage table + shape
+  line, the JSON schema stability with name-sorted stages, the
+  `--iterations` sample-count contract, the `--no-cache` cold posture,
+  the zero-iteration `E-CLI-BENCH` refusal via the JSON error
+  document) + 5 module unit tests; bench `bench_report`
+  (aggregate_4stages_8passes + _200passes); the `bench` command run
+  against this very workspace (19 packages, 858 pending commits) as
+  the dogfood check.
+- **Docs.** ADR-0041 + ADR-0042; the Bitbucket section in
+  `docs/research/ci-selector-grammars.md` (the VERIFIED quotes + the
+  no-per-step-env finding + the rejected alternatives); arch §16.2
+  (`affected` row ADR-0041; the wired-commands note — `bench` moved
+  from the absent list into the wired list with its as-built
+  description) + §16.3 as-built note (the bitbucket rows, the
+  closure-vs-roots list extended); CLI README (the `--ci` grammar
+  lists → eleven in all three places, the adapters section + example
+  commands + the `bench` status row rewritten from absent to as-built);
+  root README status paragraph (the CI enumeration stopped at jenkins)
+  + the Layout `halyard-cli` command list (the missing `bench`);
+  `E-CLI-BENCH` page + index row (74 → 75, pages and producers exact);
+  PROGRESS.md row.
+- **Micro-debt cleaned (additive, not milestone substitutes).** Five
+  zero-caller public items removed with their dead assertions:
+  `Sym::to_u32` (zero callers anywhere), `Interner::len`/`is_empty`
+  (own tests only — the `get` assertions already pinned the
+  behavior), `Trie::len`/`is_empty` (zero callers), `bloom::
+  commit_count` (own test only); `glob::match_segment` privatized
+  (its only caller is the in-module walker) — and the `glob.rs`
+  module doc repaired (it named `match_segments` as the
+  single-segment `fnmatch`-style matcher; the single-segment matcher
+  is `match_segment`, `match_segments` is the whole-path walker). The
+  man bench's mirror tree repaired to the real 20-command count (the
+  "same 18 commands" claim had drifted twice — `action` was never in
+  the mirror).
+- **Honest state at cut-off.** The recorded CI-selector surface is
+  complete (ADR-0034→0041: eleven systems render; a new system means a
+  new grammar VERIFY + ADR, as always). `halyard bench` measures; it
+  enforces nothing — the budgets stay xtask-side by design. Tree left
+  dirty (no commits made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for
+  halyard's own release artifacts (VERIFY first), (2) the corpus-wide
+  pnpm differential as an xtask subcommand (needs a pnpm binary), (3)
+  the M2.6 dhat re-audit with the cache warm.
