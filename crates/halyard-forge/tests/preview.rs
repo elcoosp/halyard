@@ -129,8 +129,12 @@ fn machine_pass_over_the_preview_forge_is_the_open_forecast() {
     assert!(!report.propagated, "no pending releases ⇒ prepare runs");
     assert_eq!(
         report.effects,
-        vec![halyard_forge::MachineEffect::PrOpened { number: 0 }],
-        "an empty forge ⇒ the open path"
+        vec![halyard_forge::MachineEffect::PrOpened {
+            number: 0,
+            url: "preview://halyard/release/main".to_owned(),
+        }],
+        "an empty forge ⇒ the open path (the forge's own URL rides the \
+         report — the §12 pr_url output renders it, never a composed guess)"
     );
     assert_eq!(report.calls, 2, "find + upsert (§11.5 update-path budget)");
 }
