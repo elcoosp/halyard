@@ -39,6 +39,17 @@
 //! breakdown — wall-clock would break I3's byte-stable reports; the
 //! deterministic work units are the honest timing surface.
 //!
+//! The §12 `pr` mode renderers ([`pr_outputs`] / [`pr_summary`],
+//! ADR-0043) feed the release-PR executor: the shell runs the §11.1
+//! machine pass and maps its machine report onto the plain [`PrPass`]
+//! view — [`PrEffect`] carries the forge's own PR
+//! number and URL (never a composed guess), `release_urls` fills the
+//! `releases_json` rows the pass actually minted, `released` is
+//! honestly `false` for a dry forecast (I5), and the summary names the
+//! pass's posture (opened / updated / unchanged / closed / the §11.1
+//! PROPAGATE tag phase). The crate stays forge-free: the mapping is the
+//! shell's, the vocabulary is this crate's.
+//!
 //! Fail-closed taxonomy (§15.4 `E-ACTION-*`, each variant with a page
 //! under `docs/errors/`): an output name or value the env-file grammar
 //! cannot represent verbatim is [`ActionError::Output`] — never
@@ -497,17 +508,64 @@ pub fn plan_outputs(
     plan: &Plan,
     plan_json_path: &Path,
 ) -> Result<Vec<(OutputName, String)>, ActionError> {
-    let mut outputs = Vec::new();
-    outputs.push((OutputName::new("released")?, "false".to_owned()));
-    outputs.push((OutputName::new("published")?, "false".to_owned()));
-    let plan_json = plan_json_path.display().to_string();
-    outputs.push((OutputName::new("plan_json")?, plan_json));
+    let mut outputs = vec![
+        (OutputName::new("released")?, "false".to_owned()),
+        (OutputName::new("published")?, "false".to_owned()),
+        (
+            OutputName::new("plan_json")?,
+            plan_json_path.display().to_string(),
+        ),
+    ];
+    outputs.push(releases_json(plan, |_| String::new())?);
+    outputs.extend(package_keys(plan)?);
+    outputs.push(paths_released(plan)?);
+    Ok(outputs)
+}
+
+/// The `releases_json` value over the plan's rows (the fixed five-key
+/// row grammar, one entry per release in plan order). `url_of` maps a
+/// row to its release URL — the plan mode renders the empty url (the
+/// forecast posture), the `pr` mode fills the URLs the pass minted
+/// (ADR-0043). An empty url keeps the row's default empty field.
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when the rows fail to serialize.
+fn releases_json(
+    plan: &Plan,
+    url_of: impl Fn(&ReleaseRow) -> String,
+) -> Result<(OutputName, String), ActionError> {
     let rows = release_rows(plan);
-    let json = serde_json::to_string(&rows.iter().map(ReleaseRow::json).collect::<Vec<_>>())
-        .map_err(|e| ActionError::Output {
-            message: format!("the releases_json rows failed to serialize: {e}"),
-        })?;
-    outputs.push((OutputName::new("releases_json")?, json));
+    let json = serde_json::to_string(
+        &rows
+            .iter()
+            .map(|row| {
+                let mut value = row.json();
+                let url = url_of(row);
+                if !url.is_empty()
+                    && let Some(object) = value.as_object_mut()
+                {
+                    object.insert("url".to_owned(), serde_json::Value::String(url));
+                }
+                value
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|e| ActionError::Output {
+        message: format!("the releases_json rows failed to serialize: {e}"),
+    })?;
+    Ok((OutputName::new("releases_json")?, json))
+}
+
+/// The per-package `{package}--version` / `{package}--tag` keys, in
+/// plan order (the shared tail of the §12 output vocabulary).
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when a composed key violates the output-key
+/// grammar (a hostile package name — neither ecosystem can produce one).
+fn package_keys(plan: &Plan) -> Result<Vec<(OutputName, String)>, ActionError> {
+    let mut outputs = Vec::new();
     for release in &plan.releases {
         let package = &release.package;
         let version = release.to.clone();
@@ -515,12 +573,21 @@ pub fn plan_outputs(
         outputs.push((OutputName::package_field(package, "version")?, version));
         outputs.push((OutputName::package_field(package, "tag")?, tag));
     }
+    Ok(outputs)
+}
+
+/// The `paths_released` output: the distinct edit sites, sorted and
+/// newline-joined (I3; the heredoc form carries the multi-line value).
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when the key fails the grammar (it cannot —
+/// the name is fixed — the signature keeps the constructor's total).
+fn paths_released(plan: &Plan) -> Result<(OutputName, String), ActionError> {
     let mut paths: Vec<&str> = plan.edits.iter().map(|edit| edit.file.as_str()).collect();
     paths.sort_unstable();
     paths.dedup();
-    let joined = paths.join("\n");
-    outputs.push((OutputName::new("paths_released")?, joined));
-    Ok(outputs)
+    Ok((OutputName::new("paths_released")?, paths.join("\n")))
 }
 
 /// The §12 job summary for the `plan` mode: the release table
@@ -532,16 +599,7 @@ pub fn plan_outputs(
 #[must_use]
 pub fn plan_summary(plan: &Plan) -> String {
     let mut summary = String::from("## halyard plan\n\n");
-    summary.push_str("| package | version | bump | tag |\n");
-    summary.push_str("|---|---|---|---|\n");
-    for release in &plan.releases {
-        let package = &release.package;
-        let from = &release.from;
-        let to = &release.to;
-        let tag = &release.tag;
-        let bump = bump_label(release.bump);
-        let _ = writeln!(summary, "| {package} | {from} → {to} | {bump} | {tag} |");
-    }
+    summary.push_str(&release_table(plan));
     let planned = plan.releases.len();
     let skipped = plan.skipped.len();
     let _ = writeln!(summary);
@@ -550,6 +608,289 @@ pub fn plan_summary(plan: &Plan) -> String {
         "{planned} planned, {skipped} skipped · zero API calls (offline forecast, I5)"
     );
     summary
+}
+
+/// The release table both §12 summaries render (package, version
+/// transition, bump, tag) — one layout, byte-stable (I3).
+fn release_table(plan: &Plan) -> String {
+    let mut table = String::from("| package | version | bump | tag |\n|---|---|---|---|\n");
+    for release in &plan.releases {
+        let package = &release.package;
+        let from = &release.from;
+        let to = &release.to;
+        let tag = &release.tag;
+        let bump = bump_label(release.bump);
+        let _ = writeln!(table, "| {package} | {from} → {to} | {bump} | {tag} |");
+    }
+    table
+}
+
+/// One §12 view of the machine pass's Release-PR effect: the forge's
+/// own number and URL, carried verbatim (never a composed guess — the
+/// preview adapter's number `0` / `preview://` URL shape marks a
+/// forecast, a real forge can produce neither).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrEffect {
+    /// The Release PR was opened (first prepare pass).
+    Opened {
+        /// The forge's PR number.
+        number: u64,
+        /// The forge's own PR URL.
+        url: String,
+    },
+    /// The Release PR's body/title differed and was rewritten in place.
+    Updated {
+        /// The forge's PR number.
+        number: u64,
+        /// The forge's own PR URL.
+        url: String,
+    },
+    /// The Release PR already carried exactly this title and body.
+    Unchanged {
+        /// The forge's PR number.
+        number: u64,
+        /// The forge's own PR URL.
+        url: String,
+    },
+    /// The stale Release PR was closed under an empty plan.
+    Closed {
+        /// The forge's PR number.
+        number: u64,
+        /// The forge's own PR URL of the closed PR.
+        url: String,
+    },
+}
+
+/// The number-and-URL view of a [`PrEffect`] (the `pr_number` /
+/// `pr_url` output pair).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrView {
+    /// The forge's PR number.
+    pub number: u64,
+    /// The forge's own PR URL.
+    pub url: String,
+}
+
+impl PrEffect {
+    /// The number-and-URL view of this effect.
+    #[must_use]
+    pub fn view(&self) -> PrView {
+        let (number, url) = match self {
+            Self::Opened { number, url }
+            | Self::Updated { number, url }
+            | Self::Unchanged { number, url }
+            | Self::Closed { number, url } => (*number, url.clone()),
+        };
+        PrView { number, url }
+    }
+}
+
+/// The §12 view of one §11.1 machine pass: plain, deterministic data
+/// (I3 — comparable across runs). The shell runs the pass and maps the
+/// forge's machine report onto it; this crate renders the vocabulary
+/// and stays forge-free (the layer note).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrPass {
+    /// The pass's Release-PR effect (`None` on the §11.1 PROPAGATE
+    /// pass, where the tag phase owns the run, or on the one-probe
+    /// no-op — empty plan, no stale PR).
+    pub pr_effect: Option<PrEffect>,
+    /// `true` when the tag phase owned the pass (§11.1 step 2:
+    /// pending forge releases gate the prepare phase — the Release PR
+    /// lands on the next pass).
+    pub propagated: bool,
+    /// `true` when the pass executed a forge release creation (the
+    /// live tag phase). A dry forecast stays `false` — nothing was
+    /// executed (I5), even though its minted URLs ride
+    /// [`PrPass::release_urls`] in the forecast's `preview://` shape.
+    pub released: bool,
+    /// The release URLs minted this pass, keyed by tag (the created
+    /// releases; pre-existing ones keep the empty `url` in
+    /// `releases_json`).
+    pub release_urls: std::collections::BTreeMap<String, String>,
+    /// The release branch the pass operated on (§11.2
+    /// `halyard/release/<base>`).
+    pub branch: String,
+    /// `true` for a dry forecast — the summary states the posture.
+    pub forecast: bool,
+}
+
+/// The §12 outputs for the `pr` mode (ADR-0043), in the documented
+/// order: `released` (the pass's honest execution value), `published`
+/// (always `false` — the pr mode never publishes), the
+/// `pr_number` / `pr_url` pair when the pass has a Release PR to
+/// report (absent on the PROPAGATE and no-op passes), `plan_json`,
+/// `releases_json` (the pass's minted URLs filled by tag), the
+/// per-package keys and `paths_released` — the plan vocabulary
+/// unchanged.
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when a key violates the output-key grammar
+/// or the rows fail to serialize.
+pub fn pr_outputs(
+    plan: &Plan,
+    plan_json_path: &Path,
+    pass: &PrPass,
+) -> Result<Vec<(OutputName, String)>, ActionError> {
+    let mut outputs = Vec::new();
+    let released = if pass.released { "true" } else { "false" };
+    outputs.push((OutputName::new("released")?, released.to_owned()));
+    outputs.push((OutputName::new("published")?, "false".to_owned()));
+    if let Some(view) = pass.pr_effect.as_ref().map(PrEffect::view) {
+        outputs.push((OutputName::new("pr_number")?, view.number.to_string()));
+        outputs.push((OutputName::new("pr_url")?, view.url));
+    }
+    outputs.push((
+        OutputName::new("plan_json")?,
+        plan_json_path.display().to_string(),
+    ));
+    let release_urls = &pass.release_urls;
+    outputs.push(releases_json(plan, |row| {
+        release_urls.get(&row.tag).cloned().unwrap_or_default()
+    })?);
+    outputs.extend(package_keys(plan)?);
+    outputs.push(paths_released(plan)?);
+    Ok(outputs)
+}
+
+/// The §12 job summary for the `pr` mode: the release table (the plan
+/// vocabulary's layout) and the pass line — what the machine pass did
+/// and its posture (forecast vs executed), byte-stable (I3).
+#[must_use]
+pub fn pr_summary(plan: &Plan, pass: &PrPass) -> String {
+    let mut summary = String::from("## halyard release PR\n\n");
+    summary.push_str(&release_table(plan));
+    let planned = plan.releases.len();
+    let skipped = plan.skipped.len();
+    let _ = writeln!(summary);
+    let _ = writeln!(
+        summary,
+        "{planned} planned, {skipped} skipped · {}",
+        pr_pass_line(pass)
+    );
+    summary
+}
+
+/// The pass line the `pr` summary renders: the Release-PR effect (or
+/// the PROPAGATE / no-op posture), the pass's minted releases (named,
+/// so a PROPAGATE forecast's `preview://` mints are observable beside
+/// the plan's next-release rows) and the forecast marker.
+fn pr_pass_line(pass: &PrPass) -> String {
+    let mut line = if pass.propagated {
+        "tag phase owns this pass (the Release PR lands on the next pass)".to_owned()
+    } else {
+        match &pass.pr_effect {
+            Some(PrEffect::Opened { number, url }) => format!("PR #{number} opened ({url})"),
+            Some(PrEffect::Updated { number, url }) => format!("PR #{number} updated ({url})"),
+            Some(PrEffect::Unchanged { number, url }) => {
+                format!("PR #{number} already current ({url})")
+            }
+            Some(PrEffect::Closed { number, url }) => format!("PR #{number} closed ({url})"),
+            None => "no Release PR (nothing to open, none stale)".to_owned(),
+        }
+    };
+    for (tag, url) in &pass.release_urls {
+        let _ = write!(line, " · minted {tag} ({url})");
+    }
+    if pass.forecast {
+        line.push_str(" · forecast (nothing executed)");
+    }
+    line
+}
+
+/// One package's conveyed-bump row of the §12 `check` verdict (the
+/// plain view of the check surface's prediction — the shell maps its
+/// own prediction type onto it; this crate stays check-logic-free).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckRow {
+    /// The package name (plan order).
+    pub package: String,
+    /// The version in the manifest (the prediction's `from`).
+    pub from: String,
+    /// The bump the title conveys for this package (`major|minor|patch`
+    /// — after the shell's pre-major remap where the package is
+    /// `0.y.z`, so the verdict teaches its own cause).
+    pub bump: String,
+}
+
+/// The §12 view of one linted title (the shell's classification,
+/// mirrored as plain data).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TitleOutcome {
+    /// The title is a conventional commit and conveys a bump.
+    Accepted {
+        /// The commit kind exactly as written (`feat`, `FEAT`, …).
+        kind: String,
+        /// The conveyed level (`major|minor|patch|none`).
+        level: String,
+        /// One row per pending release, plan order.
+        predictions: Vec<CheckRow>,
+    },
+    /// The parser declined the title — the reason states the expected
+    /// shape (§11.6: errors teach). The shell refuses fail-closed
+    /// before the mode writes anything; the outcome exists so the
+    /// summary can render the diagnosis when a caller chooses to.
+    Rejected {
+        /// Why the title was declined.
+        message: String,
+    },
+}
+
+/// The §12 `check` verdict: the linted title's outcome, when the
+/// caller passed one (`None` — the pending forecast is the verdict).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckVerdict {
+    /// The title outcome (`None` for the no-title posture).
+    pub title: Option<TitleOutcome>,
+}
+
+/// The §12 job summary for the `check` mode (ADR-0044): the pending
+/// forecast's release table (the plan vocabulary's layout) and the
+/// verdict line — the lint's kind → level and the conveyed bumps per
+/// pending package, the rejection's diagnosis, or the no-title
+/// posture. Byte-stable (I3); the outputs themselves ride the plan
+/// vocabulary unchanged ([`plan_outputs`]).
+#[must_use]
+pub fn check_summary(plan: &Plan, verdict: &CheckVerdict) -> String {
+    let mut summary = String::from("## halyard check\n\n");
+    summary.push_str(&release_table(plan));
+    let planned = plan.releases.len();
+    let skipped = plan.skipped.len();
+    let _ = writeln!(summary);
+    let _ = writeln!(
+        summary,
+        "{planned} planned, {skipped} skipped · {}",
+        check_verdict_line(verdict)
+    );
+    summary
+}
+
+/// The verdict line the `check` summary renders.
+fn check_verdict_line(verdict: &CheckVerdict) -> String {
+    match &verdict.title {
+        Some(TitleOutcome::Accepted {
+            kind,
+            level,
+            predictions,
+        }) => {
+            let mut line = format!("title accepted: {kind} → {level}");
+            if predictions.is_empty() {
+                let _ = write!(line, " · conveyed nothing pending");
+            } else {
+                let _ = write!(line, " · conveyed ");
+                for (index, row) in predictions.iter().enumerate() {
+                    if index > 0 {
+                        let _ = write!(line, ", ");
+                    }
+                    let _ = write!(line, "{} {}", row.package, row.bump);
+                }
+            }
+            line
+        }
+        Some(TitleOutcome::Rejected { message }) => format!("title rejected: {message}"),
+        None => "no title to lint — the pending forecast is the verdict".to_owned(),
+    }
 }
 
 /// Writes the canonical plan JSON (`halyard_core::canonical_json` over
