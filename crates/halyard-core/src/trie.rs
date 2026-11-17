@@ -76,16 +76,6 @@ impl Trie {
         self.nodes.get(node).is_some_and(|n| n.shared)
     }
 
-    /// Number of nodes (diagnostics; the root counts as one).
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// True when the trie has only the root node (no packages registered).
-    pub fn is_empty(&self) -> bool {
-        self.nodes.len() <= 1
-    }
-
     /// Inserts `path` segments from the root, creating nodes as needed;
     /// returns the final node index.
     fn insert(&mut self, path: &str) -> usize {
