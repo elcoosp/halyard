@@ -1,7 +1,8 @@
 # Research: CI selector grammars (VERIFY, M10 step 2)
 
 **Checked:** 2026-11-16 · Sources fetched live per §0.4 (the Azure
-Pipelines and TeamCity sections fetched 2026-11-17 for ADR-0036).
+Pipelines and TeamCity sections fetched 2026-11-17 for ADR-0036; the
+CircleCI section fetched 2026-11-17 for ADR-0038).
 
 ## Turborepo — <https://turborepo.dev/docs/crafting-your-repository/running-tasks>
 
@@ -129,3 +130,24 @@ Pipelines and TeamCity sections fetched 2026-11-17 for ADR-0036).
   that compute dependencies themselves (turbo, bazel) get the roots;
   tools that compute nothing (nx, gha, gitlab, azure, teamcity) get
   the closure.
+
+## CircleCI — <https://circleci.com/docs/guides/orchestrate/using-dynamic-configuration>
+
+- "If you need to pass a parameter (and its associated value) from the
+  setup workflow to the continuation workflow, you can leverage the
+  `parameters` parameter of the continuation orb's `continue` command."
+- The documented setup shape carries `setup: true` and invokes the
+  `circleci/continuation@1.1.0` orb.
+- "The `parameters` parameter accepts a JSON object as a string. Note
+  the single quote encapsulating the full JSON object" — the documented
+  shape is `parameters: '{ "further": true }'` (the boolean example:
+  "Notice the absence of double-quotes around the boolean's value").
+- "You can pass several parameters when invoking the
+  `continuation/continue` command. However, they need to be part of
+  the same JSON object." (`parameters: '{ "further": true,
+  "other_param": "a_string" }'`)
+- "The `parameters` parameter accepts either a JSON object or a path
+  to a file containing a JSON object."
+- The continuation config declares pipeline parameters (`parameters:`
+  → `further: {type: boolean, default: false}`) consumed through the
+  documented `<< pipeline.parameters.further >>` / `when:` keys.
