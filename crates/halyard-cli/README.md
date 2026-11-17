@@ -203,9 +203,53 @@ annotation (the engine's own degraded marker). Downstream steps gate
 on the outputs (`steps.hly.outputs.lib--version`, `fromJSON(...)` over
 `releases_json`), and `--plan-out PATH` names the canonical plan file
 (the `plan_json` value) whose parent directory must exist
-(`E-ACTION-PLAN` — the caller's contract, never invented). The
-remaining §12 modes (`auto|pr|release|check`) land with their
-executors and are absent rather than stubbed.
+(`E-ACTION-PLAN` — the caller's contract, never invented).
+
+The §12 `pr` mode (ADR-0043) drives the §11.1 release machine — the
+same executor `halyard pr` runs, extracted into one shared pass — and
+renders its pass view through the same sink postures:
+
+```bash
+$ halyard action --mode pr --dry
+released=false
+published=false
+pr_number=0
+pr_url=preview://halyard/release/HEAD
+plan_json=halyard-plan.json
+releases_json=[{"ecosystem":"cargo","name":"lib","tag":"lib-v0.1.1","url":"","version":"0.1.1"}]
+lib--version=0.1.1
+lib--tag=lib-v0.1.1
+paths_released=crates/lib/Cargo.toml
+# >> $GITHUB_STEP_SUMMARY
+## halyard release PR
+
+| package | version | bump | tag |
+|---|---|---|---|
+| lib | 0.1.0 → 0.1.1 | patch | lib-v0.1.1 |
+
+1 planned, 1 skipped · PR #0 opened (preview://halyard/release/HEAD) · forecast (nothing executed)
+```
+
+`--dry` forecasts over the preview adapter (I5 — the `preview://` URLs
+and PR number `0` mark a forecast a real forge can never produce);
+live mode runs the same pass over the GitHub REST adapter, fail-closed
+on missing credentials exactly like `halyard pr`. `pr_number` /
+`pr_url` carry the forge's own values and ride only when the pass has
+a Release PR to report (the §11.1 PROPAGATE pass — pending releases
+gating the PR — and the no-op pass write none); `released` is `true`
+only when the live tag phase created a release; the summary's pass
+line names the effect, the minted releases and the forecast posture.
+
+The §12 `check` mode (ADR-0044) is the check surface's verdict through
+the same seam: `--pr-title TITLE` lints the squash-merge title (the
+same classification and conveyed-bump prediction the `check` command
+applies — the §10.2 pre-major remap teaches its own cause) and the
+summary carries the verdict line beside the pending forecast's table;
+the outputs ride the plan vocabulary unchanged. Fail-closed ordering:
+a rejected title refuses `E-CLI-TITLE` before anything is written.
+Without a title the pending forecast is the verdict. The remaining §12
+modes (`auto|release`) land with their executors and are absent rather
+than stubbed.
 
 ## Command status (honest)
 
@@ -229,7 +273,7 @@ executors and are absent rather than stubbed.
 | `migrate` | available (M4.7 step 1, ADR-0022 + ADR-0024): the release-please (`release-please-config.json` + `.release-please-manifest.json`), changesets (`.changeset/config.json`), knope (`knope.toml`) and release-plz (`release-plz.toml` / `.release-plz.toml` / `.config/release-plz.toml`, the documented top-down search order) configurations are surveyed against the `halyard.toml` v1 surface — every mappable foreign key is a mapped row with the pinned value (the foreign tool's documented defaults preserved where they differ from halyard's, the note saying which side is the foreign default), every semantic difference is an unmapped row with its reason, and a validated draft `halyard.toml` rides the report; `--write` lands the reviewed draft at `halyard.toml` through the engine's `DraftSink` — atomic (temp sibling → fsync → rename), create-only: an existing config is never clobbered and two configured tools are a refusal naming every candidate, never a guess (`E-CFG-MIGRATE`; nothing configured is an honest `nothing_configured` no-op; ADR-0023); without the flag the command stays report-only; needs no git repo and no existing `halyard.toml`; a configured-but-unparseable foreign file refuses fail-closed `E-CFG-MIGRATE`, an absent one is `not detected` in the report |
 | `init [--github]` | available (ADR-0029, §16.1/§16.2): discovery surveys the repository and the engine plans a create-only write — the documented `halyard.toml` skeleton (every key optional; the defaults ride as comments and loading it yields the built-in defaults exactly, so zero-config stays zero-config) and, with `--github`, the §16.1 one-file release workflow (`.github/workflows/release.yml`); atomic (temp sibling → fsync → rename) with the workflow's parent directories created; gated before any write — a refusal never leaves a half-scaffold (`E-CFG-INIT`); an existing `.config/halyard.toml` refuses first (a root scaffold would shadow it); needs no git repo and reads no config |
 | `man [<command>]` | available (§16.2 shell integration): `halyard man` renders the `halyard(1)` page and `halyard man <command>` one subcommand's page — roff, derived from the clap definition itself (the completions renderer's single-source-of-truth rule, so a flag added to the parser appears on the page without a second edit), byte-stable across runs (I3), printed to stdout (the `schema`/`completions` convention); an unknown topic is clap's own usage error naming the valid values |
-| `action [--mode plan] [--plan-out PATH]` | available (§12 step 1, ADR-0037): the plan-mode forecast through the action-output seam — plan → the canonical plan file (`plan_json`, default `halyard-plan.json`, `--plan-out` overrides, `E-ACTION-PLAN` on an unwritable path) → the §12 outputs (`released`/`published` honestly `false`, `releases_json` with the `url` empty until a forge mode fills it, the per-package `--version`/`--tag` keys, `paths_released`) and the §12 job summary; inside a workflow step (`GITHUB_OUTPUT` set) the calls land in the env files verbatim, outside, the preview call log prints them (nothing written but the plan file); offline (I5); the remaining §12 modes (`auto\|pr\|release\|check`) are absent rather than stubbed |
+| `action [--mode plan\|pr\|check] [--plan-out PATH] [--dry] [--pr-title TITLE]` | available (§12 step 1, ADR-0037 + ADR-0043): the §12 outputs through the action-output seam over the mode's executor — `plan` is the offline forecast (plan → the canonical plan file (`plan_json`, default `halyard-plan.json`, `--plan-out` overrides, `E-ACTION-PLAN` on an unwritable path) → the §12 outputs (`released`/`published` honestly `false`, `releases_json` with the `url` empty until a forge mode fills it, the per-package `--version`/`--tag` keys, `paths_released`) and the §12 job summary), `pr` runs the §11.1 release machine — the same shared pass `halyard pr` drives — and renders its view (`pr_number`/`pr_url` carry the forge's own values and ride only when the pass has a Release PR to report, `released` is `true` only when the live tag phase created a release, `releases_json` fills the pass's minted URLs by tag match, the summary names the effect, the mints and the posture); inside a workflow step (`GITHUB_OUTPUT` set) the calls land in the env files verbatim, outside, the preview call log prints them (nothing written but the plan file); the `pr` mode's `--dry` forecasts over the preview adapter (I5), live fails-closed on credentials exactly like `halyard pr`; the `plan` mode is always offline; the `check` mode lints `--pr-title` through the check surface's own classification (`E-CLI-TITLE` refuses fail-closed before anything is written) and renders the verdict beside the pending forecast, the outputs riding the plan vocabulary unchanged; the remaining §12 modes (`auto\|release`) are absent rather than stubbed |
 | `bench [--iterations N]` | available (§16.2, ADR-0042): the built-in measurement of the planning pipeline over the current repo — the §14 model stages (`discover` → `config` → `history` → `plan`, the `--profile` trace's own span vocabulary) timed per pass, one untimed warmup before them (the §14.1 no-op-warm model; `--no-cache` is the cold measurement and the report names the posture either way), aggregated with the nearest-rank percentiles the §14.1 budget table speaks; the report carries the repo's shape beside the timings (packages, pending commits, cache posture) — a measurement, never a gate (the §14.1 budgets are shape-bound to the xtask fixtures); a zero-iteration request refuses `E-CLI-BENCH` before the warmup runs; all three formats (the JSON's schema, stage order and shape are the run-stable contract — the timings are wall-clock) |
 
 ## Forge credentials (M4.1c, ADR-0014)
