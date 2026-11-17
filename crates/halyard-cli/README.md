@@ -144,14 +144,15 @@ halyard affected --format gha
 
 # The CI-consumer surface: render the selection in a CI system's own
 # grammar — one line per argv atom / the one expression the step
-# consumes (ADR-0034/0035/0036/0038/0039/0040; the ten systems are
-# turbo, nx, bazel, gha, gitlab, azure, teamcity, circleci, buildkite,
-# jenkins).
+# consumes (ADR-0034/0035/0036/0038/0039/0040/0041; the eleven systems
+# are turbo, nx, bazel, gha, gitlab, azure, teamcity, circleci,
+# buildkite, jenkins, bitbucket).
 halyard affected --ci turbo
 halyard affected --ci azure
 halyard affected --ci circleci
 halyard affected --ci buildkite
 halyard affected --ci jenkins
+halyard affected --ci bitbucket
 ```
 
 ## Man pages (§16.2)
@@ -214,7 +215,7 @@ executors and are absent rather than stubbed.
 | `explain <pkg>` | available (M1.10) |
 | `status` | available (M1.10) |
 | `graph [--graph-format]` | available (M1.10; the rendering flag is `--graph-format` — text \| mermaid \| dot \| json — while the global `--format` owns the output vocabulary; sharing one flag made every `graph` invocation panic at HEAD, fixed with this rename) |
-| `affected [--base <ref>] [--ci SYSTEM]` | available (ADR-0032, §16.3/M10 step 1 + ADR-0034/0035/0036/0038/0039/0040 step 2): the CI selector — the packages a change touches, directly (pending commits since the base) and transitively (dependents closed over the workspace's reverse dependency edges, dev edges included, the nearest affected ancestor as `via`); `--base` selects against one explicit ref (branch, remote-tracking ref or tag) instead of the release bases — the PR-selection shape — and refuses an unresolvable ref fail-closed (`E-GIT-REF` naming it); offline (I5), JSON byte-stable (I3); `--ci SYSTEM` renders the selection in the CI system's own grammar (turbo \| nx \| bazel \| gha \| gitlab \| azure \| teamcity \| circleci \| buildkite \| jenkins — see the adapters section below) |
+| `affected [--base <ref>] [--ci SYSTEM]` | available (ADR-0032, §16.3/M10 step 1 + ADR-0034/0035/0036/0038/0039/0040/0041 step 2): the CI selector — the packages a change touches, directly (pending commits since the base) and transitively (dependents closed over the workspace's reverse dependency edges, dev edges included, the nearest affected ancestor as `via`); `--base` selects against one explicit ref (branch, remote-tracking ref or tag) instead of the release bases — the PR-selection shape — and refuses an unresolvable ref fail-closed (`E-GIT-REF` naming it); offline (I5), JSON byte-stable (I3); `--ci SYSTEM` renders the selection in the CI system's own grammar (turbo \| nx \| bazel \| gha \| gitlab \| azure \| teamcity \| circleci \| buildkite \| jenkins \| bitbucket — see the adapters section below) |
 | `doctor [--registries]` | available (M1.10; M5.1 adds the opt-in `--registries` probe — crates.io + npm reachability and protocol comprehension through the `Registry` seam, network touched only by the flag, I5) |
 | `schema plan\|config` | available (M1.10) |
 | `completions <shell>` | available (M1.10) |
@@ -229,7 +230,7 @@ executors and are absent rather than stubbed.
 | `init [--github]` | available (ADR-0029, §16.1/§16.2): discovery surveys the repository and the engine plans a create-only write — the documented `halyard.toml` skeleton (every key optional; the defaults ride as comments and loading it yields the built-in defaults exactly, so zero-config stays zero-config) and, with `--github`, the §16.1 one-file release workflow (`.github/workflows/release.yml`); atomic (temp sibling → fsync → rename) with the workflow's parent directories created; gated before any write — a refusal never leaves a half-scaffold (`E-CFG-INIT`); an existing `.config/halyard.toml` refuses first (a root scaffold would shadow it); needs no git repo and reads no config |
 | `man [<command>]` | available (§16.2 shell integration): `halyard man` renders the `halyard(1)` page and `halyard man <command>` one subcommand's page — roff, derived from the clap definition itself (the completions renderer's single-source-of-truth rule, so a flag added to the parser appears on the page without a second edit), byte-stable across runs (I3), printed to stdout (the `schema`/`completions` convention); an unknown topic is clap's own usage error naming the valid values |
 | `action [--mode plan] [--plan-out PATH]` | available (§12 step 1, ADR-0037): the plan-mode forecast through the action-output seam — plan → the canonical plan file (`plan_json`, default `halyard-plan.json`, `--plan-out` overrides, `E-ACTION-PLAN` on an unwritable path) → the §12 outputs (`released`/`published` honestly `false`, `releases_json` with the `url` empty until a forge mode fills it, the per-package `--version`/`--tag` keys, `paths_released`) and the §12 job summary; inside a workflow step (`GITHUB_OUTPUT` set) the calls land in the env files verbatim, outside, the preview call log prints them (nothing written but the plan file); offline (I5); the remaining §12 modes (`auto\|pr\|release\|check`) are absent rather than stubbed |
-| `bench` | **(its milestone)** — absent rather than stubbed (§16.2) |
+| `bench [--iterations N]` | available (§16.2, ADR-0042): the built-in measurement of the planning pipeline over the current repo — the §14 model stages (`discover` → `config` → `history` → `plan`, the `--profile` trace's own span vocabulary) timed per pass, one untimed warmup before them (the §14.1 no-op-warm model; `--no-cache` is the cold measurement and the report names the posture either way), aggregated with the nearest-rank percentiles the §14.1 budget table speaks; the report carries the repo's shape beside the timings (packages, pending commits, cache posture) — a measurement, never a gate (the §14.1 budgets are shape-bound to the xtask fixtures); a zero-iteration request refuses `E-CLI-BENCH` before the warmup runs; all three formats (the JSON's schema, stage order and shape are the run-stable contract — the timings are wall-clock) |
 
 ## Forge credentials (M4.1c, ADR-0014)
 
@@ -374,10 +375,10 @@ Failures carry the §15.4 stable codes (`E-DISC-*`, `E-GIT-*`, `E-PLAN-*`,
 `E-CLI-*`, …) and render through `miette`; every code has a page under
 [docs/errors](../../docs/errors/README.md).
 
-## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035 + ADR-0036 + ADR-0038 + ADR-0039 + ADR-0040)
+## The CI-selector adapters (`affected --ci`, ADR-0034 + ADR-0035 + ADR-0036 + ADR-0038 + ADR-0039 + ADR-0040 + ADR-0041)
 
 `halyard affected
---ci turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins`
+--ci turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins|bitbucket`
 renders the
 selection in the CI system's own grammar — turbo's `--filter=...pkg`
 dependent filters (one per change root, unioned by turbo), nx's
@@ -398,9 +399,14 @@ string; pasted into the setup workflow, declared as a pipeline
 parameter in the continuation config), Buildkite's build-matrix block
 `matrix: setup: halyard_pkg: [...]` (one quoted-string element per
 affected package; pasted under a step, each cell interpolating
-`{{ matrix.halyard_pkg }}`) and Jenkins' declarative `axis` block
+`{{ matrix.halyard_pkg }}`), Jenkins' declarative `axis` block
 (`axis { name 'HALYARD_PKG' values 'app', 'lib' }` — one statement per
 line; pasted inside `matrix { axes { … } }`, each cell reading
-`$HALYARD_PKG`). The grammars
+`$HALYARD_PKG`) and Bitbucket's `parallel:` block (the required
+`steps:` property, one step per affected package whose script carries
+the literal `export HALYARD_PKG=<name>` — the documented grammar has
+no per-step `env`, so the assignment rides the script line the
+consumer's tool invocation reads in the same script; the 100-step
+pipeline cap is the consumer's policy). The grammars
 are VERIFIED in `docs/research/ci-selector-grammars.md`; an empty
 selection prints nothing (the CI step skips itself, exit 0).
