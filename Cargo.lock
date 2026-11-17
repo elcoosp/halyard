@@ -1387,6 +1387,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "halyard-action"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "halyard-cache"
 version = "0.0.0"
 dependencies = [
@@ -1420,6 +1430,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "criterion",
+ "halyard-action",
  "halyard-cache",
  "halyard-changelog",
  "halyard-config",
