@@ -88,7 +88,11 @@ ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
 the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
 env-file writers and the ordered-call-log preview, the plan-mode forecast
 wired as `halyard action` with the canonical plan file and the §12 job
-summary).** The
+summary; the §12 `pr` mode (ADR-0043) renders the §11.1 release
+machine's pass view through the same seam — the forge's own
+`pr_number`/`pr_url`, the minted release URLs and the honest
+`released` value; the §12 `check` mode (ADR-0044) renders the title
+lint's verdict and the conveyed bumps beside the pending forecast).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -227,9 +231,10 @@ crates/
                          change-file grammar (.halyard/changes/*.md, ADR-0028)
   halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
   halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
-  halyard-action         §12 action-output seam (ADR-0037): the outputs vocabulary over the
-                         GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files, the preview call log,
-                         the plan-mode forecast renderer (`halyard action`)
+  halyard-action         §12 action-output seam (ADR-0037/0043/0044): the outputs vocabulary
+                         over the GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files, the preview
+                         call log, the plan-mode forecast, the §12 pr mode's pass renderers
+                         and the §12 check mode's verdict (`halyard action`)
   halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
                          packument `published()` + deterministic visibility wait (§13)
   halyard-publish        Publish engine (M5.2): plan validation (I8), topo layers, resume,
@@ -305,6 +310,7 @@ cargo run -p halyard-git --example fetch_plan
 cargo run -p halyard-registry --example probe_registries
 cargo run -p halyard-cache --example dump
 cargo run -p halyard-cli --example release_pipeline
+cargo run -p halyard-cli -- bench --iterations 8   # the §16.2/ADR-0042 pipeline measurement over this repo
 cargo run -p halyard-changelog --example render
 cargo run -p halyard-changelog --example render_pr_body
 cargo run -p halyard-changelog --example render_release_notes
@@ -323,6 +329,8 @@ cargo run -p halyard-forge --example governed_release
 cargo run -p halyard-forge-github --example forge_exchange
 cargo run -p halyard-forge-github --example app_exchange
 cargo run -p halyard-action --example plan_forecast
+cargo run -p halyard-action --example pr_forecast
+cargo run -p halyard-action --example check_forecast
 ```
 
 Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
