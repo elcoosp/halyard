@@ -63,13 +63,15 @@ surveys the repo, the engine plans a create-only write — the documented
 defaults exactly, plus the §16.1 one-file release workflow with
 `--github` — refusals carry `E-CFG-INIT` and never leave a
 half-scaffold)** — and the §16.3/M10 affected-package selector (`halyard
-affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 + ADR-0034/0035: the
-CI question — which packages must rebuild and test? — answered as the
+affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 + ADR-0034/0035/0036:
+the CI question — which packages must rebuild and test? — answered as the
 pending-commit attribution closed over the workspace's reverse
 dependency edges, dev edges included, with an explicit-ref base for
 the PR-selection shape and the selection rendered in the CI systems'
 own grammars — turbo, nx, bazel, GitHub Actions' matrix-output JSON
-array and GitLab's `parallel:matrix` hashes).** The
+array, GitLab's `parallel:matrix` hashes, Azure Pipelines'
+`task.setvariable` output variable and TeamCity's matrix-build
+`param(...)` line).** The
 architecture and multi-year master plan lives in
 [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
 tracked in [`PROGRESS.md`](PROGRESS.md).
@@ -223,7 +225,7 @@ crates/
                          discover-diff, git-diff, replay, bench-public, pgo
   halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
                          migrate/explain/status/graph/doctor/schema/completions/
-                         forge-smoke)
+                         affected/man/forge-smoke)
 schemas/                 frozen JSON Schemas (M0.7)
 corpus/manifest.toml     pinned real-world corpus (M0.2)
 bench/                   budgets (§14.1) + competitor harness (M0.3)
