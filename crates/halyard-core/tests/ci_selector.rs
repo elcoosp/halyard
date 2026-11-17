@@ -6,8 +6,9 @@
 //! hashes (GitLab), the `task.setvariable` logging command (Azure
 //! Pipelines), the `param(...)` matrix line (`TeamCity`), the
 //! dynamic-config `parameters` line (`CircleCI`), the `matrix.setup`
-//! dimension block (`Buildkite`) and the `axis` directive block
-//! (`Jenkins`). Grammars VERIFIED per §0.4, fetched
+//! dimension block (`Buildkite`), the `axis` directive block
+//! (`Jenkins`) and the `parallel: steps:` block (`Bitbucket`).
+//! Grammars VERIFIED per §0.4, fetched
 //! quotes in `docs/research/ci-selector-grammars.md`. Written first
 //! (red on the unresolved `halyard_core` API), implemented second.
 
@@ -112,6 +113,7 @@ fn an_empty_selection_renders_nothing() {
         "circleci",
         "buildkite",
         "jenkins",
+        "bitbucket",
     ] {
         let adapter = ci_selector_adapter(system).expect("known adapter");
         assert!(
@@ -411,7 +413,76 @@ fn jenkins_renders_one_axis_value_per_affected_package() {
 }
 
 #[test]
-fn the_adapter_lookup_names_ten_systems_and_refuses_the_rest() {
+fn bitbucket_renders_the_parallel_steps_block_over_the_affected_closure() {
+    // support.atlassian.com/bitbucket-cloud (VERIFIED 2026-11-17):
+    // "Parallel steps allow you to group pipeline steps that can run at
+    // the same time (concurrently) to reduce build time" — the
+    // documented shape is a `parallel:` block carrying the required
+    // `steps:` property ("The `steps` property contains the lists of
+    // `step`s in a `stage` or a `parallel`. At least 1 step is required
+    // within the steps list"), whose steps differ per step in the
+    // script itself (the docs' own example varies
+    // `--batch 1` / `--batch 2`). Bitbucket computes no dependency
+    // closure and has no per-step `env` property (variables exist only
+    // under `pipe`), so one literal script line per affected package
+    // carries the **full affected closure**, name-sorted — the
+    // halyard-owned `HALYARD_PKG` identifier the consumer's own tool
+    // invocation reads in the same script.
+    let (changed, affected) = lib_app();
+    let adapter = ci_selector_adapter("bitbucket").expect("bitbucket is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "parallel:".to_owned(),
+            "  steps:".to_owned(),
+            "    - step:".to_owned(),
+            "        script:".to_owned(),
+            "          - export HALYARD_PKG=app".to_owned(),
+            "    - step:".to_owned(),
+            "        script:".to_owned(),
+            "          - export HALYARD_PKG=lib".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn bitbucket_renders_one_parallel_step_per_affected_package() {
+    // One parallel step per affected package (the docs' own per-step
+    // script shape); the relative indentation follows the documented
+    // example exactly (`steps:` +2 under `parallel:`, the step list +2
+    // under `steps:`, `script:` +4 under the step, the script items +2).
+    // The pipeline's 100-step cap ("The 100-step limit on pipelines
+    // includes each step in a parallel group") is the consumer's policy
+    // — the render stays the grammar, never the guard.
+    let changed = vec![pkg("lib", "crates/lib")];
+    let affected = vec![
+        pkg("app", "crates/app"),
+        pkg("cli", "crates/cli"),
+        pkg("lib", "crates/lib"),
+    ];
+    let adapter = ci_selector_adapter("bitbucket").expect("bitbucket is a known adapter");
+    let rendered = adapter.render(&changed, &affected);
+    assert_eq!(
+        rendered,
+        vec![
+            "parallel:".to_owned(),
+            "  steps:".to_owned(),
+            "    - step:".to_owned(),
+            "        script:".to_owned(),
+            "          - export HALYARD_PKG=app".to_owned(),
+            "    - step:".to_owned(),
+            "        script:".to_owned(),
+            "          - export HALYARD_PKG=cli".to_owned(),
+            "    - step:".to_owned(),
+            "        script:".to_owned(),
+            "          - export HALYARD_PKG=lib".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn the_adapter_lookup_names_eleven_systems_and_refuses_the_rest() {
     let systems: Vec<&'static str> = [
         "turbo",
         "nx",
@@ -423,6 +494,7 @@ fn the_adapter_lookup_names_ten_systems_and_refuses_the_rest() {
         "circleci",
         "buildkite",
         "jenkins",
+        "bitbucket",
     ]
     .iter()
     .filter_map(|system| ci_selector_adapter(system).map(CiSelectorAdapter::system))
@@ -439,11 +511,12 @@ fn the_adapter_lookup_names_ten_systems_and_refuses_the_rest() {
             "teamcity",
             "circleci",
             "buildkite",
-            "jenkins"
+            "jenkins",
+            "bitbucket"
         ]
     );
     assert!(
-        ci_selector_adapter("bitbucket").is_none(),
+        ci_selector_adapter("drone").is_none(),
         "an unknown system is None — the adapter surface is closed, extending one is an ADR"
     );
 }
