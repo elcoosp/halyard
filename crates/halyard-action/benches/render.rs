@@ -97,6 +97,64 @@ fn bench(c: &mut Criterion) {
             });
         });
     }
+    // The §12 `pr` mode's renderers (ADR-0043): the pass view over the
+    // same 40-release plan — the release-PR run renders these on every
+    // CI pass, so they ride the same microsecond-scale budget as the
+    // plan forecast.
+    let pass = halyard_action::PrPass {
+        pr_effect: Some(halyard_action::PrEffect::Opened {
+            number: 7,
+            url: "https://github.com/example/monorepo/pull/7".to_owned(),
+        }),
+        propagated: false,
+        released: false,
+        release_urls: std::collections::BTreeMap::new(),
+        branch: "halyard/release/main".to_owned(),
+        forecast: false,
+    };
+    group.bench_function("pr_outputs_40_releases", |b| {
+        b.iter(|| {
+            black_box(
+                halyard_action::pr_outputs(
+                    black_box(&plan),
+                    Path::new("halyard-plan.json"),
+                    black_box(&pass),
+                )
+                .unwrap_or_default(),
+            )
+        });
+    });
+    group.bench_function("pr_summary_40_releases", |b| {
+        b.iter(|| {
+            black_box(halyard_action::pr_summary(
+                black_box(&plan),
+                black_box(&pass),
+            ))
+        });
+    });
+    // The §12 `check` mode's renderer (ADR-0044): the verdict beside the
+    // 40-release table — the pull_request-event render, same budget.
+    let verdict = halyard_action::CheckVerdict {
+        title: Some(halyard_action::TitleOutcome::Accepted {
+            kind: "feat".to_owned(),
+            level: "minor".to_owned(),
+            predictions: (0..40)
+                .map(|idx| halyard_action::CheckRow {
+                    package: format!("pkg{idx:04}"),
+                    from: "0.1.0".to_owned(),
+                    bump: "patch".to_owned(),
+                })
+                .collect(),
+        }),
+    };
+    group.bench_function("check_summary_40_releases", |b| {
+        b.iter(|| {
+            black_box(halyard_action::check_summary(
+                black_box(&plan),
+                black_box(&verdict),
+            ));
+        });
+    });
     group.finish();
 }
 
