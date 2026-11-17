@@ -14,7 +14,7 @@
 //!
 //! Patterns are matched against **directories** derived from the committed
 //! file list (a workspace member is a directory containing a manifest);
-//! `match_segments` is the single-segment `fnmatch`-style matcher and
+//! `match_segment` is the single-segment `fnmatch`-style matcher and
 //! `matches` the whole-path entry point. Matching is pure, allocation
 //! light and total: no input panics.
 
@@ -34,8 +34,10 @@ pub fn matches(pattern: &str, path: &str) -> bool {
     match_segments(&pattern_parts, &path_parts)
 }
 
-/// Glob matcher over one path segment (`fnmatch` semantics, UTF-8 aware).
-pub fn match_segment(pattern: &str, segment: &str) -> bool {
+/// Glob matcher over one path segment (`fnmatch` semantics, UTF-8
+/// aware) — the private leaf under [`matches`]; the segment matcher the
+/// backtracking walker ([`match_segments`]) recurses through.
+fn match_segment(pattern: &str, segment: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let seg: Vec<char> = segment.chars().collect();
     seg_match(&pat, &seg)
