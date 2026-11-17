@@ -356,3 +356,25 @@ fn affected_ci_teamcity_renders_the_matrix_param_line() -> Result<(), BoxError> 
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_circleci_renders_the_continuation_parameters_line() -> Result<(), BoxError> {
+    // circleci.com/docs (VERIFIED 2026-11-17): the continuation orb's
+    // `continue` command takes `parameters` — "The `parameters`
+    // parameter accepts a JSON object as a string. Note the single
+    // quote encapsulating the full JSON object". One paste-ready
+    // `parameters: '{ "halyard_pkgs": [...] }'` line over the affected
+    // closure; the consumer declares the matching pipeline parameter
+    // in the continuation config and iterates `pipeline.parameters.
+    // halyard_pkgs` on its side.
+    let fx = two_package_fixture("cli-affected-ci-circleci")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "circleci"])?;
+    assert!(ok, "the circleci adapter renders: {text}");
+    assert!(
+        text.contains(r#"parameters: '{ "halyard_pkgs": ["app", "lib"] }'"#),
+        "the affected closure as the one-line continuation parameter: {text}"
+    );
+    Ok(())
+}
