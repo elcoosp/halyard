@@ -132,7 +132,10 @@ fn prepare_phase_opens_then_updates_in_place() {
     assert!(!first.propagated, "nothing pending → prepare ran");
     assert_eq!(
         first.effects,
-        vec![MachineEffect::PrOpened { number: 1 }],
+        vec![MachineEffect::PrOpened {
+            number: 1,
+            url: "mem://pr/1".to_owned(),
+        }],
         "the first pass opens the Release PR"
     );
     let unchanged = run(
@@ -142,7 +145,10 @@ fn prepare_phase_opens_then_updates_in_place() {
     .unwrap_or_else(|e| unreachable!("no-op pass must succeed: {e}"));
     assert_eq!(
         unchanged.effects,
-        vec![MachineEffect::PrUnchanged { number: 1 }],
+        vec![MachineEffect::PrUnchanged {
+            number: 1,
+            url: "mem://pr/1".to_owned(),
+        }],
         "an identical body is a no-op, not a rewrite"
     );
     let updated = run(
@@ -152,7 +158,10 @@ fn prepare_phase_opens_then_updates_in_place() {
     .unwrap_or_else(|e| unreachable!("update pass must succeed: {e}"));
     assert_eq!(
         updated.effects,
-        vec![MachineEffect::PrUpdated { number: 1 }],
+        vec![MachineEffect::PrUpdated {
+            number: 1,
+            url: "mem://pr/1".to_owned(),
+        }],
         "a changed body rewrites the same PR"
     );
     assert_eq!(forge.prs().len(), 1, "no duplicate PR was ever opened");
@@ -200,7 +209,10 @@ fn empty_plan_closes_the_stale_release_pr() {
         run(&forge, &input).unwrap_or_else(|e| unreachable!("close pass must succeed: {e}"));
     assert_eq!(
         report.effects,
-        vec![MachineEffect::PrClosed { number: 1 }],
+        vec![MachineEffect::PrClosed {
+            number: 1,
+            url: "mem://pr/1".to_owned(),
+        }],
         "the stale PR is closed"
     );
     let rerun =
@@ -322,7 +334,10 @@ fn failure_during_close_leaves_the_pr_open() {
         run(&forge, &input).unwrap_or_else(|e| unreachable!("recovery close must succeed: {e}"));
     assert_eq!(
         report.effects,
-        vec![MachineEffect::PrClosed { number: 1 }],
+        vec![MachineEffect::PrClosed {
+            number: 1,
+            url: "mem://pr/1".to_owned(),
+        }],
         "the re-run closes the still-open PR exactly once"
     );
 }
