@@ -378,3 +378,47 @@ fn affected_ci_circleci_renders_the_continuation_parameters_line() -> Result<(),
     );
     Ok(())
 }
+
+#[test]
+fn affected_ci_buildkite_renders_the_matrix_dimension_block() -> Result<(), BoxError> {
+    // buildkite.com/docs (VERIFIED 2026-11-17): build matrices "expand a
+    // step template and array of matrix elements into multiple jobs" —
+    // the documented multi-dimension shape carries `matrix: setup:` with
+    // dimension keys mapping to lists of values interpolated as
+    // `{{matrix.<key>}}`. One paste-ready `matrix.setup` dimension block
+    // over the affected closure; the consumer pastes it under a step and
+    // interpolates `{{ matrix.halyard_pkg }}` per cell.
+    let fx = two_package_fixture("cli-affected-ci-buildkite")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "buildkite"])?;
+    assert!(ok, "the buildkite adapter renders: {text}");
+    assert!(
+        text.contains("matrix:\n  setup:\n    halyard_pkg:\n      - \"app\"\n      - \"lib\""),
+        "the affected closure as the matrix.setup dimension block: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn affected_ci_jenkins_renders_the_axis_block() -> Result<(), BoxError> {
+    // jenkins.io/doc/book/pipeline/syntax (VERIFIED 2026-11-17): the
+    // declarative `matrix` defines "a multi-dimensional matrix of
+    // name-value combinations to be run in parallel" and the `axes`
+    // section "specifies one or more `axis` directives" — "Each `axis`
+    // consists of a `name` and a list of `values`" (one statement per
+    // line, the declarative grammar's own no-semicolon rule). One
+    // paste-ready `axis` block over the affected closure; the consumer
+    // pastes it inside its `matrix { axes { … } }` and each cell reads
+    // `$HALYARD_PKG`.
+    let fx = two_package_fixture("cli-affected-ci-jenkins")?;
+    fx.run_git(&["tag", "-a", "lib-v0.1.0", "-m", "lib 0.1.0", "HEAD~1"])?;
+    fx.run_git(&["tag", "-a", "app-v0.1.0", "-m", "app 0.1.0", "HEAD~1"])?;
+    let (ok, text) = halyard(fx.root(), &["affected", "--ci", "jenkins"])?;
+    assert!(ok, "the jenkins adapter renders: {text}");
+    assert!(
+        text.contains("axis {\n    name 'HALYARD_PKG'\n    values 'app', 'lib'\n}"),
+        "the affected closure as the one-axis matrix block: {text}"
+    );
+    Ok(())
+}
