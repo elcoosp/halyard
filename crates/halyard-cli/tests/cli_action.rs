@@ -561,3 +561,114 @@ fn action_check_mode_json_document_carries_the_verdict() -> Result<(), BoxError>
     assert_eq!(outputs.get("released"), Some(&serde_json::json!("false")));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §12 `release` mode (ADR-0046): the §11.1 tag phase's pass view —
+// reconcile → directives → the writer → the push → the forge half —
+// through the action-output seam. Dry forecasts offline (I5); no
+// `pr_number`/`pr_url` keys exist (the release mode opens no Release
+// PR). Written first (red on the unknown `--mode release` value),
+// implemented second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn action_release_mode_forecasts_the_tag_phase() -> Result<(), BoxError> {
+    // The manifest-ahead shape (solo at 0.1.1, tagged v0.1.0): the
+    // §11.1 reconciliation makes the manifest version pending, so the
+    // dry forecast has a would-create tag to name. The two-package
+    // fully-tagged shape forecasts zero creations — the honest
+    // `no tags created` posture instead.
+    let fx = merged_manifest_fixture("cli-action-release-forecast")?;
+    let (ok, text) = halyard(fx.root(), &["action", "--mode", "release", "--dry"])?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    // The §12 scalars: the release mode executes nothing in dry mode,
+    // and no Release-PR keys exist (the release mode opens none).
+    assert!(text.contains("released=false\n"), "the scalar: {text}");
+    assert!(text.contains("published=false\n"), "the scalar: {text}");
+    assert!(
+        !text.contains("pr_number="),
+        "the release mode has no Release-PR keys: {text}"
+    );
+    // The plan vocabulary rides unchanged (the plan file, the pending
+    // forecast's per-package keys — the plan's own next-release row,
+    // which the tag phase's manifest-version tag deliberately differs
+    // from, the same two-half distinction the `pr` mode renders).
+    assert!(
+        text.contains("plan_json=halyard-plan.json\n"),
+        "the plan-file pointer: {text}"
+    );
+    assert!(text.contains("solo--version=0.1.2\n"), "the keys: {text}");
+    assert!(text.contains("solo--tag=v0.1.2\n"), "the keys: {text}");
+    // The job summary names the pass and its posture: the would-create
+    // tag (the preview writer's forecast row — the manifest's own
+    // version), the forge half's honest skip and the forecast marker.
+    assert!(text.contains("## halyard release"), "the heading: {text}");
+    assert!(
+        text.contains("created v0.1.1"),
+        "the forecast's created tag is named: {text}"
+    );
+    assert!(
+        text.contains("forge releases skipped (dry run"),
+        "the forge half's honest skip: {text}"
+    );
+    assert!(
+        text.contains("forecast (nothing executed)"),
+        "the forecast posture: {text}"
+    );
+    // The plan file is written (the `plan_json` pointer's target).
+    let document = fs::read_to_string(fx.root().join("halyard-plan.json"))?;
+    let value: serde_json::Value = serde_json::from_str(&document)?;
+    assert_eq!(
+        value.get("schema"),
+        Some(&serde_json::json!("halyard-plan/v1"))
+    );
+    Ok(())
+}
+
+#[test]
+fn action_release_mode_fully_tagged_shape_forecasts_no_creation() -> Result<(), BoxError> {
+    // The fully-tagged shape (manifest == tags): the §11.1
+    // reconciliation makes everything Tagged — the release pass
+    // forecasts zero creations and says so, never a invented tag.
+    let fx = two_package_fixture("cli-action-release-noop")?;
+    let (ok, text) = halyard(fx.root(), &["action", "--mode", "release", "--dry"])?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    assert!(text.contains("released=false\n"), "the scalar: {text}");
+    assert!(
+        text.contains("no tags created"),
+        "the honest no-creation posture: {text}"
+    );
+    assert!(
+        text.contains("forecast (nothing executed)"),
+        "the forecast posture: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn action_release_mode_json_document_carries_the_pass() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-action-release-json")?;
+    let (ok, text) = halyard(
+        fx.root(),
+        &["action", "--mode", "release", "--dry", "--format", "json"],
+    )?;
+    assert!(ok, "the JSON run succeeds: {text}");
+    let value = parse_json(&text)?;
+    assert_eq!(value.get("mode"), Some(&serde_json::json!("release")));
+    assert_eq!(value.get("dry"), Some(&serde_json::json!(true)));
+    let outputs = value
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("the document carries the outputs map")?;
+    assert_eq!(outputs.get("released"), Some(&serde_json::json!("false")));
+    assert_eq!(outputs.get("published"), Some(&serde_json::json!("false")));
+    assert!(outputs.get("plan_json").is_some());
+    // Byte-stable I3: the same run renders the same document.
+    let (ok2, text2) = halyard(
+        fx.root(),
+        &["action", "--mode", "release", "--dry", "--format", "json"],
+    )?;
+    assert!(ok2, "the re-run succeeds: {text2}");
+    assert_eq!(text, text2, "the release JSON document is byte-stable");
+    Ok(())
+}
