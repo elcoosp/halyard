@@ -1,18 +1,24 @@
 # E-GIT-REF
 
 **Code:** `E-GIT-REF` · **Area:** git engine (M2) · **Raised by:**
-tag enumeration / base resolution (`refs.rs`)
+tag enumeration / base resolution (`refs.rs`), the `--base` ref of
+`halyard affected` (the `base_override` walk option) and the `fetch`
+tag probe (`fetch.rs`)
 
 ## What it means
 
 The reference database could not be read: scanning refs (refs/heads,
-refs/tags, packed-refs) failed.
+refs/tags, packed-refs) failed — or the named ref could not be
+resolved (`affected --base` resolves one explicit ref through branch,
+remote-tracking ref and tag names, annotated tags peel).
 
 ## Cause
 
 - a corrupted or partially written `packed-refs` / loose ref;
 - permission problems on `.git/refs`;
-- a broken ` alternates` configuration surfacing as a ref read error.
+- a broken ` alternates` configuration surfacing as a ref read error;
+- an unresolvable `--base <ref>`: the ref does not exist locally (a
+  shallow or stale clone may need `halyard fetch` first).
 
 ## Fix
 
