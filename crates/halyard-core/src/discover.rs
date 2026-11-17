@@ -104,15 +104,6 @@ impl DiscoverCtx {
         }
         out.into_iter().collect()
     }
-
-    /// Registered files whose path ends with `suffix`, sorted by path.
-    pub fn files_with_suffix(&self, suffix: &str) -> Vec<&str> {
-        self.contents
-            .keys()
-            .map(RelPathKey::as_str)
-            .filter(|p| p.ends_with(suffix))
-            .collect()
-    }
 }
 
 /// Where a [`RawPackage`]'s version is written — the raw-string mirror of
@@ -482,8 +473,6 @@ mod tests {
         assert_eq!(ctx.file("Cargo.toml").map(<[u8]>::len), Some(28));
         assert!(ctx.file("a/Cargo.toml").is_some());
         assert!(ctx.file("missing").is_none());
-        let tomls = ctx.files_with_suffix("Cargo.toml");
-        assert_eq!(tomls, vec!["Cargo.toml", "a/Cargo.toml"]);
         let dirs = ctx.dirs();
         assert_eq!(dirs, vec!["a", "docs"]);
     }
