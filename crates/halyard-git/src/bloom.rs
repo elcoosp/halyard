@@ -192,11 +192,6 @@ impl ChangedPathBloom {
         })
     }
 
-    /// Number of commits covered (BIDX entries).
-    pub fn commit_count(&self) -> usize {
-        self.bidx.len()
-    }
-
     /// True when the path is **possibly** changed by the commit at
     /// `position` (all probe bits set). A `false` result is definitive:
     /// no changed path of that commit touches `path` (or anything under
@@ -312,7 +307,6 @@ mod tests {
             !bloom.possibly_changed(0, &[0xFF; 64]),
             "an all-hashes-unlikely path must read negative"
         );
-        assert_eq!(bloom.commit_count(), 1);
     }
 
     #[test]
