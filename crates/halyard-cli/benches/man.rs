@@ -1,6 +1,6 @@
 //! The man renderer's throughput (§16.2). The renderer is a pure
 //! function of a [`clap::Command`] tree, so the bench renders a mirror
-//! of the CLI's tree — the same 18 commands and representative flags —
+//! of the CLI's tree — the same 20 commands and representative flags —
 //! built in-process (the bin's derive is not a library surface). The
 //! shape pins the render cost of the full page set, so a help-text or
 //! flag change that suddenly re-formats every page shows up honestly.
@@ -11,7 +11,7 @@ use clap::Command as ClapCommand;
 use criterion::Criterion;
 use halyard_cli::man;
 
-/// The CLI-tree mirror: 18 commands with one representative option per
+/// The CLI-tree mirror: 20 commands with one representative option per
 /// command and the root's global flag set.
 fn mirror_tree() -> ClapCommand {
     let names = [
@@ -25,7 +25,9 @@ fn mirror_tree() -> ClapCommand {
         "explain",
         "check",
         "affected",
+        "action",
         "fetch",
+        "bench",
         "status",
         "graph",
         "doctor",
@@ -62,7 +64,7 @@ fn bench_man(c: &mut Criterion) {
     group.bench_function("top_page", |biter| {
         biter.iter(|| man::top_page(black_box(&root)));
     });
-    group.bench_function("command_pages_18", |biter| {
+    group.bench_function("command_pages_20", |biter| {
         biter.iter(|| {
             names_iter()
                 .filter_map(|name| man::command_page(black_box(&root), black_box(name)))
