@@ -2647,3 +2647,105 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   halyard's own release artifacts (VERIFY first), (2) the corpus-wide
   pnpm differential as an xtask subcommand (needs a pnpm binary), (3)
   the M2.6 dhat re-audit with the cache warm.
+
+### 2026-11-17 — the §12 `pr` and `check` modes (ADR-0043 + ADR-0044, tree left dirty, no commits)
+
+- **Survey.** The workspace at `db6bd91` (the Bitbucket + bench session):
+  zero `todo!`/`unimplemented!`/`#[allow]`/`#[expect]` anywhere, no
+  non-test `unwrap`, every E-code page exact — the tree was gates-green
+  before any edit. Two drift items on record: the `Command` enum doc in
+  the CLI bin still claimed `bench` "remains absent rather than stubbed"
+  (ADR-0042 had landed it), and the root README's Daily-commands block
+  had no `halyard bench` usage line. The journal's own next-step hints
+  (M5.4 VERIFY-first, the pnpm differential needing a pnpm binary, the
+  M2.6 dhat re-audit) are deferred-for-cause; the one declared-absent
+  surface with no external dependency was §12's remaining modes — the
+  session's milestone pair.
+- **M1 implemented, red→green (ADR-0043, the §12 `pr` mode).** The red:
+  the forge preview test refused the url-less `MachineEffect::PrOpened`,
+  5 `halyard-action` contract tests refused the missing
+  `PrEffect`/`PrPass`/`pr_outputs`/`pr_summary`, 4 CLI gates refused the
+  unrecognized `--mode pr`. The green: **the §11.1 machine report now
+  carries the forge's own URL** (`MachineEffect::PrOpened`/`PrUpdated`/
+  `PrUnchanged`/`PrClosed` gained `url` — the `pr_url` §12 output
+  renders what the adapter minted, never a composed guess; the `pr`
+  report's JSON effect rows carry the same key, the human/GHA forecast
+  lines byte-identical); the §11.1 pass assembly extracted from `cmd_pr`
+  into the shell-internal `run_pr_pass` (one executor, two renderers —
+  the adapter swap stays the only posture difference, M4.1b's rule);
+  `halyard-action` gained the plain forge-free view
+  (`PrEffect`/`PrView`/`PrPass` + `pr_outputs`/`pr_summary`): `released`
+  is the pass's honest execution value (`true` only when the live tag
+  phase created a release; a dry forecast stays `false`, I5), the
+  `pr_number`/`pr_url` pair rides only when the pass has a Release PR to
+  report (absent on PROPAGATE and the no-op pass), `releases_json` fills
+  the pass's minted URLs by tag match over the plan rows (ADR-0037's
+  "a forge mode fills it"), the summary's pass line names the effect,
+  the minted releases and the forecast posture; `halyard action --mode
+  pr [--dry]` wires it (the shared §12 delivery tail — sink selection,
+  the JSON document, the in-step/preview postures — extracted into
+  `render_action_run`/`deliver_outputs`, so the plan mode and the two
+  new modes render through one helper). The plan-vs-mint divergence is
+  pinned on record: in a PROPAGATE state the plan rows forecast the
+  *next* release (0.1.2) while the tag phase mints the *manifest*
+  version (v0.1.1) — the row url stays honestly empty and the summary's
+  `minted <tag> (<url>)` segment names the pass's own mint.
+- **M2 implemented (M1 green end-to-end first: 15/15 action contracts,
+  11/11 cli_pr byte-stable after the refactor, forge suites green),
+  red→green (ADR-0044, the §12 `check` mode).** The red: 2 contract
+  tests refused the missing `CheckVerdict`/`TitleOutcome`/`CheckRow`/
+  `check_summary`, 4 CLI gates refused the unrecognized `--mode
+  check`/`--pr-title`. The green: the check surface's verdict through
+  the seam — the shell's own `classify_title`/`predict` (the planner's
+  mapping + the §10.2 pre-major remap, single-sourced) mapped onto the
+  plain view, `check_summary` rendering the verdict line
+  (`title accepted: <kind> → <level> · conveyed <pkg> <bump>, …`) beside
+  the pending forecast's table; the outputs ride `plan_outputs` verbatim
+  (the §12 shape stays mode-independent); fail-closed ordering is the
+  contract — the classification precedes every effect, so a rejected
+  title refuses `E-CLI-TITLE` before the plan file or any sink call
+  exists (pinned by the JSON error channel + the no-plan-file
+  assertion); without a title the pending forecast is the verdict.
+- **Tests/bench/example totals.** M1: +1 forge preview gate (the
+  url-carrying open forecast), +5 action contract tests (the documented
+  order with the PR pair, the minted-url fill by tag, the honest
+  `released`, the summary's opened/propagated/no-op/closed postures),
+  +4 CLI e2e gates (the dry forecast, the PROPAGATE forecast, the
+  env-files posture, the JSON document) — forge 68 + action 15 +
+  `cli_action` 12 green, `cli_pr` 11 green (the report contract
+  byte-stable after the extraction); bench groups
+  `pr_outputs_40_releases` + `pr_summary_40_releases`; example
+  `pr_forecast`. M2: +2 action contract tests (the verdict line, the
+  rejected/no-title postures), +4 CLI e2e gates (the accepted verdict
+  with the pre-major remap, the fail-closed refusal, the no-title
+  forecast, the JSON verdict); bench `check_summary_40_releases`;
+  example `check_forecast`.
+- **Docs.** ADR-0043 + ADR-0044; arch §12 as-built (the two mode notes;
+  the absent list narrowed to `auto|release`); CLI README (the action
+  section's `pr` sample + `check` paragraph, the command row
+  `--mode plan|pr|check … --dry --pr-title`); root README (the status
+  paragraph, the crate row, the example list, the `halyard bench`
+  usage line the survey flagged); the `halyard-action` crate
+  description; PROGRESS.md row. No new error code — the modes ride the
+  existing taxonomy (`E-FORGE-*`, `E-ACTION-*`, `E-CLI-TITLE`), the
+  75-page taxonomy stays bidirectionally exact.
+- **Micro-debt cleaned (additive, not milestone substitutes).** The
+  stale `Command` enum doc repaired (the bench claim + the command
+  inventory now name all twenty and the §12 mode growth). One
+  zero-caller public item removed with its dead assertion:
+  `Discovery::files_with_suffix` (halyard-core — its only consumer was
+  its own test). A second candidate, `TagTargetResolver::
+  with_max_commits`, was restored untouched: its "zero callers" turned
+  out to miss the defining crate's own tests, which drive the
+  walk-bound degrade path through it — load-bearing, not dead.
+- **Honest state at cut-off.** The §12 modes render `plan|pr|check`;
+  `pr` live mode is wired through the same machine (fail-closed on
+  credentials) but untested against a real forge by design — the
+  nightly forge-smoke lane is its probe. The PROPAGATE-state
+  `releases_json` divergence (plan rows forecast the next release) is
+  the documented contract, not a bug. Tree left dirty (no commits
+  made).
+- **Next session start point.** (1) the §12 `release` mode (the
+  natural reuse: its plan rows always match its minted tags), (2) M5.4:
+  provenance/SLSA for halyard's own release artifacts (VERIFY first),
+  (3) the M2.6 dhat re-audit with the cache warm.
