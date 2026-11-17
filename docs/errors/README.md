@@ -66,6 +66,7 @@ link would rot with the page paths).
 | `E-CHLOG-PRBODY` | [E-CHLOG-PRBODY.md](E-CHLOG-PRBODY.md) | Release-PR body / embedded plan (M4.3a, §11.3) |
 | `E-CHLOG-CHANGE-FILE` | [E-CHLOG-CHANGE-FILE.md](E-CHLOG-CHANGE-FILE.md) | change-file front-matter grammar (§9.4, ADR-0028) |
 | `E-CLI-CWD` | [E-CLI-CWD.md](E-CLI-CWD.md) | CLI -C handling (M1.10) |
+| `E-CLI-BENCH` | [E-CLI-BENCH.md](E-CLI-BENCH.md) | CLI `bench` zero-iteration refusal (§16.2, ADR-0042) |
 | `E-CLI-RENDER` | [E-CLI-RENDER.md](E-CLI-RENDER.md) | CLI stable output rendering (M1.10) |
 | `E-CLI-NO-PACKAGE` | [E-CLI-NO-PACKAGE.md](E-CLI-NO-PACKAGE.md) | CLI explain target (M1.10) |
 | `E-CLI-TITLE` | [E-CLI-TITLE.md](E-CLI-TITLE.md) | CLI PR-title lint (M4.3 `check`, §11.6) |
