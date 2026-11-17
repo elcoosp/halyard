@@ -2197,6 +2197,130 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   pnpm differential as an xtask subcommand, (3) the M2.6 dhat
   re-audit with the cache warm.
 
+### 2026-11-17 — the action-output seam + the circleci adapter (ADR-0037 + ADR-0038, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `381f35a` (the
+  azure/teamcity adapters session, landed). Baseline gates re-run
+  green before any edit. The declared next start points were weighed:
+  M5.4 provenance/SLSA (external tooling — the composite distribution
+  needs releases to attest, so the reachable half of §12 was chosen
+  instead), the corpus-wide pnpm differential (the sandbox lacks
+  pnpm, as recorded), the M2.6 dhat re-audit (profiling, not a
+  capability). The reachable net-new capability: §12's action glue —
+  the outputs contract has no dependency on releases existing (the
+  plan wire types are §5.8, the plan mode is offline, I5), while the
+  composite wrapper stays with M5.4's own-artifact slice.
+- **M1 implemented (no stubs), one full red→green cycle** (the
+  crate contract tests and the CLI e2e gates written first — red on
+  `error[E0432]: unresolved import halyard_action` and
+  `error: unrecognized subcommand 'action'`, on record — then
+  implemented in dependency order): **the action-output seam
+  (`halyard-action`, ADR-0037)** — the §12 outputs vocabulary over
+  the injected `ActionWriter` (`set_output` / `append_summary` /
+  `emit_warning`): the real `GithubActionsWriter` (the `GITHUB_OUTPUT`
+  env file in the documented `{name}={value}` and
+  `{name}<<HALYARD` heredoc forms — VERIFIED quotes in the new
+  `docs/research/github-actions-outputs.md`; values that cannot ride
+  verbatim refuse `E-ACTION-OUTPUT`, never rewritten; the
+  `GITHUB_STEP_SUMMARY` append with the runner's automatic-newline
+  semantics; the `::warning::` degraded-mode annotation collapsing to
+  one log line) and the `PreviewActionWriter` (the ordered call log,
+  the `MemoryForge` poison-recovery convention) — `from_env()` is
+  honestly `None` outside a workflow step, and the CLI renders through
+  the preview there, so the outputs are observable locally. The §12
+  `plan` mode lands as the shell's `halyard action [--mode plan]
+  [--plan-out PATH]`: plan → the canonical plan file (the `plan_json`
+  pointer, `E-ACTION-PLAN` on a missing parent — the caller's
+  contract, never invented) → the outputs (`released`/`published`
+  honestly `false`, `releases_json` rows with the url empty until a
+  forge mode fills it, the per-package `--version`/`--tag` keys,
+  `paths_released` = the distinct edit sites sorted and deduplicated,
+  I3) → the job summary (the release table, the honest counts, the
+  walk's own work counters standing in for the timing breakdown —
+  wall-clock would break I3; zero API calls stated, not implied). The
+  degraded-mode annotation wires to `HistoryStats::degraded` — the
+  engine's own §8.3 marker, never a guess. The remaining §12 modes
+  (`auto|pr|release|check`) are absent rather than stubbed (a
+  one-variant value enum by design).
+- **M2 implemented (M1 green end-to-end first), one full red→green
+  cycle** (the core contract tests, the extended empty-selection loop
+  and the CLI e2e gate written first — red on
+  `ci_selector_adapter("circleci")` returning `None` and
+  `invalid value 'circleci' for '--ci <SYSTEM>'`, on record — then
+  implemented): **the CircleCI dynamic-config adapter (`affected --ci
+  circleci`, ADR-0038)** — one paste-ready
+  `parameters: '{ "halyard_pkgs": [...] }'` line over the affected
+  closure, name-sorted (circleci.com VERIFIED 2026-11-17: the
+  continuation orb's `continue` command takes `parameters` — "The
+  `parameters` parameter accepts a JSON object as a string. Note the
+  single quote encapsulating the full JSON object" — the documented
+  shape is `parameters: '{ "further": true }'`; the continuation
+  config declares the matching pipeline parameter and consumes it
+  through the documented `<< pipeline.parameters.… >>` / `when:` keys;
+  the quotes are in the extended research note, checked line updated).
+  The base's refusal pin (`ci_selector_adapter("circleci").is_none()`)
+  was the red hook — flipped to the eight-system lookup with
+  `buildkite` as the refused unknown. `halyard_pkgs` is the
+  halyard-owned identifier in the parameter grammar's own casing (the
+  docs' own lower-snake examples), the ADR-0035 policy carried over;
+  the hand-rendered JSON literal never needs escaping (neither
+  package-name grammar carries a quote or a backslash).
+- **Layer table updated consciously** (`xtask/src/layers.rs`):
+  `halyard-action` — workspace deps `halyard-core`, external
+  `serde_json` — plus the membership pins in the two layer tests; the
+  crate's Cargo.toml registers the `render` bench (`harness = false`).
+- **Tests/bench/example totals.** +10 crate contract gates (the
+  §12 vocabulary order and shapes, the fail-closed output-name
+  grammar incl. scoped npm keys, the env-file entry grammar incl. the
+  delimiter collision refusal and the trailing-newline rule, the real
+  writer's append bytes over temp files, the summary-without-sink
+  refusal, the honest `from_env` absence, the preview's ordered calls,
+  the row grammar, the job summary text, the canonical plan file) + 4
+  CLI e2e gates (the preview posture over a real fixture workspace,
+  the env-files posture with the sinks set, the `--format json` output
+  map, the `--plan-out` contract with the missing-parent refusal) —
+  14 green; benches `action_render/plan_outputs_40_releases` (≈ 38 µs
+  over the 40-release plan — the render is not the step's cost) +
+  `env_file_entry_single_line` / `env_file_entry_heredoc`
+  (sub-microsecond); example `plan_forecast` prints the preview call
+  log, the env-file block and the summary. M2: +3 core contract tests
+  (the continuation `parameters` line over the closure,
+  one-line-many-packages) + the extended empty-selection loop (eight
+  systems) + the flipped lookup pin (eight named, `buildkite`
+  refused) + 1 CLI e2e gate (the circleci render) — 16 core + 15 CLI
+  green; bench `ci_selector_circleci_40chain` registered over the same
+  40-package chain shape; example `affected_ci` prints all eight
+  adapters.
+- **Docs drift fixed / micro-debt cleaned (additive, not milestone
+  substitutes).** PROGRESS.md's azure/teamcity entry claimed "tree
+  left dirty (no commits made)" while the session had landed as
+  `9649278..381f35a` — the cut-off text now carries the provenance
+  parenthetical; the §7.1 as-built note now counts 19 members and one
+  remaining unbuilt slot (`halyard-plugin-host`); the CLI README's
+  status row split `bench`/`action` (the former stays absent, the
+  latter carries its section with a pasteable transcript); the
+  `E-CHLOG-CHANGE-FILE` CLI construction no longer double-encodes the
+  code in the message text (the `CliError::new` code is the carrier —
+  the message prefix was the only such double-encode); two
+  missing-consumer examples added (`halyard-cache`'s write/read
+  contract, `halyard-eco-npm`'s publish-argv half) with their
+  README daily-command rows.
+- **Honest state at cut-off.** The §12 `plan` mode renders and writes
+  only; no release, PR or publish is executed by `halyard action`
+  (their §12 modes land with their executors). The composite wrapper
+  (`action.yml`, binary download, checksum + attestation) stays with
+  M5.4's own-artifact slice. The circleci adapter renders only — no CI
+  system is executed by halyard (I5 — the consumers wire the lines
+  into their own pipelines); more adapters (Buildkite, Jenkins) remain
+  behind the closed ADR-0038 lookup — `buildkite` is the contract
+  tests' refused unknown. Tree left dirty (no commits made).
+- **Next session start point.** (1) M5.4: provenance/SLSA for
+  halyard's own release artifacts (VERIFY first — it also unblocks
+  the §12 composite distribution), (2) the corpus-wide pnpm
+  differential as an xtask subcommand, (3) the M2.6 dhat re-audit
+  with the cache warm.
+
+
 ### 2026-11-17 — the azure/teamcity CI adapters (ADR-0036, tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `597777b` (the
@@ -2288,8 +2412,9 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   is executed by halyard (I5 — the consumers wire the lines into their
   own pipelines). More adapters (CircleCI dynamic config, Buildkite,
   Jenkins) remain behind the closed ADR-0036 lookup — `circleci` is
-  the contract tests' refused unknown. Tree left dirty (no commits
-  made).
+  the contract tests' refused unknown. (The cut-off text predates the
+  docs commit: the session's work landed on main as
+  `9649278..381f35a`; the tree is clean at the head of this entry.)
 - **Next session start point.** (1) M5.4: provenance/SLSA for
   halyard's own release artifacts (VERIFY first), (2) the corpus-wide
   pnpm differential as an xtask subcommand, (3) the M2.6 dhat
