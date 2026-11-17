@@ -287,14 +287,15 @@ enum Command {
         #[arg(long, value_name = "REF")]
         base: Option<String>,
         /// Render the selection in a CI system's own grammar (M10 step
-        /// 2, ADR-0034 + the ADR-0035/0036/0038 adapters): turbo's
-        /// `--filter=...pkg` dependent filters, nx's `run-many
+        /// 2, ADR-0034 + the ADR-0035/0036/0038/0039/0040 adapters):
+        /// turbo's `--filter=...pkg` dependent filters, nx's `run-many
         /// --projects=` list, bazel's `rdeps(//…)` query, gha's
         /// matrix-output JSON array, gitlab's `parallel:matrix` hashes,
         /// azure's `task.setvariable` output variable, teamcity's
         /// matrix-build `param(...)` line, circleci's dynamic-config
-        /// continuation `parameters` line — the machine-consumer
-        /// surface beside `--format`.
+        /// continuation `parameters` line, buildkite's `matrix.setup`
+        /// dimension block, jenkins' declarative `axis` block — the
+        /// machine-consumer surface beside `--format`.
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
     },
@@ -490,6 +491,16 @@ enum CiSelector {
     /// consumer pastes into the setup workflow and declares as a
     /// pipeline parameter in the continuation config.
     Circleci,
+    /// `Buildkite`: one paste-ready `matrix:` block declaring the
+    /// `halyard_pkg` setup dimension over the affected closure — the
+    /// documented build-matrix shape the consumer pastes under a step,
+    /// each cell interpolating `{{ matrix.halyard_pkg }}`.
+    Buildkite,
+    /// `Jenkins`: one paste-ready declarative `axis { }` block over the
+    /// affected closure — the documented `matrix`/`axes` shape the
+    /// consumer pastes inside its `matrix { axes { … } }`, each cell
+    /// reading `$HALYARD_PKG` in its stages.
+    Jenkins,
 }
 
 impl CiSelector {
@@ -504,6 +515,8 @@ impl CiSelector {
             Self::Azure => "azure",
             Self::Teamcity => "teamcity",
             Self::Circleci => "circleci",
+            Self::Buildkite => "buildkite",
+            Self::Jenkins => "jenkins",
         }
     }
 }
@@ -1070,11 +1083,15 @@ fn app_credentials_from_env() -> Result<Option<halyard_forge_github::AppCredenti
         ));
     }
     let app_id = app_id.unwrap_or_default();
-    let installation_id: u64 = installation.unwrap_or_default().parse().map_err(|_| {
+    let raw_installation = installation.unwrap_or_default();
+    let installation_id: u64 = raw_installation.parse().map_err(|_| {
         CliError::new(
             "E-FORGE-AUTH",
-            "HALYARD_APP_INSTALLATION_ID must be the numeric installation id \
-                 (the URL of the App's installation page under the organization)",
+            format!(
+                "HALYARD_APP_INSTALLATION_ID must be the numeric installation id \
+                 (the URL of the App's installation page under the organization), \
+                 got {raw_installation:?}"
+            ),
         )
     })?;
     let pem = if let Some(inline) = key_inline {
