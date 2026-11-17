@@ -72,6 +72,26 @@
 //!   encodes the full affected closure; `HALYARD_PKG` is the
 //!   halyard-owned identifier, the ADR-0035 policy carried over).
 //!
+//! - **`CircleCI`** (circleci.com/docs, "Using dynamic configuration"):
+//!   the continuation orb's `continue` command takes a `parameters`
+//!   value — "The `parameters` parameter accepts a JSON object as a
+//!   string. Note the single quote encapsulating the full JSON object"
+//!   (the documented shape is `parameters: '{ "further": true }'`).
+//!   One paste-ready `parameters: '{ "halyard_pkgs": [...] }'` line
+//!   over the affected closure, name-sorted — the consumer pastes it
+//!   into the setup workflow's `continuation/continue` step and
+//!   declares the matching pipeline parameter in the continuation
+//!   config (`circleci` computes no dependency closure, so the array
+//!   encodes the full affected closure; `halyard_pkgs` is the
+//!   halyard-owned identifier in the docs' own lower-snake
+//!   pipeline-parameter spelling, so it cannot collide with the
+//!   pipeline's own parameters).
+//!
+//!   The single-quoted JSON literal never needs escaping: neither
+//!   package-name grammar the selection carries (cargo's
+//!   `[A-Za-z0-9_-]`, npm's URL-safe set) contains a quote, so the
+//!   values are emitted verbatim.
+//!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
 //! empty-selection contract). The surface is closed: an unknown system
@@ -301,9 +321,50 @@ impl CiSelectorAdapter for TeamcitySelector {
     }
 }
 
+/// The `CircleCI` adapter: one paste-ready
+/// `parameters: '{ "halyard_pkgs": [...] }'` line over the affected
+/// closure, name-sorted — the documented dynamic-configuration shape
+/// (circleci.com/docs, VERIFIED 2026-11-17: "The `parameters`
+/// parameter accepts a JSON object as a string. Note the single quote
+/// encapsulating the full JSON object"; the documented continuation
+/// step is `continuation/continue` with `parameters` +
+/// `configuration_path`). `CircleCI` computes no dependency closure of
+/// its own, so the array encodes the **full affected closure**; the
+/// consumer pastes the line into the setup workflow's
+/// `continuation/continue` step and declares the matching pipeline
+/// parameter in the continuation config — `halyard_pkgs` is the
+/// halyard-owned identifier in the docs' own lower-snake
+/// pipeline-parameter spelling (the ADR-0035 policy carried over, the
+/// parameter grammar's casing).
+///
+/// The single-quoted JSON literal never needs escaping: neither
+/// package-name grammar the selection carries (cargo's
+/// `[A-Za-z0-9_-]`, npm's URL-safe set) contains a quote, so the
+/// values are emitted verbatim.
+pub struct CircleciSelector;
+
+impl CiSelectorAdapter for CircleciSelector {
+    fn system(&self) -> &'static str {
+        "circleci"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let names = affected
+            .iter()
+            .map(|package| format!(r#""{}""#, package.name))
+            .collect::<Vec<String>>()
+            .join(", ");
+        vec![format!(r#"parameters: '{{ "halyard_pkgs": [{names}] }}'"#)]
+    }
+}
+
 /// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`,
-/// `azure`, `teamcity` — anything else is `None` (an unknown system is
-/// a caller bug the CLI's value enum refuses before this point).
+/// `azure`, `teamcity`, `circleci` — anything else is `None` (an
+/// unknown system is a caller bug the CLI's value enum refuses before
+/// this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
@@ -314,6 +375,7 @@ pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapte
         "gitlab" => Some(&GitlabSelector),
         "azure" => Some(&AzureSelector),
         "teamcity" => Some(&TeamcitySelector),
+        "circleci" => Some(&CircleciSelector),
         _ => None,
     }
 }
