@@ -22,11 +22,13 @@ use miette::Diagnostic;
 use crate::profile::Profiler;
 // M10/§12 step 1 (ADR-0037): the `action` command renders the §12
 // outputs through the action-output seam. The §12 `pr` mode (ADR-0043)
-// renders the §11.1 machine pass's view through the same seam.
+// renders the §11.1 machine pass's view through the same seam; the §12
+// `release` mode (ADR-0046) renders the release pass's view (the tag
+// phase, the push, the forge half).
 use halyard_action::{
-    ActionCall, ActionWriter, GithubActionsWriter, OutputName, PrEffect, PrPass,
-    PreviewActionWriter, env_file_entry, plan_outputs, plan_summary, pr_outputs, pr_summary,
-    write_plan_file,
+    ActionCall, ActionWriter, ForgePosture, GithubActionsWriter, OutputName, PrEffect, PrPass,
+    PreviewActionWriter, ReleasePass, env_file_entry, plan_outputs, plan_summary, pr_outputs,
+    pr_summary, release_outputs, release_summary, write_plan_file,
 };
 use halyard_changelog::load_change_files;
 use halyard_config::{Layer, ResolvedConfig, env_layer, load as config_load, resolve};
@@ -295,7 +297,7 @@ enum Command {
         #[arg(long, value_name = "REF")]
         base: Option<String>,
         /// Render the selection in a CI system's own grammar (M10 step
-        /// 2, ADR-0034 + the ADR-0035/0036/0038/0039/0040/0041
+        /// 2, ADR-0034 + the ADR-0035/0036/0038/0039/0040/0041/0045
         /// adapters): turbo's `--filter=...pkg` dependent filters, nx's
         /// `run-many --projects=` list, bazel's `rdeps(//…)` query,
         /// gha's matrix-output JSON array, gitlab's `parallel:matrix`
@@ -303,7 +305,8 @@ enum Command {
         /// teamcity's matrix-build `param(...)` line, circleci's
         /// dynamic-config continuation `parameters` line, buildkite's
         /// `matrix.setup` dimension block, jenkins' declarative `axis`
-        /// block, bitbucket's `parallel: steps:` block — the
+        /// block, bitbucket's `parallel: steps:` block, drone's
+        /// step-scoped `environment` fragment — the
         /// machine-consumer surface beside `--format`.
         #[arg(long, value_enum, value_name = "SYSTEM")]
         ci: Option<CiSelector>,
@@ -325,9 +328,11 @@ enum Command {
     /// title refuses `E-CLI-TITLE` before anything is written. Inside
     /// a workflow step (`GITHUB_OUTPUT` set) the calls land in
     /// the env files verbatim; outside, the preview call log prints
-    /// them (nothing is written but the plan file). The remaining §12
-    /// modes (`auto|release`) land with their milestones and are
-    /// absent rather than stubbed.
+    /// them (nothing is written but the plan file). The `release` mode
+    /// (ADR-0046) renders the release executor's pass view — the §11.1
+    /// tag phase, the push and the forge half. The remaining §12 mode
+    /// (`auto`) lands with its milestone and is absent rather than
+    /// stubbed.
     Action {
         /// The §12 behavior mode.
         #[arg(long, value_enum, default_value = "plan")]
@@ -338,10 +343,13 @@ enum Command {
         /// `E-ACTION-PLAN`, the caller's contract is never invented).
         #[arg(long, value_name = "PATH")]
         plan_out: Option<PathBuf>,
-        /// The `pr` mode's forecast posture: the §11.1 machine pass
+        /// The forecast posture: the `pr` mode's §11.1 machine pass
         /// runs over the preview adapter (I5 — no network, no effects,
-        /// `preview://` URLs and PR number `0` mark the forecast). The
-        /// `plan` mode is always offline, so the flag is a no-op there.
+        /// `preview://` URLs and PR number `0` mark the forecast) and
+        /// the `release` mode's tag phase runs over the preview writer
+        /// and pusher (nothing written, the push forecast names what a
+        /// live run would send). The `plan` and `check` modes are
+        /// always offline, so the flag is a no-op there.
         #[arg(long)]
         dry: bool,
         /// The `check` mode's squash-merge title to lint (the `check`
@@ -561,6 +569,13 @@ enum CiSelector {
     /// (no per-step `env` exists in the documented grammar), which the
     /// consumer's own tool invocation reads in the same script.
     Bitbucket,
+    /// `Drone`: one step-scoped `environment:` fragment per affected
+    /// package — the documented per-step environment mechanism ("Drone
+    /// provides the ability to define environment variables scoped to
+    /// individual build steps"), which the consumer pastes under one
+    /// step per package and reads as `$HALYARD_PKG` in that step's
+    /// `commands`.
+    Drone,
 }
 
 impl CiSelector {
@@ -578,14 +593,15 @@ impl CiSelector {
             Self::Buildkite => "buildkite",
             Self::Jenkins => "jenkins",
             Self::Bitbucket => "bitbucket",
+            Self::Drone => "drone",
         }
     }
 }
 
 /// The §12 behavior modes (§12 inputs: `auto|pr|release|plan|check`).
 /// `plan` lands with ADR-0037, `pr` with ADR-0043, `check` with
-/// ADR-0044; the remaining §12 modes land with their milestones and
-/// are absent rather than stubbed.
+/// ADR-0044, `release` with ADR-0046; the remaining §12 mode lands
+/// with its milestone and is absent rather than stubbed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum ActionMode {
     /// The offline forecast: plan → the §12 outputs + job summary.
@@ -596,6 +612,10 @@ enum ActionMode {
     /// The check surface's verdict: the title lint + the conveyed
     /// bumps beside the pending forecast (ADR-0044).
     Check,
+    /// The release executor's pass view: the §11.1 step-2 tag phase
+    /// (git side), the §11.2 push and the forge half → the §12 outputs
+    /// + job summary (ADR-0046). `--dry` forecasts offline (I5).
+    Release,
 }
 
 /// `schema` targets (§16.2; the frozen documents live under `schemas/`).
@@ -1792,7 +1812,129 @@ fn cmd_release(
     dry: bool,
     no_push: bool,
 ) -> Result<ExitCode, CliError> {
+    let outcome = run_release_pass(cli, profiler, dry, no_push)?;
+    // I2: the phase is resumable — failures render as rows and fail the
+    // run (§15.4 exit 1) so CI stops on a partial tag phase.
+    let failed = outcome.report.failed > 0 || outcome.push.as_ref().is_some_and(|p| p.failed > 0);
+    match cli.format {
+        Format::Json => {
+            let document = release_json_document(
+                &ReleaseDocInput {
+                    pending: &outcome.pending,
+                    report: &outcome.report,
+                    provenance: &outcome.provenance,
+                    push: outcome.push.as_ref(),
+                    forge_releases: &outcome.forge_releases,
+                    history: &outcome.stats_json,
+                },
+                outcome.dry,
+                &outcome.head_hex,
+            );
+            print_pretty_json(&document)?;
+        }
+        Format::Gha => {
+            let mut rendered = if outcome.dry {
+                render::release_dry_gha(
+                    &outcome.head_hex,
+                    &outcome.states,
+                    &outcome.report,
+                    &outcome.provenance,
+                    outcome.push.as_ref(),
+                )
+            } else {
+                render::release_live_gha(
+                    &outcome.head_hex,
+                    &outcome.states,
+                    &outcome.report,
+                    &outcome.provenance,
+                    outcome.push.as_ref(),
+                    &outcome.forge_releases,
+                )
+            };
+            rendered.push_str(&outcome.walk_line);
+            rendered.push('\n');
+            print!("{rendered}");
+        }
+        Format::Human => {
+            let mut rendered = if outcome.dry {
+                render::release_dry_human(
+                    &outcome.head_hex,
+                    &outcome.states,
+                    &outcome.report,
+                    &outcome.provenance,
+                    outcome.push.as_ref(),
+                )
+            } else {
+                render::release_live_human(
+                    &outcome.head_hex,
+                    &outcome.states,
+                    &outcome.report,
+                    &outcome.provenance,
+                    outcome.push.as_ref(),
+                    &outcome.forge_releases,
+                )
+            };
+            rendered.push_str(&outcome.walk_line);
+            rendered.push('\n');
+            print!("{rendered}");
+        }
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// The shared release pass behind `release` and `action --mode release`
+/// (ADR-0046): one executor, two renderers — the §11.1 step-2 tag phase
+/// (git side, §11.2 push included), the forge half over the adapter,
+/// and the plan the §12 outputs ride. Everything the report renderers
+/// observe rides the outcome; nothing here reads the CLI flags beyond
+/// the dry/no-push postures.
+struct ReleasePassOutcome {
+    /// The plan the pass renders (the §12 release outputs' source; the
+    /// release command's own report derives from the tag phase).
+    plan: halyard_core::Plan,
+    /// The manifest-vs-tags reconciliation rows (the report's view).
+    states: Vec<halyard_core::PackageTagState>,
+    /// The tag-phase queue (the §11.1 step-2 input, the forge half's).
+    pending: Vec<halyard_core::PendingRelease>,
+    /// The tag phase's git-side report (the rows + counters).
+    report: halyard_git::tag::TagPhaseReport,
+    /// Each directive's resolved target provenance, keyed by tag.
+    provenance: render::TargetProvenanceMap,
+    /// The tags the phase created (would create, in the forecast).
+    created: Vec<String>,
+    /// The §11.2 push report (`None` under `--no-push`).
+    push: Option<halyard_git::push::TagPushReport>,
+    /// The forge half's outcome (§11.1 step 2, M4.1b): what ran, or the
+    /// honest skip (the dry forecast's I5 posture).
+    forge_releases: render::ForgeReleases,
+    /// The posture (dry forecast vs live effect).
+    dry: bool,
+    /// The HEAD oid the directives targeted (hex).
+    head_hex: String,
+    /// The walk provenance the report tails carry (JSON).
+    stats_json: serde_json::Value,
+    /// The walk provenance line the report tails carry.
+    walk_line: String,
+    /// The walk's own degraded marker (§12's annotation rides it).
+    degraded: bool,
+}
+
+/// Runs the shared release pass (the `release` executor): context →
+/// plan → reconcile → the §11.1 step-2 tag phase → the §11.2 push →
+/// the forge half. One plan + one reconciliation feed every half — the
+/// tag phase, the forge specs and the §12 outputs cannot disagree.
+fn run_release_pass(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    dry: bool,
+    no_push: bool,
+) -> Result<ReleasePassOutcome, CliError> {
     let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
     let plan_config: PlanConfig = context.config.plan_config();
     let (states, pending) = reconcile_snapshot(&context, &plan_config, profiler);
     let Some(head) = context.history.head_oid() else {
@@ -1823,67 +1965,22 @@ fn cmd_release(
             reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
         }
     } else {
-        forge_release_phase(&context, profiler, &pending)?
+        forge_release_phase(&context, profiler, &pending, &plan, &states)?
     };
-    // I2: the phase is resumable — failures render as rows and fail the
-    // run (§15.4 exit 1) so CI stops on a partial tag phase.
-    let failed = report.failed > 0 || push.as_ref().is_some_and(|p| p.failed > 0);
-    let head_hex = head.to_string();
-    match cli.format {
-        Format::Json => {
-            let document = release_json_document(
-                &ReleaseDocInput {
-                    pending: &pending,
-                    report: &report,
-                    provenance: &provenance,
-                    push: push.as_ref(),
-                    forge_releases: &forge_releases,
-                    history: &context.stats.json(),
-                },
-                dry,
-                &head_hex,
-            );
-            print_pretty_json(&document)?;
-        }
-        Format::Gha => {
-            let mut rendered = if dry {
-                render::release_dry_gha(&head_hex, &states, &report, &provenance, push.as_ref())
-            } else {
-                render::release_live_gha(
-                    &head_hex,
-                    &states,
-                    &report,
-                    &provenance,
-                    push.as_ref(),
-                    &forge_releases,
-                )
-            };
-            rendered.push_str(&context.stats.human_line());
-            rendered.push('\n');
-            print!("{rendered}");
-        }
-        Format::Human => {
-            let mut rendered = if dry {
-                render::release_dry_human(&head_hex, &states, &report, &provenance, push.as_ref())
-            } else {
-                render::release_live_human(
-                    &head_hex,
-                    &states,
-                    &report,
-                    &provenance,
-                    push.as_ref(),
-                    &forge_releases,
-                )
-            };
-            rendered.push_str(&context.stats.human_line());
-            rendered.push('\n');
-            print!("{rendered}");
-        }
-    }
-    Ok(if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
+    Ok(ReleasePassOutcome {
+        stats_json: context.stats.json(),
+        degraded: context.stats.degraded,
+        walk_line: context.stats.human_line(),
+        plan,
+        states,
+        pending,
+        report,
+        provenance,
+        created,
+        push,
+        forge_releases,
+        dry,
+        head_hex: head.to_string(),
     })
 }
 
@@ -1893,11 +1990,14 @@ fn cmd_release(
 /// Missing credentials or a foreign origin is an honest skip rendered
 /// into the report (the git-side half still ran); adapter failures fail
 /// the run fail-closed (I2: the re-run completes — GET finds what
-/// landed).
+/// landed). The plan and the reconciliation rows ride in from the
+/// shared pass — one plan, one reconciliation, no recomputation.
 fn forge_release_phase(
     context: &Context,
     profiler: &mut Profiler,
     pending: &[halyard_core::PendingRelease],
+    plan: &halyard_core::Plan,
+    states: &[halyard_core::PackageTagState],
 ) -> Result<render::ForgeReleases, CliError> {
     let credentials = if let Some(app) = app_credentials_from_env()? {
         halyard_forge_github::ForgeCredentials::App(Box::new(app))
@@ -1935,15 +2035,13 @@ fn forge_release_phase(
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let forge = GitHubRestForge::with_credentials(endpoint, credentials, UreqTransport::new());
     // The notes payloads ride the same notes pipeline `pr --dry` uses;
-    // the plan feeds the entry-preview fallback (no fabrication).
-    let plan_config: PlanConfig = context.config.plan_config();
-    let plan = plan_from_context(context, profiler)?;
-    let (states, _) = reconcile_snapshot(context, &plan_config, profiler);
+    // the plan feeds the entry-preview fallback (no fabrication). The
+    // plan and the reconciliation ride in from the shared pass.
     let remote = remote_origin_url()?;
     let specs = pending_specs(
         pending,
-        &plan,
-        &states,
+        plan,
+        states,
         &context.discovery.workspace,
         remote.as_deref(),
     )?;
@@ -2551,8 +2649,15 @@ fn cmd_bench(cli: &Cli, _profiler: &mut Profiler, iterations: u32) -> Result<(),
         );
         drop(plan);
     }
-    let (packages, pending_commits) =
-        shape.unwrap_or_else(|| unreachable!("at least one timed pass ran"));
+    // Fail-closed, not a panic surface: `--iterations` >= 1 is enforced
+    // above (E-CLI-BENCH), so the shape is always Some — but the
+    // guarantee lives in the error taxonomy, not in a `panic!`.
+    let Some((packages, pending_commits)) = shape else {
+        return Err(CliError::new(
+            "E-CLI-BENCH",
+            "no timed pass recorded a shape; pass a positive --iterations count",
+        ));
+    };
     let report = bench::BenchReport {
         iterations,
         cache_warm: !cli.no_cache,
@@ -2684,6 +2789,7 @@ fn cmd_action(
         ActionMode::Plan => cmd_action_plan(cli, profiler, plan_out),
         ActionMode::Pr => cmd_action_pr(cli, profiler, dry, plan_out),
         ActionMode::Check => cmd_action_check(cli, profiler, pr_title, plan_out),
+        ActionMode::Release => cmd_action_release(cli, profiler, dry, plan_out),
     }
 }
 
@@ -2800,6 +2906,78 @@ fn cmd_action_pr(
     render_action_run(
         cli,
         "pr",
+        &outputs,
+        &summary,
+        &plan_path,
+        outcome.degraded,
+        &extras,
+    )
+}
+
+/// The §12 `release` mode (ADR-0046): the release executor's pass view
+/// through the action-output seam — the §11.1 step-2 tag phase (git
+/// side, §11.2 push included) and the forge half, rendered as the same
+/// §12 vocabulary. `--dry` forecasts offline over the preview writer
+/// and pusher (I5 — nothing written, no network); live runs write the
+/// tags and push for real (the same fail-closed ordering `halyard
+/// release` applies). The plan file rides `--plan-out` like every mode;
+/// no `pr_number`/`pr_url` keys exist (the release mode opens no
+/// Release PR — the `pr` mode's surface).
+fn cmd_action_release(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    dry: bool,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let outcome = run_release_pass(cli, profiler, dry, false)?;
+    let plan_path = plan_out.map_or_else(|| PathBuf::from("halyard-plan.json"), PathBuf::from);
+    write_plan_file(&outcome.plan, &plan_path)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The plain §12 view of the release pass: the created tags, the
+    // forge half's minted URLs and its posture, the honest `released`.
+    let release_urls: std::collections::BTreeMap<String, String> = match &outcome.forge_releases {
+        render::ForgeReleases::Ran { effects, .. } => effects
+            .iter()
+            .filter_map(|effect| match effect {
+                halyard_forge::MachineEffect::ReleaseCreated { tag, url } => {
+                    Some((tag.clone(), url.clone()))
+                }
+                _ => None,
+            })
+            .collect(),
+        render::ForgeReleases::Skipped { .. } => std::collections::BTreeMap::new(),
+    };
+    let forge = match &outcome.forge_releases {
+        render::ForgeReleases::Ran { repo, effects, .. } => ForgePosture::Ran {
+            repo: repo.clone(),
+            releases: effects
+                .iter()
+                .filter(|effect| {
+                    matches!(effect, halyard_forge::MachineEffect::ReleaseCreated { .. })
+                })
+                .count(),
+        },
+        render::ForgeReleases::Skipped { reason } => ForgePosture::Skipped {
+            reason: reason.clone(),
+        },
+    };
+    let pass = ReleasePass {
+        released: !outcome.dry && !outcome.created.is_empty(),
+        forecast: outcome.dry,
+        created_tags: outcome.created,
+        release_urls,
+        forge,
+    };
+    let outputs = release_outputs(&outcome.plan, &plan_path, &pass)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let summary = release_summary(&outcome.plan, &pass);
+    let extras = serde_json::json!({
+        "dry": outcome.dry,
+        "created_tags": pass.created_tags,
+    });
+    render_action_run(
+        cli,
+        "release",
         &outputs,
         &summary,
         &plan_path,
@@ -3175,9 +3353,12 @@ fn render_commits_lint(
     pending: bool,
     exit_code: bool,
 ) -> Result<ExitCode, CliError> {
-    let typo = rows
-        .iter()
-        .find(|row| matches!(row.finding, check::CommitFinding::Typo { .. }));
+    let typo = rows.iter().find_map(|row| match &row.finding {
+        check::CommitFinding::Typo { kind, closest } => {
+            Some((row, kind.as_str(), closest.as_str()))
+        }
+        _ => None,
+    });
     match cli.format {
         Format::Json => {
             let commits: Vec<serde_json::Value> = rows
@@ -3204,10 +3385,10 @@ fn render_commits_lint(
         Format::Gha => print!("{}", render::check_commits_gha(rows, pending)),
         Format::Human => print!("{}", render::check_commits_human(rows, pending)),
     }
-    if let Some(row) = typo {
+    if let Some((row, kind, closest)) = typo {
         return Err(CliError::new(
             "E-CLI-COMMIT",
-            check::commit_typo_message(row, config),
+            check::commit_typo_message(row, kind, closest, config),
         ));
     }
     Ok(pending_exit(exit_code, pending))
