@@ -261,3 +261,43 @@ Jenkins sections fetched 2026-11-17 for ADR-0039/0040).
   step per affected package, each carrying `export HALYARD_PKG=<name>`
   (the relative indentation of the docs' example preserved), the
   consumer's tool invocation appended in the same script.
+
+## Drone — <https://docs.drone.io/pipeline/environment/syntax/> + <https://docs.drone.io/pipeline/docker/syntax/steps/> + <https://docs.drone.io/pipeline/docker/syntax/parallelism/>
+
+*(Fetched 2026-11-17 for ADR-0045.)*
+
+- Per-step scoping: "Drone provides the ability to define environment
+  variables scoped to individual build steps." The `environment` key
+  sits under an individual step as a name→value mapping; the
+  documented example maps `GOOS: linux` / `GOARCH: amd64` beside a
+  step's `commands:` (two-space indent under the step's keys, entries
+  two further spaces in).
+- No expansion: "the environment section cannot expand environment
+  variables or evaluate shell expressions" — the documented bad example
+  is `GOPATH: ${HOME}/golang` ("bad"), the documented good pattern is
+  an `export` inside `commands:`. A literal value (a package name)
+  rides the mapping verbatim.
+- Secret form: the same mapping carries `from_secret:` values
+  (`PASSWORD: from_secret: password`) — irrelevant to the selection
+  render (no secret rides a public selection) but pinned to show the
+  mapping's two value shapes.
+- Step shape: `steps:` sits at the pipeline's top level; each entry
+  carries `name`, `image`, `commands` ("NB 'commands' overrides the
+  docker entrypoint"). The docs never label required fields, but every
+  documented example gives all three; the adapter therefore emits only
+  the `environment:` fragment (a full step would guess the consumer's
+  image/commands).
+- Sequential-by-default: "Pipeline steps are executed sequentially by
+  default." Parallel execution is the documented `depends_on` DAG —
+  "You can optionally describe your build steps as a directed acyclic
+  graph" (the docs' example fans out `backend`/`frontend` and fans in
+  `notify`) — with the rule "when you define the dependency graph you
+  must configure dependencies for all pipeline steps." Both are the
+  consumer's pipeline policy; the adapter renders the grammar, never
+  the guard.
+- Design consequence: a documented per-step env mapping exists
+  (unlike Bitbucket's `pipe`-only `variables`), so the selection rides
+  step-scoped `environment:` fragments — one fragment per affected
+  package (`environment:` + `  HALYARD_PKG: <name>`), paste-ready
+  modulo the step's own indentation, the consumer's tool invocation
+  reading `$HALYARD_PKG` in the same step's `commands`.
