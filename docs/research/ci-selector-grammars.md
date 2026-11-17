@@ -2,7 +2,8 @@
 
 **Checked:** 2026-11-16 · Sources fetched live per §0.4 (the Azure
 Pipelines and TeamCity sections fetched 2026-11-17 for ADR-0036; the
-CircleCI section fetched 2026-11-17 for ADR-0038).
+CircleCI section fetched 2026-11-17 for ADR-0038; the Buildkite and
+Jenkins sections fetched 2026-11-17 for ADR-0039/0040).
 
 ## Turborepo — <https://turborepo.dev/docs/crafting-your-repository/running-tasks>
 
@@ -129,7 +130,11 @@ CircleCI section fetched 2026-11-17 for ADR-0038).
   closure-vs-roots split is a property of the consuming system: tools
   that compute dependencies themselves (turbo, bazel) get the roots;
   tools that compute nothing (nx, gha, gitlab, azure, teamcity) get
-  the closure.
+  the closure. (The matrix-jobs systems that landed after ADR-0035 —
+  CircleCI's continuation `parameters` object, Buildkite's
+  `matrix.setup` dimension, Jenkins' declarative `axis` — follow the
+  same rule: each computes nothing, so each carries the full affected
+  closure.)
 
 ## CircleCI — <https://circleci.com/docs/guides/orchestrate/using-dynamic-configuration>
 
@@ -151,3 +156,48 @@ CircleCI section fetched 2026-11-17 for ADR-0038).
 - The continuation config declares pipeline parameters (`parameters:`
   → `further: {type: boolean, default: false}`) consumed through the
   documented `<< pipeline.parameters.further >>` / `when:` keys.
+
+## Buildkite — <https://buildkite.com/docs/pipelines/configure/workflows/build-matrix>
+
+(Fetched 2026-11-17 for ADR-0039.)
+
+- "Build matrices help you simplify complex build configurations" by
+  "expanding a step template and array of matrix elements into
+  multiple jobs."
+- The multi-dimension form carries `matrix: setup:` with dimension
+  keys mapping to lists of values:
+  `matrix: { setup: { arch: ["amd64", "arm64"], os: ["windows", "linux"] } }`
+  in the docs' block style — `matrix:` → `setup:` → dimension key →
+  quoted-string elements (`arch:` → `- "amd64"` / `- "arm64"`), each
+  combination fanning the step out into one job ("Each dimension you
+  add is multiplied by the other dimensions").
+- Matrix values are interpolated into the step's environment variables,
+  labels, commands, plugins and agents as `{{matrix.<key>}}` ("You
+  can't use matrix values in other attributes, including step keys and
+  concurrency groups").
+- Every documented element is a quoted string; elements are size-bounded
+  ("128 bytes maximum size for each individual matrix element (both
+  keys and values)"), with the documented caps "6 dimensions maximum",
+  "25 elements per dimension" and "50 jobs created per `matrix`
+  configuration on a `command` step".
+
+## Jenkins — <https://www.jenkins.io/doc/book/pipeline/syntax/>
+
+(Fetched 2026-11-17 for ADR-0040.)
+
+- The declarative `matrix` directive: "section defining a
+  multi-dimensional matrix of name-value combinations to be run in
+  parallel. We'll refer these combinations as "cells" in a matrix."
+- "The `matrix` section must include an `axes` section and a `stages`
+  section. The `axes` section defines the values for each `axis` in
+  the matrix."
+- "The `axes` section specifies one or more `axis` directives. Each
+  `axis` consists of a `name` and a list of `values`. All the values
+  from each axis are combined with the others to produce the cells."
+- The documented one-axis example ("One-axis with 3 cells") is
+  `axis { name 'PLATFORM' values 'linux', 'mac', 'windows' }` in block
+  form — `name` and `values` as separate statements, the values a
+  comma-separated list of single-quoted strings.
+- The declarative grammar's own statement rules pin the render shape:
+  "No semicolons as statement separators. Each statement has to be on
+  its own line."
