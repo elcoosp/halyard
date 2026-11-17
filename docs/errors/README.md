@@ -89,6 +89,9 @@ link would rot with the page paths).
 | `E-PUB-EFFECT` | [E-PUB-EFFECT.md](E-PUB-EFFECT.md) | publish tool failure row (M5.2, §13.7) |
 | `E-PUB-AUTH` | [E-PUB-AUTH.md](E-PUB-AUTH.md) | publish token present-but-empty refused before any spawn (M5.3 step 1, ADR-0019); the OIDC context detection + exchange refusals (M5.3 step 3, ADR-0031); the npm provenance runtime refusal (M5.3 step 6, ADR-0033) |
 | `E-CLI-PUBLISH` | [E-CLI-PUBLISH.md](E-CLI-PUBLISH.md) | `publish` live mode contradicts `--offline` (M5.2) |
+| `E-ACTION-OUTPUT` | [E-ACTION-OUTPUT.md](E-ACTION-OUTPUT.md) | action-output seam: an output name/value the GITHUB_OUTPUT grammar cannot carry verbatim, or the sink is unwritable (§12 step 1, ADR-0037) |
+| `E-ACTION-SUMMARY` | [E-ACTION-SUMMARY.md](E-ACTION-SUMMARY.md) | action-output seam: the §12 job summary has no GITHUB_STEP_SUMMARY sink or the sink is unwritable (§12 step 1, ADR-0037) |
+| `E-ACTION-PLAN` | [E-ACTION-PLAN.md](E-ACTION-PLAN.md) | action-output seam: the canonical plan file cannot be written (§12 step 1, ADR-0037) |
 
 ## Extension policy
 
