@@ -2,7 +2,7 @@
 //! selection rendered in a CI system's **own** grammar — the
 //! machine-consumer surface beside the human/json/gha renderings (the
 //! CLI's `affected --ci
-//! turbo|nx|bazel|gha|gitlab|azure|teamcity`).
+//! turbo|nx|bazel|gha|gitlab|azure|teamcity|circleci|buildkite|jenkins`).
 //!
 //! Each adapter is a pure projection over two name-sorted inputs (the
 //! change roots and the closed selection, both as [`SelectedPackage`])
@@ -92,6 +92,43 @@
 //!   `[A-Za-z0-9_-]`, npm's URL-safe set) contains a quote, so the
 //!   values are emitted verbatim.
 //!
+//! - **`Buildkite`** (buildkite.com/docs, "Build matrix"): build
+//!   matrices "expand a step template and array of matrix elements
+//!   into multiple jobs" — the multi-dimension form carries
+//!   `matrix: setup:` with dimension keys mapping to lists of values,
+//!   interpolated as `{{matrix.<key>}}` in the step's label, command,
+//!   env, plugins and agents. One paste-ready `matrix:` block declaring
+//!   the `halyard_pkg` dimension over the affected closure, name-sorted
+//!   (the docs' own lower-snake dimension-key spelling, so it cannot
+//!   collide with the pipeline's own dimensions): the consumer pastes
+//!   the block under a step and interpolates `{{ matrix.halyard_pkg }}`
+//!   per cell.
+//!
+//!   Every element is a quoted string (the docs' own shape) and the
+//!   scalar never needs escaping: neither package-name grammar the
+//!   selection carries contains a quote. The docs cap a dimension at
+//!   25 elements and a matrix configuration at 50 jobs — the
+//!   consumer's policy; the adapter renders the grammar, never the
+//!   guard.
+//!
+//! - **`Jenkins`** (jenkins.io/doc/book/pipeline/syntax): the
+//!   declarative `matrix` section defines "a multi-dimensional matrix
+//!   of name-value combinations to be run in parallel" ("cells"); the
+//!   required `axes` section "specifies one or more `axis` directives"
+//!   and "Each `axis` consists of a `name` and a list of `values`" —
+//!   the documented one-axis example is `values 'linux', 'mac',
+//!   'windows'`. One paste-ready `axis { }` block over the affected
+//!   closure, name-sorted: the consumer pastes the block inside its
+//!   `matrix { axes { … } }` and each cell reads `$HALYARD_PKG` in its
+//!   stages. The declarative grammar's own rules pin the render's
+//!   shape: "No semicolons as statement separators. Each statement has
+//!   to be on its own line."
+//!
+//!   The single-quoted Groovy strings never need escaping: neither
+//!   package-name grammar the selection carries (cargo's
+//!   `[A-Za-z0-9_-]`, npm's URL-safe set) contains a quote, so the
+//!   values are emitted verbatim.
+//!
 //! An empty selection renders nothing — the honest no-op (the CI step
 //! skips itself; the CLI prints nothing, exit 0, the existing
 //! empty-selection contract). The surface is closed: an unknown system
@@ -117,8 +154,9 @@ pub struct SelectedPackage {
 /// system consumes, one line per atom.
 pub trait CiSelectorAdapter: Send + Sync {
     /// The CI system this adapter speaks — one of the lookup's keys
-    /// (`turbo`, `nx`, `bazel`, `gha`, `gitlab`, `azure`, `teamcity`;
-    /// the closed surface [`ci_selector_adapter`] names).
+    /// (`turbo`, `nx`, `bazel`, `gha`, `gitlab`, `azure`, `teamcity`,
+    /// `circleci`, `buildkite`, `jenkins`; the closed surface
+    /// [`ci_selector_adapter`] names).
     fn system(&self) -> &'static str;
 
     /// Renders the selection: `changed` are the packages with pending
@@ -361,10 +399,105 @@ impl CiSelectorAdapter for CircleciSelector {
     }
 }
 
+/// The `Buildkite` adapter: one paste-ready `matrix:` block declaring
+/// the `halyard_pkg` setup dimension over the affected closure,
+/// name-sorted — the documented build-matrix shape (buildkite.com/docs,
+/// VERIFIED 2026-11-17: matrices "expand a step template and array of
+/// matrix elements into multiple jobs"; the multi-dimension form
+/// carries `matrix: setup:` with dimension keys mapping to lists of
+/// values interpolated as `{{matrix.<key>}}`). `Buildkite` computes no
+/// dependency closure of its own, so the dimension encodes the **full
+/// affected closure**; the consumer pastes the block under a step (the
+/// step's own indentation applies) and interpolates
+/// `{{ matrix.halyard_pkg }}` in the label, command, env, plugins or
+/// agents — `halyard_pkg` is the halyard-owned identifier spelled
+/// lower-snake in the docs' own dimension-key style (`arch`, `os`,
+/// `test`), so it cannot collide with the pipeline's own dimensions
+/// (the ADR-0035 policy carried over).
+///
+/// Every element is a quoted string (the docs' own shape) and the
+/// scalar never needs escaping: neither package-name grammar the
+/// selection carries (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set)
+/// contains a quote, so the values are emitted verbatim. The docs cap
+/// a dimension at 25 elements and a matrix configuration at 50 jobs —
+/// the consumer's policy; the adapter renders the grammar, never the
+/// guard.
+pub struct BuildkiteSelector;
+
+impl CiSelectorAdapter for BuildkiteSelector {
+    fn system(&self) -> &'static str {
+        "buildkite"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = vec![
+            "matrix:".to_owned(),
+            "  setup:".to_owned(),
+            "    halyard_pkg:".to_owned(),
+        ];
+        lines.extend(
+            affected
+                .iter()
+                .map(|package| format!("      - \"{}\"", package.name)),
+        );
+        lines
+    }
+}
+
+/// The `Jenkins` adapter: one paste-ready `axis { }` block declaring
+/// the `HALYARD_PKG` axis over the affected closure, name-sorted — the
+/// declarative `matrix` directive's documented shape (jenkins.io/doc/
+/// book/pipeline/syntax, VERIFIED 2026-11-17: the section defines "a
+/// multi-dimensional matrix of name-value combinations to be run in
+/// parallel" ("cells"), the `axes` section "specifies one or more
+/// `axis` directives", and "Each `axis` consists of a `name` and a
+/// list of `values`" — the documented one-axis example is
+/// `values 'linux', 'mac', 'windows'`). `Jenkins` computes no
+/// dependency closure of its own, so the axis encodes the **full
+/// affected closure**; the consumer pastes the block inside its
+/// `matrix { axes { … } }` and each cell reads `$HALYARD_PKG` in its
+/// stages — `HALYARD_PKG` is the halyard-owned identifier spelled
+/// upper-snake like the docs' own `PLATFORM` / `BROWSER` axis names
+/// (the ADR-0035 policy carried over).
+///
+/// One statement per line, per the declarative grammar's own rules
+/// ("No semicolons as statement separators. Each statement has to be
+/// on its own line."); the single-quoted Groovy strings never need
+/// escaping, because neither package-name grammar the selection
+/// carries (cargo's `[A-Za-z0-9_-]`, npm's URL-safe set) contains a
+/// quote, so the values are emitted verbatim.
+pub struct JenkinsSelector;
+
+impl CiSelectorAdapter for JenkinsSelector {
+    fn system(&self) -> &'static str {
+        "jenkins"
+    }
+
+    fn render(&self, _changed: &[SelectedPackage], affected: &[SelectedPackage]) -> Vec<String> {
+        if affected.is_empty() {
+            return Vec::new();
+        }
+        let values = affected
+            .iter()
+            .map(|package| format!("'{}'", package.name))
+            .collect::<Vec<String>>()
+            .join(", ");
+        vec![
+            "axis {".to_owned(),
+            "    name 'HALYARD_PKG'".to_owned(),
+            format!("    values {values}"),
+            "}".to_owned(),
+        ]
+    }
+}
+
 /// The closed adapter lookup: `turbo`, `nx`, `bazel`, `gha`, `gitlab`,
-/// `azure`, `teamcity`, `circleci` — anything else is `None` (an
-/// unknown system is a caller bug the CLI's value enum refuses before
-/// this point).
+/// `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins` — anything
+/// else is `None` (an unknown system is a caller bug the CLI's value
+/// enum refuses before this point).
 #[must_use]
 pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapter> {
     match system {
@@ -376,6 +509,8 @@ pub fn ci_selector_adapter(system: &str) -> Option<&'static dyn CiSelectorAdapte
         "azure" => Some(&AzureSelector),
         "teamcity" => Some(&TeamcitySelector),
         "circleci" => Some(&CircleciSelector),
+        "buildkite" => Some(&BuildkiteSelector),
+        "jenkins" => Some(&JenkinsSelector),
         _ => None,
     }
 }
