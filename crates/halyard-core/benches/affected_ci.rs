@@ -1,7 +1,7 @@
 //! The CI-selector adapters' render cost (§16.3/M10 step 2, ADR-0034
-//! + the ADR-0035/0036/0038/0039/0040/0041 adapters).
+//! + the ADR-0035/0036/0038/0039/0040/0041/0045 adapters).
 //!
-//! Measures the eleven adapters over the affected bench's shape (the
+//! Measures the twelve adapters over the affected bench's shape (the
 //! 40-package chain): the render must stay free — it runs on every CI
 //! step, and a nanosecond-scale projection must never become the step's
 //! cost.
@@ -95,73 +95,32 @@ fn bench_affected_ci(c: &mut Criterion) {
         .iter()
         .filter_map(|row| resolve(row.package))
         .collect();
-    let Some(turbo) = ci_selector_adapter("turbo") else {
-        return;
-    };
-    let Some(nx) = ci_selector_adapter("nx") else {
-        return;
-    };
-    let Some(bazel) = ci_selector_adapter("bazel") else {
-        return;
-    };
-    let Some(gha) = ci_selector_adapter("gha") else {
-        return;
-    };
-    let Some(gitlab) = ci_selector_adapter("gitlab") else {
-        return;
-    };
-    let Some(azure) = ci_selector_adapter("azure") else {
-        return;
-    };
-    let Some(teamcity) = ci_selector_adapter("teamcity") else {
-        return;
-    };
-    let Some(circleci) = ci_selector_adapter("circleci") else {
-        return;
-    };
-    let Some(buildkite) = ci_selector_adapter("buildkite") else {
-        return;
-    };
-    let Some(jenkins) = ci_selector_adapter("jenkins") else {
-        return;
-    };
-    let Some(bitbucket) = ci_selector_adapter("bitbucket") else {
-        return;
-    };
+    // The closed adapter surface, resolved in one pass: each recorded
+    // system gets its `*_40chain` case (an unresolvable name skips its
+    // case honestly — the fixed literals always resolve).
+    let systems = [
+        "turbo",
+        "nx",
+        "bazel",
+        "gha",
+        "gitlab",
+        "azure",
+        "teamcity",
+        "circleci",
+        "buildkite",
+        "jenkins",
+        "bitbucket",
+        "drone",
+    ];
     let mut group = c.benchmark_group("core");
-    group.bench_function("ci_selector_turbo_40chain", |b| {
-        b.iter(|| black_box(turbo.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_nx_40chain", |b| {
-        b.iter(|| black_box(nx.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_bazel_40chain", |b| {
-        b.iter(|| black_box(bazel.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_gha_40chain", |b| {
-        b.iter(|| black_box(gha.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_gitlab_40chain", |b| {
-        b.iter(|| black_box(gitlab.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_azure_40chain", |b| {
-        b.iter(|| black_box(azure.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_teamcity_40chain", |b| {
-        b.iter(|| black_box(teamcity.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_circleci_40chain", |b| {
-        b.iter(|| black_box(circleci.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_buildkite_40chain", |b| {
-        b.iter(|| black_box(buildkite.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_jenkins_40chain", |b| {
-        b.iter(|| black_box(jenkins.render(black_box(&changed), black_box(&affected))));
-    });
-    group.bench_function("ci_selector_bitbucket_40chain", |b| {
-        b.iter(|| black_box(bitbucket.render(black_box(&changed), black_box(&affected))));
-    });
+    for system in systems {
+        let Some(adapter) = ci_selector_adapter(system) else {
+            continue;
+        };
+        group.bench_function(format!("ci_selector_{system}_40chain"), |b| {
+            b.iter(|| black_box(adapter.render(black_box(&changed), black_box(&affected))));
+        });
+    }
     group.finish();
 }
 
