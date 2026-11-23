@@ -139,8 +139,13 @@ fn explain_names_the_change_file() -> Result<(), BoxError> {
     )?;
     let (code, out) = halyard(fx.root(), &["explain", "solo"])?;
     assert_eq!(code, 0, "{out}");
+    let expected = format!(
+        "changeset .halyard{}changes{}next.md",
+        std::path::MAIN_SEPARATOR_STR,
+        std::path::MAIN_SEPARATOR_STR
+    );
     assert!(
-        out.contains("changeset .halyard/changes/next.md"),
+        out.contains(&expected),
         "the reason chain names the file: {out}"
     );
     assert!(

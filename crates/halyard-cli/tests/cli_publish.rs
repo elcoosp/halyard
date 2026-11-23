@@ -81,6 +81,10 @@ fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(bool, String), BoxE
     Ok((out.status.success(), text))
 }
 
+fn native_path(path: &str) -> String {
+    path.replace('/', std::path::MAIN_SEPARATOR_STR)
+}
+
 /// `halyard_env` plus extra environment pairs for the child (the auth
 /// tests set the documented token variables without touching the test
 /// process's own environment).
@@ -162,11 +166,11 @@ fn publish_dry_forecasts_over_the_shimmed_tool() -> Result<(), BoxError> {
     assert!(recorded.contains("--dry-run"), "dry argv: {recorded}");
     assert!(recorded.contains("--offline"), "hermetic argv: {recorded}");
     assert!(
-        recorded.contains("crates/p1/Cargo.toml"),
+        recorded.contains(&native_path("crates/p1/Cargo.toml")),
         "manifest scoped: {recorded}"
     );
     assert!(
-        recorded.contains("crates/p2/Cargo.toml"),
+        recorded.contains(&native_path("crates/p2/Cargo.toml")),
         "manifest scoped: {recorded}"
     );
     Ok(())
