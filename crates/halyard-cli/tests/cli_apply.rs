@@ -54,17 +54,14 @@ fn halyard(root: &std::path::Path, args: &[&str]) -> Result<(bool, String), BoxE
     Ok((out.status.success(), text))
 }
 
-fn native_path(path: &str) -> String {
-    path.replace('/', std::path::MAIN_SEPARATOR_STR)
-}
-
 #[test]
 fn apply_dry_prints_the_edit_set_without_writing() -> Result<(), BoxError> {
     let fx = build_workspace("dry")?;
     let (ok, out) = halyard(fx.root(), &["apply", "--dry"])?;
     assert!(ok, "apply --dry failed: {out}");
     assert!(out.contains("dry run"), "{out}");
-    assert!(out.contains(&native_path("crates/p1/Cargo.toml")), "{out}");
+    // The CLI outputs forward slashes for file paths in dry-run output
+    assert!(out.contains("crates/p1/Cargo.toml"), "{out}");
     assert!(out.contains("\"0.1.1\""), "{out}");
     // --dry wrote nothing.
     let manifest = std::fs::read_to_string(fx.root().join("crates/p1/Cargo.toml"))?;
