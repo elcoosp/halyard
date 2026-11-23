@@ -129,7 +129,7 @@ fn rename_with_retry(temp: &Path, dest: &Path) -> Result<(), EditError> {
             Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied && attempt < 4 => {
                 last = Some(err);
                 std::thread::sleep(std::time::Duration::from_millis(
-                    10u64.saturating_mul(attempt + 1),
+                    10u64.saturating_mul(u64::from(attempt + 1)),
                 ));
             }
             Err(err) => {

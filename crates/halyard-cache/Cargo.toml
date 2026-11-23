@@ -15,10 +15,12 @@ blake3 = { workspace = true }
 # flock acquire/release path. Both are POSIX syscalls with no safe std
 # equivalent; the module carries the rationale and Miri/loom coverage
 # (tests/miri.rs, tests/loom.rs).
-libc = "0.2"
 # §14.3: hit/miss counters ride `tracing` spans so the profiler (M2.6)
 # can read cache behaviour without touching the planner (I6).
 tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 halyard-test-support = { workspace = true }
