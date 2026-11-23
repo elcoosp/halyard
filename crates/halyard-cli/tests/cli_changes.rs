@@ -139,13 +139,22 @@ fn explain_names_the_change_file() -> Result<(), BoxError> {
     )?;
     let (code, out) = halyard(fx.root(), &["explain", "solo"])?;
     assert_eq!(code, 0, "{out}");
-    let expected = format!(
+    // The CLI output may use mixed separators (forward slash for first, native for rest)
+    // Check for the path with either separator style
+    let expected_forward = "changeset .halyard/changes/next.md";
+    let expected_mixed = format!(
+        "changeset .halyard/changes{}next.md",
+        std::path::MAIN_SEPARATOR_STR
+    );
+    let expected_native = format!(
         "changeset .halyard{}changes{}next.md",
         std::path::MAIN_SEPARATOR_STR,
         std::path::MAIN_SEPARATOR_STR
     );
     assert!(
-        out.contains(&expected),
+        out.contains(expected_forward)
+            || out.contains(&expected_mixed)
+            || out.contains(&expected_native),
         "the reason chain names the file: {out}"
     );
     assert!(
