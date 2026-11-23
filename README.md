@@ -1,4 +1,4 @@
-s<div align="center">
+<div align="center">
 <img src="https://cdn.jsdelivr.net/gh/elcoosp/halyard@main/docs/logo.png" alt="Halyard Logo" width="300"/>
   <p>
     <strong>A zero-config release engine for Cargo and pnpm monorepos, written in Rust.</strong><br/>
