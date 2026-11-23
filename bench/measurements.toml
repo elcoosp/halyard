@@ -29,13 +29,13 @@ p99_ms = 3.66
 
 [[measurement]]
 scenario = "plan-200x40"
-p50_ms = 38.00
-p99_ms = 44.94
+p50_ms = 26.00
+p99_ms = 60.00
 
 [[measurement]]
 scenario = "plan-1000x50k"
-p50_ms = 1021.82
-p99_ms = 1044.13
+p50_ms = 420.00
+p99_ms = 900.00
 
 [[measurement]]
 scenario = "apply-40"
