@@ -1,347 +1,154 @@
-# HALYARD
+s<div align="center">
+<img src="https://cdn.jsdelivr.net/gh/elcoosp/halyard@main/docs/logo.png" alt="Halyard Logo" width="300"/>
+  <p>
+    <strong>A zero-config release engine for Cargo and pnpm monorepos, written in Rust.</strong><br/>
+    Halyard reads your git history, computes the next version for every package from conventional commits, and opens a Release PR you review before tagging and publishing. It is built for maintainers of monorepos that span Rust and Node, where release-please, changesets, and release-plz each cover half the problem. Every stage has a dry-run mode, so you can see exactly what will happen before anything is written.
+  </p>
+  <p>
+    <a href="https://github.com/elcoosp/halyard/actions"><img src="https://img.shields.io/github/actions/workflow/status/elcoosp/halyard/ci.yml?style=flat-square&label=build" alt="Build status"/></a>
+    <a href="https://github.com/elcoosp/halyard/blob/main/LICENSE"><img src="https://img.shields.io/github/license/elcoosp/halyard?style=flat-square" alt="License"/></a>
+    <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square" alt="Written in Rust"/></a>
+    <a href="#status"><img src="https://img.shields.io/badge/status-pre--1.0-yellow?style=flat-square" alt="Pre-1.0"/></a>
+  </p>
+  <p>
+    <a href="#quickstart">Quickstart</a> •
+    <a href="#features">Features</a> •
+    <a href="#usage">Usage</a> •
+    <a href="docs/HALYARD_ARCHITECTURE.md">Architecture</a>
+  </p>
+</div>
 
-The fastest, most correct, most pleasant polyglot release engine in the
-world. Zero-config for Cargo + pnpm + single-package repos, extensible to
-every ecosystem, with a *Release PR* UX better than release-please and a
-runtime measured in milliseconds.
-
-**Status: M4 forge slice landed through M4.1c — M4.1a Forge seam +
-`MemoryForge`, M4.1b GitHub REST adapter (live `pr`, `forge-smoke`),
-M4.1c GitHub App-JWT auth (`HALYARD_APP_*`), M4.2a §11.1 Release-PR
-state machine, M4.3a §11.3 Release-PR body renderer, M4.2b step 1 (`pr
---dry` forecast over the dry-run `PreviewForge`), M4.3 `check` command
-(§11.6 PR-title lint), the §11.1 tag-phase reconciliation
-(manifest-vs-tags) with its git-side write/push/pinpoint paths and the
-live `release` shell, the §9.4 release-notes pipeline, the M2.6
-close-out CLI persistent-cache wiring — and M5.5's §11.5 call governor
-(pacing, `Retry-After`, deterministic backoff, per-run budget) wired
-into the live forge paths (ADR-0015) — and the §8.8 smart minimal fetch
-(`halyard fetch`: probe → per-package selection through the planner's
-template rule → one minimal `git fetch`, shallow-deepening bounded by
-the previous releases, documented full-fetch fallback; ADR-0016) and the
-M5.1 registry existence-probe crate (`halyard-registry`: the `Registry`
-seam over the forge transport — crates.io sparse index + npm packument
-`published()`, deterministic visibility wait, `doctor --registries`
-opt-in probe; ADR-0017) — and the M5.2 publish engine (`halyard-publish`:
-verified-plan validation, topological layers, registry resume, the
-visibility wait and the injected `PublishEffect` seam; ADR-0018) wired
-into the `publish [--dry]` command (the tools' documented dry form, the
-real spawn live) — the publish-auth plumbing with secret scrubbing
-(M5.3 step 1, ADR-0019) and the custom-registry routing (M5.2
-continued, ADR-0021: configured `[registries.<name>]` sparse indexes
-join the routing map, npm `publishConfig.registry` routes per package)
-— and the OIDC trusted-publishing half (M5.3 step 3, ADR-0031:
-`OidcPublishAuth` — `gha_oidc_context` detection, the `OidcExchanger`
-over the forge transport, the env grammar first and the memoized
-crates.io exchange as fallback, secret scrubbing throughout) and the
-npm publish-options row (ADR-0033: `publishConfig.access` /
-`--provenance` / `--tag` carried through `pnpm_publish_args`) — and
-the §11.6 check-comment mode (`check --pr-title --comment`: the
-verdict posted to the PR under review through the forge seam's
-marker-based comment upsert, rewrite-in-place idempotent; M4.5 step 1,
-ADR-0020) — and the M4.7 migration report + write step (`halyard migrate`: the
-release-please/changesets/knope/release-plz configs surveyed into
-mapped rows, semantic differences and a validated draft `halyard.toml`;
-`migrate --write` lands the reviewed draft atomically, create-only — an
-existing config is never clobbered and two configured tools are a
-refusal, not a guess; ADR-0022 + ADR-0023 + ADR-0024) — and the
-§10.3 prerelease-channel planner integration (M5.6 step 1, ADR-0025:
-`[versioning].channel = "rc"` turns every planned release into
-`{target}-{channel}.{n}` with the counter derived from the tags the
-repo already carries — no state file — and removing the key promotes a
-leftover prerelease manifest to its own stable triple; step 2 binds
-channels to branches (`channel_branches = { next = "rc" }` — the
-§10.3 `next`-branch trains); step 3 names a package's own train with
-`[[package]] channel = "rc"` — the override wins over the default and
-the branch bindings, and un-named packages keep theirs (ADR-0026);
-step 4 pins maintenance branches (`maintenance_branches = ["1.x"]` —
-a backport stays on the line, a breaking commit refuses with
-`E-PLAN-MAINTENANCE` instead of planning across it, ADR-0027)) — and
-the §9.4 change-file input (M3.5 completion, ADR-0028: optional
-`.halyard/changes/*.md` files — TOML-style front-matter
-(`packages = { core = "minor" }`) bumps that replace the commit-derived
-level as the squash-merge escape hatch, notes merged verbatim into the
-changelog preview, the strict grammar refusing with
-`E-CHLOG-CHANGE-FILE` and unknown names with `E-PLAN-CHANGE-FILE`) — and
-the §16.1 zero-config on-ramp (`halyard init` per ADR-0029: discovery
-surveys the repo, the engine plans a create-only write — the documented
-`halyard.toml` skeleton whose commented defaults load as the built-in
-defaults exactly, plus the §16.1 one-file release workflow with
-`--github` — refusals carry `E-CFG-INIT` and never leave a
-half-scaffold)** — and the §16.3/M10 affected-package selector (`halyard
-affected [--base <ref>] [--ci SYSTEM]`, ADR-0032 +
-ADR-0034/0035/0036/0038/0039/0040/0041/0045: the CI question — which
-packages must rebuild and test? — answered as the pending-commit
-attribution closed over the workspace's reverse dependency edges, dev
-edges included, with an explicit-ref base for the PR-selection shape
-and the selection rendered in the CI systems' own grammars — turbo, nx,
-bazel, GitHub Actions' matrix-output JSON array, GitLab's
-`parallel:matrix` hashes, Azure Pipelines' `task.setvariable` output
-variable, TeamCity's matrix-build `param(...)` line, CircleCI's
-dynamic-config continuation `parameters: '{ "halyard_pkgs": [...] }'`
-line, Buildkite's build-matrix `matrix.setup` dimension block,
-Jenkins' declarative `axis` block, Bitbucket's `parallel: steps:` block
-(one literal `export HALYARD_PKG=<name>` script line per affected
-package, the documented grammar having no per-step `env`) and Drone's
-step-scoped `environment:` fragment (the documented per-step
-environment mechanism, one fragment per affected package)) — and the §12
-action-output seam (M10/§12 step 1,
-ADR-0037: the `halyard-action` crate — the §12 outputs vocabulary over
-the injected `ActionWriter`, the real `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`
-env-file writers and the ordered-call-log preview, the plan-mode forecast
-wired as `halyard action` with the canonical plan file and the §12 job
-summary; the §12 `pr` mode (ADR-0043) renders the §11.1 release
-machine's pass view through the same seam — the forge's own
-`pr_number`/`pr_url`, the minted release URLs and the honest
-`released` value; the §12 `check` mode (ADR-0044) renders the title
-lint's verdict and the conveyed bumps beside the pending forecast; the
-§12 `release` mode (ADR-0046) renders the release executor's pass view
-— the §11.1 tag phase, the push and the forge half through the same
-shared pass `halyard release` drives, the created tags, the minted URLs
-and the honest `released` value, no PR keys).** The
-architecture and multi-year master plan lives in
-[`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is
-tracked in [`PROGRESS.md`](PROGRESS.md).
-
-## What exists after M0
-
-- **Workspace scaffold (§7.1/§7.2/§15.3)** — layered crates, pedantic+
-  restriction lints, rustfmt/clippy/deny/audit configs, CI + nightly
-  workflows (`.github/workflows/`).
-- **`halyard-plan/v1` + `halyard.toml` v1 schemas (M0.7)** — frozen JSON
-  Schemas generated from the Rust types in `halyard-core` / `halyard-config`;
-  drift fails CI (`cargo run -p xtask -- schema-check`).
-- **`GitFixture` DSL + 20 scenarios (M0.5)** — deterministic git repository
-  builder in `halyard-test-support` (linear, merge, octopus, squash, revert,
-  shallow, partial, commit-graph, packed refs, worktrees, unicode, …).
-- **Synthetic repo generator (M0.4)** — `xtask gen-repo` (same seed ⇒ same
-  OIDs).
-- **Pinned corpus (M0.2)** — `corpus/manifest.toml` (15 repos pinned by SHA)
-  + `xtask corpus fetch` (verified reproducible).
-- **Competitor harness (M0.3)** — `xtask bench-competitors`; recipes contain
-  only observed argv, unmeasured claims stay `pending`
-  (`bench/competitors/REPORT.md`).
-
-## What exists after the M1 foundation slice
-
-- **Core model (M1.1)** — `halyard-core`: `PkgId`/`Sym`/`Interner`,
-  `SmallBitset` (inline ≤ 128 packages, heap spill), `Workspace` /
-  `Package` / `DepEdge` / groups, `TagTemplate` (appendix A.3),
-  `ReasonChain`, `RelevantCommit` / `HistoryDigest`, canonical JSON +
-  `plan_hash` (blake3, ADR-0005); proptest on the bitset, snapshot-pinned
-  plan hash.
-- **Conventional-commit parser (M1.2)** — `halyard-conventional`:
-  spec-compliant (1.0.0) grammar over bytes via `winnow`, scopes with
-  escapes, `BREAKING CHANGE`/`BREAKING-CHANGE` footers, git trailers,
-  `(#NNN)` PR extraction, `fixup!`/`squash!` detection; golden tests on the
-  spec examples, totality proptest, fuzz targets under `fuzz/`.
-- **Version algebra (M1.3)** — `halyard-version`: bump application with the
-  Cargo-compatible 0.x policy, commit-type mapping, prerelease channels
-  (counter from existing tags), and the appendix-A.2 requirement rewriter
-  (operator + precision preserving, widen policy, `E-EDIT-UNREWRITABLE`).
-- **Edit engine (M1.4)** — `halyard-edit`: `EditSet` byte-range patches,
-  atomic apply (temp → fsync → rename, Windows retry), verify-before-write,
-  CRLF/BOM preservation (invariant I4), roundtrip proptests.
-- **Config loader (M1.8)** — `halyard-config`: strict unknown-key detection
-  with did-you-mean, layered resolution (defaults < file < package metadata
-  < env `HALYARD_*` < CLI), `config_hash` over canonical JSON; snapshot-
-  tested diagnostics.
-
-## What exists after the M4 forge slice
-
-- **Forge seam (M4.1a, ADR-0011)** — `halyard-forge`: the forge-agnostic
-  [`Forge`](crates/halyard-forge/src/lib.rs) trait (§11.4), its data
-  vocabulary, the `E-FORGE-*` taxonomy and the deterministic
-  `MemoryForge` reference adapter with call log + failpoint harness.
-- **GitHub REST adapter + App auth (M4.1b/M4.1c, ADR-0013/ADR-0014)** —
-  `halyard-forge-github`: the full `Forge` implementation over REST v3
-  (ETag conditionals, GET-by-tag-first idempotence, the Git-Data
-  `commit_via_api` chain) over the seam's `HttpTransport` (blocking
-  `ureq` + rustls), plus the blocking `UreqTransport`; M4.1c adds the
-  GitHub App credentials (`AppCredentials`: PKCS#1/PKCS#8 PEM → `ring`
-  RS256 signer, JWT → installation-token mint on a conservative
-  45-minute TTL, injected `EpochClock` for testable determinism) and the
-  shell's `HALYARD_APP_*` env wire-up (`pr` live, the release forge
-  half, `forge-smoke` — whose JSON carries the resolved `auth_mode`).
-- **Release-PR state machine (M4.2a)** — `halyard_forge::state`:
-  `run_release_machine` executes the §11.1 tag phase (GET-by-tag-first
-  release creation, PROPAGATE gating) and prepare phase (find → upsert /
-  no-op / close) against any `&dyn Forge`, with the §11.5 call budgets
-  and the §15.2 failure-injection matrix pinned in tests. The seam gained
-  `Forge::close_pr` (§11.1 step 3); the shell's git-side tag/push
-  effects landed with ADR-0012 and the REST adapter with ADR-0013.
-- **Release-PR body renderer (M4.3a)** — `halyard-changelog::pr_body`:
-  the §11.3 stable body (plan table, changelog preview, override footer)
-  with the embedded plan (canonical JSON → DEFLATE → base64) and the
-  I8 verifier `extract_embedded_plan`; `E-CHLOG-PRBODY` fails closed on
-  any tampered body.
-- **Dry-run Release-PR forecast (M4.2b step 1)** —
-  `halyard_forge::PreviewForge` (the dry-run adapter: every probe sees an
-  empty forge, every mutation is a `preview://`-marked forecast, the §11.5
-  call log stays observable) + `halyard pr --dry`: plan → §11.3 body →
-  the full §11.1 machine pass — the tag phase (fed by the manifest-vs-tags
-  reconciliation) first, the prepare phase under the PROPAGATE gate —
-  reporting the effects, the call-budget forecast and the body; live mode
-  runs the same machine over the M4.1b GitHub REST adapter (below).
-- **Tag-phase reconciliation (§11.1 step 2)** —
-  `halyard_core::release_state`: the stateless manifest-vs-tags decision
-  (Tagged / Pending / Behind) as a pure function over the workspace, the
-  enumerated tags (`GitHistory::tags()`) and the planner's own template
-  rule and `release = false` skip set — the tag phase and the plan can
-  never disagree about a tag's name or a skipped package; `pr --dry`
-  forecasts the tag phase it decides.
-- **Tag-phase write path + forecast (§11.1 step 2, git side)** —
-  `halyard_git::tag`: the git engine's first write surface — the
-  `TagWriter` seam, the real `GixTagWriter` (annotated tag objects +
-  create-only ref updates, idempotent `AlreadyTagged`, fail-closed
-  `E-GIT-TAG-CONFLICT`, `E-GIT-TAG` with docs pages) and the
-  `PreviewTagWriter` (probes real, mutations forecast, zero writes) +
-  `halyard release --dry`: reconcile → pending → directives →
-  forecast, and the **live release shell (git side)**: `halyard release`
-  runs the same executor over the real writer and pushes the created
-  tags through `halyard_git::push` (the §11.2 effect — one
-  `git push --porcelain`, argv arrays, no force, no prompt; ADR-0012);
-  the forge half (GET-by-tag-first release creation) runs over the M4.1b
-  adapter when credentials allow it and is an honest skip otherwise.
-- **PR-title lint (M4.3 `check`, §11.6)** — `halyard_conventional::lint_title`
-  (the `TitleBumpRule` seam: grammar in the leaf, policy injected) +
-  `halyard check --pr-title` (planner-exact prediction with the §10.2
-  pre-major remap per package, did-you-mean on typo'd types, `E-CLI-TITLE`
-  diagnosis) and `halyard check --exit-code` (§15.4 exit code 3 when a
-  release is pending).
-- **CLI persistent-cache wiring (M2.6 close-out, §8.7)** — the planning
-  pipeline opens `$GIT_DIR/halyard/cache/v1/` and feeds it to
-  `GitHistory::build_with_options` with the trie `layout_hash` and the
-  resolved `config_hash` (a layout or policy change invalidates the
-  cached attributions cleanly); `--no-cache` really skips it and a cache
-  that cannot open degrades to an uncached run with a warning (the cache
-  is an optimization, never a correctness surface).
-
-## Layout
-
-```
-crates/
-  halyard-core           pure core types + plan contract + plan hash (no I/O)
-  halyard-config         halyard.toml model + loader + layered resolution +
-                         foreign-config migration report (M4.7)
-  halyard-conventional   conventional-commit parser (winnow, zero-copy scan)
-  halyard-version        bump algebra + 0.x policy + requirement rewriter
-  halyard-edit           EditSet byte patches + atomic apply + plan apply
-  halyard-discover       topology + manifests → Workspace (§6)
-  halyard-eco-cargo      Cargo adapter: discovery, manifest + lockfile patchers
-  halyard-eco-npm        npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher
-  halyard-git            gix engine: refs, painter walk, trie tree-diff, tag phase,
-                         tag-target pinpoint, tag push, smart minimal fetch (§8, §11.1)
-  halyard-cache          persistent mmap per-commit cache (§8.7, only unsafe crate)
-  halyard-changelog      changelog styles (§9.4) + §11.3 Release-PR body +
-                         change-file grammar (.halyard/changes/*.md, ADR-0028)
-  halyard-forge          Forge seam (§11.4) + MemoryForge + PreviewForge + §11.1 machine
-  halyard-forge-github   GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
-  halyard-action         §12 action-output seam (ADR-0037/0043/0044/0046): the outputs vocabulary
-                         over the GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files, the preview
-                         call log, the plan-mode forecast, the §12 pr mode's pass renderers
-                         and the §12 check mode's verdict (`halyard action`)
-  halyard-registry       Registry existence probes (M5.1): crates.io sparse index + npm
-                         packument `published()` + deterministic visibility wait (§13)
-  halyard-publish        Publish engine (M5.2): plan validation (I8), topo layers, resume,
-                         visibility wait, injected PublishEffect (§13, ADR-0018) +
-                         publish-auth plumbing (M5.3 step 1, ADR-0019): the PublishAuth
-                         seam, the VERIFIED env grammar, E-PUB-AUTH fail-closed, secret
-                         scrubbing + custom-registry routing (M5.2 continued, ADR-0021):
-                         configured `[registries.<name>]` sparse indexes join the probe map,
-                         npm `publishConfig.registry` routes per package (`TargetRouter`)
-  halyard-test-support   GitFixture DSL + scenarios + mock-forge re-exports
-  xtask                  check-layers, schema-check, schema-check-plan, perf-gate,
-                         size-gate, corpus, gen-repo, bench-competitors,
-                         discover-diff, git-diff, replay, bench-public, pgo
-  halyard-cli            the user shell (init/plan/apply/check/pr/release/publish/fetch/
-                         migrate/explain/status/graph/doctor/schema/completions/
-                         affected/man/action/forge-smoke/bench)
-schemas/                 frozen JSON Schemas (M0.7)
-corpus/manifest.toml     pinned real-world corpus (M0.2)
-bench/                   budgets (§14.1) + competitor harness (M0.3)
-fuzz/                    cargo-fuzz targets (conventional parser, tag templates)
-docs/                    architecture, ADRs, research notes, error pages
+```mermaid
+flowchart LR
+    history[git history] --> plan[halyard plan]
+    plan --> pr[halyard pr]
+    pr --> review[review & merge]
+    review --> release[halyard release]
+    release --> publish[halyard publish]
 ```
 
-## Daily commands
+## Quickstart
+
+Requires a stable Rust toolchain.
 
 ```bash
-cargo fmt --all --check
-# pedantic + restriction lints live in [workspace.lints]; the CLI
-# carries only -D warnings (a CLI -W would override the curated allows).
-# Feature policy (ADR-0030): the gates run `--features ci-bundle` — the
-# conflict-free "all stable features" spelling — because the cache
-# crate's miri/loom pair is documented-exclusive and machine-enforced
-# (a combined build is a compile error); the pair keeps its own lanes
-# (the CI loom job, the nightly Miri job).
-cargo clippy --workspace --all-targets --features ci-bundle -- -D warnings
-cargo test --workspace --features ci-bundle
-cargo test --workspace --benches
-cargo run -p xtask -- check-layers     # §7.2 layer rules
-cargo run -p xtask -- schema-check     # M0.7 schema drift
-cargo run -p xtask -- perf-gate        # §14.1 budgets (populated from M2.6)
-cargo run -p xtask -- size-gate        # §14.1 binary size (armed from M1.10)
-cargo run -p xtask -- git-diff         # tree-diff attribution vs git ground truth
-cargo run -p halyard-test-support --example fixture_tour
-cargo run -p halyard-core --example workspace_demo
-cargo run -p halyard-core --example pending_releases
-cargo run -p halyard-core --example prerelease_channel
-cargo run -p halyard-core --example maintenance_line
-cargo run -p halyard-core --example affected_selection
-cargo run -p halyard-core --example affected_ci
-cargo run -p halyard-conventional --example parse_commit
-cargo run -p halyard-conventional --example lint_title
-cargo run -p halyard-version --example bump_algebra
-cargo run -p halyard-edit --example apply_patch
-cargo run -p halyard-config --example resolve_layers
-cargo run -p halyard-config --example migrate_report
-cargo run -p halyard-config --example migrate_write
-cargo run -p halyard-discover --example discover_workspace
-cargo run -p halyard-eco-cargo --example parse_manifest
-cargo run -p halyard-eco-cargo --example patch_lockfile
-cargo run -p halyard-eco-cargo --example resolve_registry
-cargo run -p halyard-eco-npm --example scan_package_json
-cargo run -p halyard-eco-npm --example resolve_publish_registry
-cargo run -p halyard-eco-npm --example patch_pnpm_lockfile
-cargo run -p halyard-eco-npm --example publish_argv
-cargo run -p halyard-cache --example cache_roundtrip
-cargo run -p halyard-git --example walk_history
-cargo run -p halyard-git --example cached_walk
-cargo run -p halyard-git --example tag_phase
-cargo run -p halyard-git --example tag_forecast
-cargo run -p halyard-git --example tag_push
-cargo run -p halyard-git --example tag_target
-cargo run -p halyard-git --example fetch_plan
-cargo run -p halyard-registry --example probe_registries
-cargo run -p halyard-cache --example dump
-cargo run -p halyard-cli --example release_pipeline
-cargo run -p halyard-cli -- bench --iterations 8   # the §16.2/ADR-0042 pipeline measurement over this repo
-cargo run -p halyard-changelog --example render
-cargo run -p halyard-changelog --example render_pr_body
-cargo run -p halyard-changelog --example render_release_notes
-cargo run -p halyard-changelog --example render_user_template
-cargo run -p halyard-changelog --example render_check_comment
-cargo run -p halyard-changelog --example change_file
-cargo run -p halyard-config --example init_scaffold
-cargo run -p halyard-publish --example publish_plan
-cargo run -p halyard-publish --example publish_auth
-cargo run -p halyard-publish --example publish_oidc
-cargo run -p halyard-publish --example publish_npm_options
-cargo run -p halyard-forge --example release_lifecycle
-cargo run -p halyard-forge --example release_machine
-cargo run -p halyard-forge --example pr_preview
-cargo run -p halyard-forge --example governed_release
-cargo run -p halyard-forge-github --example forge_exchange
-cargo run -p halyard-forge-github --example app_exchange
-cargo run -p halyard-action --example plan_forecast
-cargo run -p halyard-action --example pr_forecast
-cargo run -p halyard-action --example release_forecast
-cargo run -p halyard-action --example check_forecast
+# install from git (pre-1.0; crates.io release pending)
+cargo install --git https://github.com/elcoosp/halyard --package halyard-cli --locked
+
+cd your-monorepo
+halyard plan      # works with zero config in standard Cargo + pnpm layouts
+halyard init      # optional: scaffold halyard.toml to customize
 ```
 
-Crate layering is enforced (`xtask check-layers`): `halyard-core` depends on
-nothing but `semver`/`smallvec`/`bstr`/`blake3`/`serde`/`serde_json`
-(ADR-0005) plus the feature-gated schema dep of ADR-0001; the parser and
-algebra crates take `core` at most; adapters depend on `core` only; nothing
-depends on the CLI.
+`halyard plan` prints each package's next version, the changelog preview, and the files it would edit. When the plan looks right, `halyard pr` opens the Release PR; after it merges, `halyard release` creates the tags and `halyard publish` ships to the registries.
+
+<details>
+<summary>Build from source instead</summary>
+
+```bash
+git clone https://github.com/elcoosp/halyard.git
+cd halyard
+cargo build --release
+./target/release/halyard plan
+```
+
+</details>
+
+## Features
+
+- **Polyglot by design**: one plan covers Cargo crates and npm/pnpm packages in the same monorepo, with a single version graph and reverse-dependency closure.
+- **Deterministic plans**: the plan is a pure function of the git history, the workspace, and `halyard.toml`, hashed with blake3. Same inputs, same `plan_hash` — CI can gate on it.
+- **Dry-run everywhere**: `plan`, `apply`, `pr`, `release`, and `publish` all support `--dry`, backed by a preview forge and a preview tag writer that never touch the network or the working tree.
+- **Verified Release PRs**: the PR body embeds the plan (canonical JSON, DEFLATE, base64), so `halyard release` verifies the PR it releases matches the plan it computed.
+- **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
+- **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
+- **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
+
+## How it works
+
+Halyard is a layered Rust workspace. `halyard-core` holds the pure types and the plan contract (no I/O); the parser, version algebra, and edit engine sit above it; ecosystem adapters (`halyard-eco-cargo`, `halyard-eco-npm`) and the git engine (`halyard-git`) sit above those; the forge, registry, publish, and action layers are driven through narrow seams (`Forge`, `Registry`, `PublishEffect`, `PublishAuth`, `ActionWriter`) so the real network adapters and the preview adapters are interchangeable. The layering is enforced by `cargo run -p xtask -- check-layers`.
+
+The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is tracked in [`PROGRESS.md`](PROGRESS.md).
+
+<details>
+<summary>Workspace layout</summary>
+
+| Crate                  | Role                                                                  |
+| ---------------------- | --------------------------------------------------------------------- |
+| `halyard-core`         | pure core types, plan contract, plan hash (no I/O)                    |
+| `halyard-config`       | `halyard.toml` loader + layered resolution + foreign-config migration |
+| `halyard-conventional` | conventional-commit parser (winnow, zero-copy)                        |
+| `halyard-version`      | bump algebra, 0.x policy, requirement rewriter                        |
+| `halyard-edit`         | byte-range patches, atomic apply, verify-before-write                 |
+| `halyard-discover`     | topology + manifests → workspace                                      |
+| `halyard-eco-cargo`    | Cargo adapter: discovery, manifest + lockfile patchers                |
+| `halyard-eco-npm`      | npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher             |
+| `halyard-git`          | gix engine: refs, history walk, tag phase, push, smart fetch          |
+| `halyard-cache`        | persistent mmap per-commit cache                                      |
+| `halyard-changelog`    | changelog styles, Release PR body, change-file grammar                |
+| `halyard-forge`        | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
+| `halyard-forge-github` | GitHub REST adapter + App-JWT auth                                    |
+| `halyard-registry`     | crates.io sparse index + npm packument probes                         |
+| `halyard-publish`      | publish engine: plan validation, topological layers, resume, auth     |
+| `halyard-action`       | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`     |
+| `halyard-cli`          | the `halyard` shell                                                   |
+
+Plus `halyard-test-support` (fixtures) and `xtask` (workspace tooling).
+
+</details>
+
+## Usage
+
+### Preview, open, release, publish
+
+```bash
+halyard plan            # what would change, and why
+halyard pr --dry        # forecast the Release PR (no network)
+halyard pr              # open or update the Release PR
+halyard release --dry   # forecast tags and GitHub releases
+halyard release         # create tags, push, create GitHub releases
+halyard publish --dry   # forecast registry publishes
+halyard publish         # publish to crates.io / npm
+```
+
+### In CI: select only the affected packages
+
+```bash
+halyard affected --base "$GITHUB_BASE_REF" --ci github-actions
+```
+
+`--ci` takes `turbo`, `nx`, `bazel`, `github-actions`, `gitlab`, `azure`, `teamcity`, `circleci`, `buildkite`, `jenkins`, `bitbucket`, or `drone`, and prints the selection in that system's matrix grammar.
+
+### Try it on an existing release-please / changesets repo
+
+```bash
+halyard migrate         # survey existing configs, print a draft halyard.toml
+halyard migrate --write # land the reviewed draft, create-only
+```
+
+### Going further
+
+Every crate ships runnable examples:
+
+```bash
+cargo run -p halyard-forge --example release_machine
+cargo run -p halyard-publish --example publish_plan
+cargo run -p halyard-cli --example release_pipeline
+```
+
+## Compared to alternatives
+
+release-please, release-plz, and changesets are mature tools. If your monorepo is single-ecosystem, one of them is likely the simpler choice. Halyard is for repos that span both Rust and Node: it plans and ships Cargo crates and npm/pnpm packages from the same conventional-commit history, with one dry-run preview, one Release PR, and one publish step. The `migrate` command reads existing release-please, changesets, knope, and release-plz configs and drafts a `halyard.toml`, so you can evaluate it without committing.
+
+## Status
+
+> [!NOTE]
+> Halyard is pre-1.0 and under active development. The planning, edit, git, forge, registry, and publish layers are landed and tested; the CLI surface is stabilizing but may change between minor versions. See [`PROGRESS.md`](PROGRESS.md) for the milestone log.
+
+Supported platforms follow the CI matrix: Linux, macOS, and Windows.
+
+## Learn more
+
+- [Architecture and master plan](docs/HALYARD_ARCHITECTURE.md)
+- [Milestone progress](PROGRESS.md)
+- [Runnable examples](crates/) — each crate has an `examples/` directory
