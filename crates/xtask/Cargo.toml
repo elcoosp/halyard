@@ -9,8 +9,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-halyard-core = { workspace = true, features = ["schema-gen"] }
-halyard-config = { workspace = true, features = ["schema-gen"] }
+halyard-core = { workspace = true }
+halyard-config = { workspace = true }
 halyard-discover = { workspace = true }
 halyard-edit = { workspace = true }
 halyard-git = { workspace = true }

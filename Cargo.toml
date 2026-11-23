@@ -70,13 +70,13 @@ must_use_candidate = "allow"
 missing_errors_doc = "allow"
 
 [workspace.dependencies]
-halyard-core = { path = "crates/halyard-core" }
-# M10/§12 step 1 (ADR-0037): the action-output seam — the shell's
-# `action` command renders the §12 outputs through it.
 halyard-action = { path = "crates/halyard-action" }
 halyard-cache = { path = "crates/halyard-cache" }
-halyard-config = { path = "crates/halyard-config" }
+halyard-changelog = { path = "crates/halyard-changelog" }
+halyard-cli = { path = "crates/halyard-cli" }
+halyard-config = { path = "crates/halyard-config", features = ["schema-gen"] }
 halyard-conventional = { path = "crates/halyard-conventional" }
+halyard-core = { path = "crates/halyard-core", features = ["schema-gen"] }
 halyard-discover = { path = "crates/halyard-discover" }
 halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
 halyard-eco-npm = { path = "crates/halyard-eco-npm" }
@@ -86,8 +86,9 @@ halyard-forge-github = { path = "crates/halyard-forge-github" }
 halyard-git = { path = "crates/halyard-git" }
 halyard-publish = { path = "crates/halyard-publish" }
 halyard-registry = { path = "crates/halyard-registry" }
-halyard-changelog = { path = "crates/halyard-changelog" }
 halyard-test-support = { path = "crates/halyard-test-support" }
+halyard-version = { path = "crates/halyard-version" }
+xtask = { path = "crates/xtask" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -107,6 +108,9 @@ blake3 = "1.8"
 winnow = "1"
 proptest = "1.8"
 insta = "1"
+# Cargo-audit: override transitive dependencies with patched versions
+url = "2.5.9"
+heapless = "0.9.4"
 
 [profile.release]
 lto = "fat"

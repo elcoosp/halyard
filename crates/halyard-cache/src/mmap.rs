@@ -41,6 +41,10 @@
 //! * The mapping is dropped exactly once (`Drop`), and `Mmap` is
 //!   `Send + Sync` because the mapped pages are immutable during the
 //!   object's lifetime (`PROT_READ`).
+//!
+//! On non-Unix platforms (Windows), `mmap` is unavailable; `Mmap::open`
+//! returns `None` and the cache uses the `read()`-backed shadow buffer.
+//! Locking and directory fsync are no-ops on Windows.
 
 use std::fs::File;
 use std::path::Path;
@@ -80,30 +84,40 @@ impl Mmap {
         }
         #[cfg(not(any(miri, feature = "miri")))]
         {
-            use std::os::unix::io::{AsRawFd, RawFd};
-            let fd: RawFd = file.as_raw_fd();
-            let page = unsafe {
-                // SAFETY: `mmap` of `len` bytes from an open fd with
-                // `PROT_READ`/`MAP_SHARED`; the length is the file size
-                // supplied by the caller (module contract: callers map
-                // only sizes they just read from `metadata`). A NULL
-                // kernel-chosen address, default protection flags.
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    usize::try_from(len).ok()?,
-                    libc::PROT_READ,
-                    libc::MAP_SHARED,
-                    fd,
-                    0,
-                )
-            };
-            if page == libc::MAP_FAILED {
-                return None;
+            #[cfg(unix)]
+            {
+                use std::os::unix::io::{AsRawFd, RawFd};
+                let fd: RawFd = file.as_raw_fd();
+                let page = unsafe {
+                    // SAFETY: `mmap` of `len` bytes from an open fd with
+                    // `PROT_READ`/`MAP_SHARED`; the length is the file size
+                    // supplied by the caller (module contract: callers map
+                    // only sizes they just read from `metadata`). A NULL
+                    // kernel-chosen address, default protection flags.
+                    libc::mmap(
+                        std::ptr::null_mut(),
+                        usize::try_from(len).ok()?,
+                        libc::PROT_READ,
+                        libc::MAP_SHARED,
+                        fd,
+                        0,
+                    )
+                };
+                if page == libc::MAP_FAILED {
+                    return None;
+                }
+                Some(Mmap {
+                    ptr: page.cast::<u8>(),
+                    len: usize::try_from(len).ok()?,
+                })
             }
-            Some(Mmap {
-                ptr: page.cast::<u8>(),
-                len: usize::try_from(len).ok()?,
-            })
+            #[cfg(not(unix))]
+            {
+                // Windows and other non-Unix platforms: no mmap support.
+                // The cache will fall back to the read()-backed shadow buffer.
+                let _ = file;
+                None
+            }
         }
     }
 
@@ -139,13 +153,23 @@ impl std::fmt::Debug for Mmap {
 /// and is not model-checked by loom (outside its model) — the state
 /// machine *around* it is (`tests/loom.rs`).
 pub fn lock_exclusive(file: &File) -> bool {
-    use std::os::unix::io::AsRawFd;
-    let rc = unsafe {
-        // SAFETY: `flock` on an owned fd; `LOCK_EX` blocks until the lock
-        // is free and never dereferences memory.
-        libc::flock(file.as_raw_fd(), libc::LOCK_EX)
-    };
-    rc == 0
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let rc = unsafe {
+            // SAFETY: `flock` on an owned fd; `LOCK_EX` blocks until the lock
+            // is free and never dereferences memory.
+            libc::flock(file.as_raw_fd(), libc::LOCK_EX)
+        };
+        rc == 0
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: no flock equivalent. The cache works without locking
+        // on Windows (single-process assumption for the test environment).
+        let _ = file;
+        true
+    }
 }
 
 /// Releases a previously acquired advisory lock (`flock(2)` with
@@ -154,13 +178,21 @@ pub fn lock_exclusive(file: &File) -> bool {
 /// // rationale: see [`lock_exclusive`] — same syscall pair, inverse
 /// operation, no memory access.
 pub fn unlock(file: &File) -> bool {
-    use std::os::unix::io::AsRawFd;
-    let rc = unsafe {
-        // SAFETY: `flock` with `LOCK_UN` on an owned fd; releases the
-        // advisory lock, never dereferences memory.
-        libc::flock(file.as_raw_fd(), libc::LOCK_UN)
-    };
-    rc == 0
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let rc = unsafe {
+            // SAFETY: `flock` with `LOCK_UN` on an owned fd; releases the
+            // advisory lock, never dereferences memory.
+            libc::flock(file.as_raw_fd(), libc::LOCK_UN)
+        };
+        rc == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        true
+    }
 }
 
 /// Durability for the cache directory entry: `fsync(2)` on a directory
@@ -171,29 +203,44 @@ pub fn unlock(file: &File) -> bool {
 /// `fsync` on an `O_DIRECTORY` fd (POSIX); no std surface exists. The fd
 /// is opened, synced and closed here; nothing escapes.
 pub fn fsync_directory(path: &Path) {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt as _;
-    let Ok(c) = CString::new(path.as_os_str().as_bytes()) else {
-        return;
-    };
-    // SAFETY: `open` with O_RDONLY|O_DIRECTORY on the caller's cache
-    // directory path; the fd is closed on every path below.
-    let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
-    if fd >= 0 {
-        // SAFETY: `fd` comes from the `open` above and is valid until
-        // the `close` at the end of this block.
-        unsafe {
-            libc::fsync(fd);
-            libc::close(fd);
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+        let Ok(c) = CString::new(path.as_os_str().as_bytes()) else {
+            return;
+        };
+        // SAFETY: `open` with O_RDONLY|O_DIRECTORY on the caller's cache
+        // directory path; the fd is closed on every path below.
+        let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+        if fd >= 0 {
+            // SAFETY: `fd` comes from the `open` above and is valid until
+            // the `close` at the end of this block.
+            unsafe {
+                libc::fsync(fd);
+                libc::close(fd);
+            }
         }
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: no O_DIRECTORY equivalent. Skip directory fsync.
+        let _ = path;
     }
 }
 
 impl Drop for Mmap {
     fn drop(&mut self) {
-        // SAFETY: exactly one unmapping of the mapping created in `open`,
-        // with the same length; `ptr` is valid until this call.
-        let rc = unsafe { libc::munmap(self.ptr.cast::<libc::c_void>(), self.len) };
-        debug_assert_eq!(rc, 0, "munmap of a live mapping must succeed");
+        #[cfg(unix)]
+        {
+            // SAFETY: exactly one unmapping of the mapping created in `open`,
+            // with the same length; `ptr` is valid until this call.
+            let rc = unsafe { libc::munmap(self.ptr.cast::<libc::c_void>(), self.len) };
+            debug_assert_eq!(rc, 0, "munmap of a live mapping must succeed");
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows: no mmap, nothing to unmap.
+        }
     }
 }
