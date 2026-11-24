@@ -134,6 +134,7 @@ fn bench_auto_render<M: criterion::measurement::Measurement>(
         forecast: false,
         created_tags: (0..40).map(|idx| format!("pkg{idx:04}-v0.2.0")).collect(),
         pr_effect: None,
+        content_effect: None,
         release_urls: std::collections::BTreeMap::from([(
             "pkg0000-v0.2.0".to_owned(),
             "https://github.com/example/monorepo/releases/tag/pkg0000-v0.2.0".to_owned(),
@@ -141,6 +142,27 @@ fn bench_auto_render<M: criterion::measurement::Measurement>(
         forge: halyard_action::ForgePosture::Ran {
             repo: "example/monorepo".to_owned(),
             releases: 1,
+        },
+    };
+    // The prepare-phase shape (§11.1 step 3): the content verdict rides
+    // the pass line between the tags and the PR it enables — the same
+    // per-push budget, rendered with the content piece in it.
+    let prepare_pass = halyard_action::AutoPass {
+        released: false,
+        propagated: false,
+        forecast: false,
+        created_tags: Vec::new(),
+        pr_effect: Some(halyard_action::PrEffect::Updated {
+            number: 7,
+            url: "https://github.com/example/monorepo/pull/7".to_owned(),
+        }),
+        content_effect: Some(halyard_action::ContentEffect::Matched {
+            tree_oid: "3fa1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0".to_owned(),
+        }),
+        release_urls: std::collections::BTreeMap::new(),
+        forge: halyard_action::ForgePosture::Ran {
+            repo: "example/monorepo".to_owned(),
+            releases: 0,
         },
     };
     group.bench_function("auto_outputs_40_releases", |b| {
@@ -160,6 +182,14 @@ fn bench_auto_render<M: criterion::measurement::Measurement>(
             black_box(halyard_action::auto_summary(
                 black_box(plan),
                 black_box(&auto_pass),
+            ))
+        });
+    });
+    group.bench_function("auto_summary_prepare_content_matched", |b| {
+        b.iter(|| {
+            black_box(halyard_action::auto_summary(
+                black_box(plan),
+                black_box(&prepare_pass),
             ))
         });
     });
