@@ -132,9 +132,9 @@ fn render_shape(survey: &InitSurvey) -> String {
 
 /// The §16.1 release workflow, verbatim (the one file `halyard init
 /// --github` generates; the architecture's §16.1 contract). The
-/// `halyard/action` glue itself lands with its own milestone — the
-/// workflow references it the way the architecture documents the
-/// finished surface.
+/// `halyard/action` composite itself landed with the distribution
+/// milestone (ADR-0052) — the workflow references it the way the
+/// architecture documents the finished surface.
 const WORKFLOW_TEMPLATE: &str = "on: { push: { branches: [main] } }
 permissions: { contents: write, pull-requests: write, id-token: write }
 jobs:
