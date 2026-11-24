@@ -404,34 +404,9 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
     // stays GitHub-shaped (the forge slug parses from it) and `insteadOf`
     // rewrites it onto an offline bare repo — the standard offline-CI
     // rewriting, so the probe runs without any network.
-    let bare = fx
-        .root()
-        .parent()
-        .expect("fixture root has a parent")
-        .join("pr-live-origin.git");
-    fx.run_git(&["init", "--bare", bare.to_string_lossy().as_ref()])?;
-    fx.run_git(&[
-        "config",
-        &format!("url.{}.insteadOf", bare.to_string_lossy()),
-        "https://github.com/octo/halyard-demo.git",
-    ])?;
+    probe_offline_origin(&mut fx)?;
     // The forecast names the exact branch the live run will target.
-    let (_, dry_out) = halyard_with_env(
-        fx.root(),
-        &["pr", "--dry", "--format", "json"],
-        &[("GITHUB_TOKEN", "")],
-    )?;
-    let dry: serde_json::Value = serde_json::from_str(dry_out.trim())?;
-    let branch = dry
-        .get("branch")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("the forecast names the release branch")?
-        .to_owned();
-    let base = branch
-        .strip_prefix("halyard/release/")
-        .filter(|base| !base.is_empty())
-        .ok_or("the branch is the §11.2 shape")?
-        .to_owned();
+    let branch = forecast_release_branch(&fx)?;
     // The scripted exchange, in the §11.1 order: the API-commit chain
     // (ref → commit → tree → commit → ref CAS update — steps 1–6 of
     // `commit_via_api`), then the machine's find, the upsert's own find
@@ -498,6 +473,38 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
     );
     // The remote release branch carries the content commit: its tree is
     // the content tree the plan's edits produce.
+    assert_release_branch_carries_the_content(&fx, &branch)?;
+    Ok(())
+}
+
+/// The dry forecast's release branch (the §11.2 `halyard/release/<base>`
+/// shape): the name the live run will target, fetched offline.
+fn forecast_release_branch(fx: &GitFixture) -> Result<String, BoxError> {
+    let (_, dry_out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--dry", "--format", "json"],
+        &[("GITHUB_TOKEN", "")],
+    )?;
+    let dry: serde_json::Value = serde_json::from_str(dry_out.trim())?;
+    let branch = dry
+        .get("branch")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("the forecast names the release branch")?
+        .to_owned();
+    branch
+        .strip_prefix("halyard/release/")
+        .filter(|base| !base.is_empty())
+        .ok_or("the branch is the §11.2 shape")?;
+    Ok(branch)
+}
+
+/// The §11.1 step-3 truth pin: the pushed release branch's tip commit is
+/// the staged release commit and its tree equals the content tree the
+/// plan's applied edits produce over the base snapshot.
+fn assert_release_branch_carries_the_content(
+    fx: &GitFixture,
+    branch: &str,
+) -> Result<(), BoxError> {
     let tip = fx.run_git(&["ls-remote", "origin", &format!("refs/heads/{branch}")])?;
     assert!(!tip.trim().is_empty(), "the branch exists remotely: {tip}");
     let commit = tip.split('\t').next().unwrap_or_default().trim().to_owned();
@@ -517,11 +524,8 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
 /// origin onto a local bare repo (the forge slug still parses from the
 /// origin URL, and `ls-remote`/`fetch` stay on the loopback disk).
 fn probe_offline_origin(fx: &mut GitFixture) -> Result<(), BoxError> {
-    let bare = fx
-        .root()
-        .parent()
-        .expect("fixture root has a parent")
-        .join("origin-probe.git");
+    let parent = fx.root().parent().ok_or("fixture root has a parent")?;
+    let bare = parent.join("origin-probe.git");
     fx.run_git(&["init", "--bare", bare.to_string_lossy().as_ref()])?;
     fx.run_git(&[
         "config",
