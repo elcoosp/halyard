@@ -356,9 +356,22 @@ fn push_release_branch_rejects_a_stale_lease_fail_closed() -> Result<(), BoxErro
     let report =
         halyard_git::content::push_release_branch(fx.root(), "origin", BRANCH, &ours, None)?;
     assert!(matches!(report.row, Some(BranchPushRow::Pushed { .. })));
-    // A racing actor (another workspace) moves the branch past our lease.
+    // A racing actor (another workspace) moves the branch past our
+    // lease. The racer starts from the branch it races (a fast-forward
+    // move — an unrelated-history push would be rejected by the remote
+    // before the CAS ever sees it), so the remote tip advances past
+    // `ours` and our re-run's lease is genuinely stale.
     let mut racer = GitFixture::new("push-stale-racer")?;
-    racer.write("Cargo.toml", NEW_MANIFEST)?;
+    racer.run_git(&[
+        "fetch",
+        bare.to_string_lossy().as_ref(),
+        &format!("refs/heads/{BRANCH}"),
+    ])?;
+    racer.run_git(&["reset", "--hard", "FETCH_HEAD"])?;
+    // The racer's own edit — a file the staged payloads never carry (the
+    // branch tip already holds exactly those), so the race is a real
+    // change and the fast-forward push lands.
+    racer.write("README.md", "# raced past the lease\n")?;
     racer.stage_all()?;
     racer.commit("chore(main): race the branch")?;
     racer.run_git(&[
