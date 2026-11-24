@@ -60,6 +60,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 | Bitbucket parallel-steps adapter (ADR-0041) + the `halyard bench` measurement command (ADR-0042) | done | (tree left dirty; no commits) | M1: `BitbucketSelector` (`affected --ci bitbucket`) — one paste-ready `parallel:` block over the affected closure, name-sorted, one `export HALYARD_PKG=<name>` script line per affected package (support.atlassian.com VERIFIED 2026-11-17: "Parallel steps allow you to group pipeline steps that can run at the same time"; the required `steps:` property "contains the lists of `step`s in a `stage` or a `parallel`. At least 1 `step` is required within the steps list"; the docs' own example varies the steps **in the script** (`--batch 1` / `--batch 2`); no per-step `env` exists — `variables` is a `pipe`-only option — so the assignment rides the script line the consumer's tool invocation reads; the relative indentation follows the documented example exactly; the "100-step limit on pipelines includes each step in a parallel group" cap is the consumer's policy, the render never the guard), lookup + trait/module docs + CLI value enum + flag doc + the `affected_ci` example + bench `ci_selector_bitbucket_40chain` all moved one row over; the refused-unknown pin moved `bitbucket` → `drone` (an unrecorded system — the recorded CI surface ADR-0034→0041 is complete). M2 (M1 green end-to-end first): the §16.2 declared-absent `bench` command landed — the §14 model pipeline (`discover` → `config` → `history` → `plan`) timed per pass over the current repo's real shape, one untimed warmup before the timed passes (the §14.1 no-op-warm model; `--no-cache` = the cold measurement, the posture reported either way), the stage names riding the `--profile` trace's span vocabulary through the new read-only `Profiler::recorded_spans()` accessor, the nearest-rank percentiles the §14.1 budget table speaks; the aggregation is pure data on the lib target (`halyard_cli::bench` — the man renderer's rationale: bench harness and bin share one implementation) + `bench_report` criterion bench (8/200 passes); a measurement never a gate — the §14.1 budgets stay shape-bound to the xtask fixtures and the render says so; `E-CLI-BENCH` (zero-iteration refusal) + page + index row; 5 CLI gates + 5 module tests; the man bench's mirror tree repaired to the real 20-command count (it had drifted by one, missing `action`) | The M5.4 provenance/SLSA (live-CI lane), the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
 | Drone environment adapter (ADR-0045) + the §12 `release` mode (ADR-0046) | done | (tree left dirty; no commits) | M1: `DroneSelector` (`affected --ci drone`) — one step-scoped `environment:` fragment per affected package (docs.drone.io VERIFIED 2026-11-17: "Drone provides the ability to define environment variables scoped to individual build steps", the documented per-step mapping; "the environment section cannot expand environment variables or evaluate shell expressions" — the bare-word `HALYARD_PKG` value rides verbatim; steps are "executed sequentially by default" and the `depends_on` DAG — "you must configure dependencies for all pipeline steps" — is the consumer's policy), lookup entry + CLI value-enum variant + flag doc, the refused-unknown pin moved `drone` → `travis` (the contract-test loop names twelve systems), `affected_ci` example row + `ci_selector_drone_40chain` bench (≈82 ns, the 40-package chain) + research-note section + ADR-0045 + README/CLI-README/arch rows. M2 (M1 green end-to-end first): the §12 `release` mode (ADR-0046) — `cmd_release` extracted into the shared `run_release_pass` (one plan + one reconciliation feeding the tag phase, the §11.2 push, the forge half; the forge half's internal re-plan/re-reconcile deleted), `ReleasePass`/`ForgePosture` plain-data view (the created tags in the tag phase's name-sorted order I3, the minted URLs by tag, the skip's reason verbatim, `released` honest — a dry forecast stays false, I5), `release_outputs`/`release_summary` renderers (the plan vocabulary minus the PR keys — the release mode opens no Release PR), `ActionMode::Release` + `cmd_action_release` wired (`--dry` forecasts over the preview writer/pusher), `release` reports byte-identical (the `cli_release` suite pins them); 3 action contract tests + 3 CLI gates (red→green on record: E0432 on the missing API + `invalid value 'release'`; the red phase corrected two test fixtures, not the design — the fully-tagged shape forecasts zero creations honestly, the ahead-of-tags shape names the would-create tag), bench `release_outputs`/`release_summary_40_releases` (≈45 µs outputs), example `release_forecast`; `--dry` flag doc now names both modes. Micro-debt cleaned (additive, not milestone substitutes): the bench aggregation's `unreachable!` panic surface replaced with the fail-closed `E-CLI-BENCH` taxonomy error (the guarantee lives in the error, not a panic) and `commit_typo_message`'s `unreachable!` guard deleted — the typo parts ride in from the caller's own map-first match (no re-match, no panic surface) | The §12 `auto` mode (the trigger-policy composition, its own ADR), M5.4 provenance/SLSA (VERIFY first), the M2.6 dhat re-audit, the corpus-wide pnpm differential (no pnpm in the sandbox), the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
 | The §12 `auto` mode — the composition policy over the two executors (ADR-0047) | done | (tree left dirty; no commits) | M1: `ActionMode::Auto` + `cmd_action_auto`/`run_auto_pass` — the §11.1 stateless reconciliation as one §12 mode, the composition policy over the two shipped executors (§11.1's own order: one context → plan → manifest-vs-tags reconciliation; the release executor's git-side tag effects first — the tag phase over the posture-selected writer, the §11.2 push, an empty pending an honest no-op; then the §11.1 machine pass with BOTH halves' inputs (`pending_releases` + the Release-PR spec), so the half selection is the machine's own PROPAGATE rule and never a caller guess — pending releases gate the prepare phase (§11.1 step 2), nothing pending upserts or closes the Release PR (§11.1 step 3)); one plan, one reconciliation, one machine pass (the ADR-0046 lesson carried across the composition — the auto pass never re-plans between the halves and never runs the release executor's separate forge half, whose machine input carries no Release-PR spec); `halyard-action`: the plain `AutoPass` view + `auto_outputs`/`auto_summary` (the pr/release superset — the PR keys ride only when the pass has a Release-PR effect, `released` is the git-side tag phase's honest execution value, the minted URLs by tag, the forge posture, the forecast marker; the crate stays git-free and forge-free); `--dry` forecasts the whole pass offline (I5 — preview writer, pusher, forge); live fails-closed on credentials like the `pr` executor, the §11.5 governor governs the machine's calls; 4 CLI gates (`cli_action.rs`, red→green on record: E0004 non-exhaustive `ActionMode` before any implementation) + bench groups `auto_outputs_40_releases`/`auto_summary_40_releases` (≈38.6 µs, microsecond-scale) + example `auto_forecast` (the PROPAGATE vocabulary); ADR-0047 + arch §12 as-built (the stale ADR-0037 note's `auto\|release\|check`-absent sentence amended — release and check had landed) + README example row + CLI README rows. M2 deferred: the remaining candidates cannot ship fully green here (see the PR body) | The §11.1 step-3 content commit (M4.2 remainder: the plan's EditSet → tree-OID compare → the CAS branch push; `commit_via_api` still has no caller), M5.4 provenance/SLSA (VERIFY first), the M2.6 dhat re-audit, the corpus-wide pnpm differential (no pnpm in the sandbox), the M0.3 measured runs (needs forge API + token) — all unchanged | 2026-11-24; see the session log below |
+| The §12 composite distribution (M5.4 own-artifact slice, ADR-0052) + the GitLab CI component (M7, ADR-0053) | done | (tree left dirty; no commits) | M1: the §12 composite distribution — `action/action.yml` (the §7.1 as-built's declared `action/` path: the five §12 steps — resolve OS/arch, download, verify checksum **and** attestation, cache by version, exec `halyard action`; composite step grammar VERIFIED: `shell`/`if`/`env`/`working-directory`) + `.github/workflows/release.yml` (the producer: the pinned static targets, `actions/attest@v4` with `id-token: write`/`attestations: write` — the M5.4 acceptance's producer half — the `SHA256SUMS` assembly in the grammar's canonical order, `gh release upload`) + the single-sourced grammar `halyard_action::distribution` (the §12 `ACTION_INPUTS` with each input's surface — `--mode`/`--config`/`--dry`, the `GITHUB_TOKEN`+`HALYARD_FORGE_TOKEN`/`HALYARD_APP_*` env pairs, the `halyard publish` executor, the `working-directory` key — `ACTION_MODES`, `ACTION_OUTPUTS`, five pinned `RELEASE_TARGETS` with the `RUNNER_OS`/`RUNNER_ARCH` mapping, the `halyard-<triple>.tar.gz`/`.zip` asset grammar, the `<digest>␣␣<file>` `ChecksumsManifest` parse/render/verify/require_coverage — `sha2` joins the halyard-action layer consciously, layer rule widened) + `E-ACTION-DISTRIBUTION` page + index + the drift gate `cargo run -p xtask -- check-release` (the schema-check discipline over the templates: restricted inputs reader fail-closed on unknown sub-keys, the platform table resolved against the pinned set with a fail-closed `*` arm, the manifest order, the attestation producer/consumer pair; wired into CI as the `templates` job) + the CLI contract test `cli_action_template.rs` (6 gates, red→green on record: E0432/E0433 on the missing module, then the file-absent pins — the §12 line quoted in the test doc) + 9 grammar unit tests + bench `distribution` (manifest build 5×1 MiB, parse/render, verify 1 MiB ≈ 603 µs) + example `distribution_plan` + ADR-0052 + research note `own-artifact-attestation.md` (gh attestation verify + attest@v4 + composite grammar + Get-FileHash VERIFIED quotes; the coreutils-manual fetch timeouts recorded honestly) + arch §7.1/§12/§17 as-built + README/CLI-README rows. M2 (M1 green first): the GitLab CI component (M7's "CI component" row, ADR-0053) — `templates/halyard.yml` (the documented component layout VERIFIED on docs.gitlab.com/ci/components: `spec:`/`inputs` above `---`, `$[[ inputs.* ]]`; the `stage`/`mode`/`dry-run` inputs; the same musl release binary over `alpine:3.20`, the `SHA256SUMS` line verified with `sha256sum -c`; the token riding `HALYARD_FORGE_TOKEN`/`GITHUB_TOKEN`; the attestation verify the GitHub lane's honest decline) + the component half of the drift gate + ADR-0053 + the research note's GitLab section + arch §17 M7 as-built + README/CLI-README rows. Docs drift fixed (milestone-coupled, additive): the init scaffold's "glue lands with its milestone" doc + render line now as-built (ADR-0052 landed it). Micro-debt converted (additive): two zero-caller `pub fn`s deleted — `halyard_core::edit::span_range` (the dead-code scan's only pre-existing hit) and this session's own `latest_download_url` (the discipline catching the grammar's unused half) | The M7 corpus-lane e2e (forge-token-bound, recorded), M5.4's cosign/SBOM rows and the live attested-release run (a real `v*` tag push), the M2.6 dhat re-audit, the M0.3 measured runs, the corpus-wide pnpm differential — all unchanged, all recorded | 2026-11-24; see the session log below |
 
 
 ### 2026-11-16 — §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) (tree left dirty, no commits)
@@ -2921,3 +2922,95 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   the cache warm.
 
 | M7 step 2 Forgejo/Gitea adapter slice (ADR-0050) | partial | (tree left dirty; no commits) | M1: the `halyard-forge-forgejo` crate — the §11.4 `Forge` over the shared Forgejo/Gitea REST v1 surface (research note §1–§8 VERIFIED live against codeberg.org's swagger.v1.json this session; the close shape `EditPullRequestOption.state = "closed"` verified and recorded as research §8): the pull flow (find by `state=open&head=`, confirmed client-side on `head.ref`; create/rewrite; the verified close with the documented `409`→`E-FORGE-CONFLICT` mapping; the vanished-pull race as success), the releases GET-by-tag-first, the issue-comments marker scan (a PR is an issue; no pagination parameters — one walk), `Authorization: token` auth (empty token fail-closed `E-FORGE-AUTH`), `commit_via_api` kept as the documented honest decline (`E-FORGE-UNSUPPORTED` naming `ForgejoRestForge` — the contents API has no atomic multi-file commit; the lane rides `commit_mode = "git"`), the honest-zero `RateInfo` + `429`→`retry-after`, the call log; red→green on record (E0432 on the missing adapter API; then 12 contract tests + the 9-scenario shared conformance matrix green with exactly one `Declined` verdict asserted + the doctest); bench `forge_calls` + example `forge_exchange`; CLI wire-up `ForgeEnv::Forgejo` (origin grammar codeberg.org/gitea.com https/git@/ssh, `FORGEJO_API_URL` base override, `FORGEJO_TOKEN`→`GITEA_TOKEN`→`HALYARD_FORGE_TOKEN` env grammar, App-env mismatch fail-closed, the release forge half via the `ReleaseLane` resolver, doctor's token check names the lane, the foreign-origin decline names three lanes) + the `pr` loopback e2e over a codeberg.org-shaped origin (green: auth header, base derivation, the git-side content half, 3 calls) + xtask layer rule + member guard (21 crates ✓) + ADR-0050 + README/CLI-README/docs-site rows + research §8. Gates at session end: fmt ✓, clippy `--workspace --all-targets --features ci-bundle -D warnings` ✓ (zero warnings), forgejo crate tests 14/14 ✓ + doctest ✓, cli_forge green except one PRE-EXISTING hang confirmed at base by stash (`pr_live_opens_the_release_mr_over_gitlab_loopback` idles on a futex in this sandbox — documented, not silently weakened); the full-workspace test battery could not re-run to completion — the sandbox's 9.9 G disk filled twice mid-link (ld Bus error; `cargo clean` + the repo's own debuginfo-off adaptation recorded in PROGRESS did not leave room for the 20-crate debug build). M2 deferred with inventory: the remaining M7 rows (GitLab CI component, Bitbucket, corpus-lane e2e) cannot ship fully green in this sandbox (no forge tokens, no pnpm, disk ceiling); everything recorded, nothing silently re-scoped | The Bitbucket adapter (M7, VERIFY-first), the GitLab CI component, the corpus-lane e2e, M5.4 (live-CI lane), the M2.6 dhat re-audit, the corpus-wide pnpm differential, M0.3 measured runs — all unchanged; the full test/bench gate battery must re-run on a machine with disk | 2026-11-24; session log below |
+
+### 2026-11-24 — The §12 composite distribution (ADR-0052) + the GitLab CI component (ADR-0053) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `addcd21` (the
+  M7 step-3 docs): fresh stable toolchain 1.100.0, the workspace
+  check compile green with debuginfo off (the sandbox's disk
+  pressure — the same adaptation the bench-profile note records).
+  The reconciliation survey ran plan ↔ code ↔ history first: the
+  Bitbucket session's code commits landed after PROGRESS's last row
+  and completed TWO recorded open items without their own row (the
+  §11.1 step-3 content half — `content_commit_for_plan`/
+  `live_content_commit` and the machine's `content_commit` input —
+  and the M7 step-3 Bitbucket adapter itself; both stale in the
+  next-start lists, both verified present in code and covered by the
+  arch doc's ADR-0051 note — drift reported, not rewritten). The
+  earliest still-missing seam-capable item per plan order is M5.4's
+  own-artifact slice (the §12 composite distribution; `find . -name
+  action.yml` empty, `.github/workflows/` carrying only ci+nightly,
+  zero attestation/cosign/SBOM references; the npm-provenance half
+  already shipped as ADR-0033) — the §12-auto session's own next-start
+  item 2. M0.3's measured runs (networked, pending rows) and the M2.6
+  dhat re-audit are not seams; `--since` has no milestone-table row;
+  the M7 corpus-lane e2e is forge-token-bound. Docs drift found:
+  PROGRESS has no M7 step-3 row (the Bitbucket session's); the init
+  scaffold's "glue lands with its milestone" claims (doc + human
+  render) were satisfied by nothing until this session. Feature
+  surface unchanged: `miri`/`loom` machine-enforced exclusive, no
+  bench requires nightly, zero `#[allow]` anywhere.
+- **M1 implemented (no stubs), one full red→green cycle.** The red
+  was the missing seam itself (E0432/E0433 on
+  `halyard_action::distribution` + the file-absent pins in the CLI
+  contract test, captured before any implementation; the plan line
+  the first test pins is §12's "Distribution" paragraph, quoted in
+  the test doc). The green landed ADR-0052: one grammar, three
+  consumers — `halyard_action::distribution` (the §12 inputs with
+  their surfaces, the modes, the output keys, five pinned targets,
+  the asset names, the checksum manifest) is the single source the
+  composite action template, the release pipeline and the drift gate
+  all pin to; the templates stay hand-written YAML and the
+  restricted reader refuses any shape it cannot pin (the §19
+  decision-2 discipline — no YAML dependency). `E-ACTION-DISTRIBUTION`
+  joins the taxonomy (page + index). The drift gate is
+  `cargo run -p xtask -- check-release` (the schema-check
+  discipline; xtask is the §7.1-declared owner of "release of
+  halyard itself"), wired into CI as the `templates` job.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the gate's own refusal (`cannot read templates/halyard.yml`);
+  the green landed ADR-0053: the M7 row's GitLab CI component on the
+  documented component layout (VERIFIED quotes in the research
+  note's GitLab section), consuming the same release distribution
+  with the checksum verify, the same five-mode vocabulary, and the
+  attestation verify recorded as the GitHub lane's honest decline.
+- **Tests/bench/example totals.** 6 CLI contract gates
+  (`cli_action_template.rs`) + 9 grammar unit tests (asset names,
+  runner resolution hit/miss, manifest round-trip, the five refusal
+  shapes, coverage, the §12 input-table pin, the template reader) +
+  the xtask gate test; bench groups `manifest_from_files_5_targets_mib`,
+  `manifest_parse_render`, `manifest_verify_one_asset_mib` (≈603 µs —
+  SHA-256 throughput over 1 MiB); example `distribution_plan` (the
+  resolve → manifest → verify/tamper → coverage contract, offline).
+- **Docs.** ADR-0052 + ADR-0053; research note
+  `own-artifact-attestation.md` (gh attestation verify, attest@v4 +
+  permissions, the composite step grammar, Get-FileHash — VERIFIED
+  quotes; the coreutils-manual and Expand-Archive rows recorded
+  honestly as not-fetched); `E-ACTION-DISTRIBUTION` page + index
+  row; arch §7.1/§12/§17 as-built amendments; README feature bullet
+  + example row; CLI README (the composite action + the component
+  sections); PROGRESS row. No new crate; the layer change is the
+  conscious `sha2` edge on halyard-action (documented in the rule)
+  and xtask's workspace-wide `*` rule already covering
+  halyard-action.
+- **Micro-debt converted (additive, not a milestone substitute):**
+  two zero-caller `pub fn`s deleted — `halyard_core::edit::span_range`
+  (the dead-code scan's only pre-existing hit; the now-unused
+  `Span` import removed with it) and this session's own
+  `latest_download_url` (the dead-code deny catching the grammar's
+  unused half at green). Milestone-coupled drift fixed: the init
+  scaffold's `halyard/action` "lands with its milestone" doc
+  comment and the init human-render line now as-built (the glue
+  landed).
+- **Honest state at cut-off.** The distribution's live half — a real
+  `v*` tag push producing attested assets and a consumer running
+  `gh attestation verify` — is the recorded off-sandbox half (the
+  M5.3 live-CI lane discipline); the in-tree producer/consumer/gate
+  contract ships green. M5.4's cosign/SBOM rows stay open. The M7
+  corpus-lane e2e stays forge-token-bound (recorded, unchanged).
+  Bench numbers are the sandbox's; the budgets stay shape-bound to
+  the xtask fixtures. Tree left dirty (no commits made).
+- **Next session start point.** (1) the M5.4 remainder: cosign
+  signing + the SBOM artifact for the release pipeline (VERIFY the
+  cosign keyless grammar first), (2) the M2.6 dhat re-audit with the
+  cache warm, (3) the M0.3 measured runs on a networked machine.
