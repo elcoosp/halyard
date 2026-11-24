@@ -1176,3 +1176,217 @@ fn pr_live_opens_the_release_pull_over_forgejo_loopback() -> Result<(), BoxError
     assert_release_branch_carries_the_content(&fx, &branch)?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §11.1 step-3 content half on the live §12 `auto` mode (the plan's
+// acceptance criterion, docs/HALYARD_ARCHITECTURE.md §11.1: "On every
+// push to the base branch the same command (`halyard release --auto`)
+// runs" — step 3: "apply EditSet in memory → build tree → compare tree
+// OID with remote release branch tip (`ls-remote`, 0 REST); if equal:
+// update PR body only if plan_hash differs; else commit & `push
+// --force-with-lease`"). The auto pass now runs the same content half
+// the `pr` executor's loopback e2e pins: the git-side CAS push lands
+// the plan's edits on the release branch before the machine's PR half.
+// Written first (red: the auto pass never pushed content), implemented
+// second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn auto_live_pushes_the_release_branch_content_over_forgejo_loopback() -> Result<(), BoxError> {
+    let (fx, branch) = shape_post_merge_forgejo_repo("auto-live-forgejo")?;
+    // The scripted exchange, in the §11.1 order over the Forgejo
+    // shapes: the machine's find, the upsert's own lookup and the
+    // create — the content rode the git-side CAS push (the pass's own
+    // git half, §11.1 step 3 under `commit_mode = "git"`), so the forge
+    // sees only the PR half.
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (201, forgejo_pull_body(9, &branch)),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["action", "--mode", "auto", "--format", "json"],
+        &[
+            ("FORGEJO_API_URL", &api),
+            ("FORGEJO_TOKEN", "forgejo-smoke"),
+            ("GITHUB_TOKEN", ""),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    // The §12 auto document: the pass executed (dry=false), the prepare
+    // phase owned it (propagated=false — nothing pending) and the PR
+    // keys ride the outputs map.
+    assert_eq!(
+        value.get("mode").and_then(serde_json::Value::as_str),
+        Some("auto")
+    );
+    assert_eq!(value.get("dry"), Some(&serde_json::json!(false)));
+    assert_eq!(value.get("propagated"), Some(&serde_json::json!(false)));
+    let outputs = value
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("the document carries the outputs map")?;
+    assert!(
+        outputs.get("pr_number").is_some(),
+        "the Release pull opened over the Forgejo adapter: {out}"
+    );
+    // The content half's verdict: the pass pushed the plan's edits
+    // before the machine ran, so the machine sees the branch already
+    // carrying the content tree (I1 — no content call spent). The
+    // content block rides the JSON document (the §12 observability
+    // surface), naming the tree the branch carries.
+    let content = value
+        .get("content")
+        .ok_or("the JSON carries the content block")?;
+    assert_eq!(
+        content.get("type").and_then(serde_json::Value::as_str),
+        Some("content_matched"),
+        "{out}"
+    );
+    assert_eq!(
+        forge.received().len(),
+        3,
+        "find + upsert-lookup + create — the content rode git: {received:?}",
+        received = forge.received()
+    );
+    // The remote release branch carries the content commit: its tree is
+    // the content tree the plan's edits produce (the §11.1 step-3 truth
+    // pin, now on the auto command).
+    assert_release_branch_carries_the_content(&fx, &branch)?;
+    Ok(())
+}
+
+/// The Bitbucket lane's variant of the offline probe rewrite (the
+/// same `insteadOf` rewrite over the bitbucket.org-shaped origin URL).
+fn bitbucket_probe_offline_origin(fx: &mut GitFixture) -> Result<(), BoxError> {
+    offline_origin_rewrite(fx, "https://bitbucket.org/octo/halyard-demo.git")
+}
+
+/// A Bitbucket-shaped pull body the M7 step-3 adapter's upsert parses
+/// (research §2: `id`, `title`, `description`, `links.html.href`,
+/// `source.branch.name`).
+fn bitbucket_pull_body(number: u64, branch: &str) -> String {
+    serde_json::json!({
+        "id": number,
+        "title": "chore: release v0.1.2",
+        "description": "## 🚀 Release plan",
+        "state": "open",
+        "links": { "html": { "href": format!("https://bitbucket.org/octo/halyard-demo/pullrequests/{number}") } },
+        "source": { "branch": { "name": branch } },
+    })
+    .to_string()
+}
+
+/// Live `pr` over the Bitbucket lane (M7 step 3, ADR-0051): the same
+/// machine pass the other lanes' loopback tests pin, over a
+/// bitbucket.org-shaped origin — the fake forge saw the
+/// `Authorization: Bearer` auth and the pull find + create, and the
+/// report names the opened pull. The content rides the git half
+/// (`commit_mode = "git"` — the lane's documented mode: the commits
+/// resource does not support new commit creation, research §5), so the
+/// forge sees only the PR half. `BITBUCKET_API_URL` keeps the exchange
+/// on the loopback; `insteadOf` keeps the git-side probe offline.
+#[test]
+fn pr_live_opens_the_release_pull_over_bitbucket_loopback() -> Result<(), BoxError> {
+    let mut fx = build_workspace("pr-live-bitbucket")?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "Cargo.toml".to_owned(),
+            "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+        )],
+        "chore(main): release v0.1.1",
+    ))?;
+    fx.tag_annotated("v0.1.1", "solo v0.1.1")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: extend the crate surface",
+    ))?;
+    fx.write("halyard.toml", "[forge]\ncommit_mode = \"git\"\n")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://bitbucket.org/octo/halyard-demo.git",
+    ])?;
+    bitbucket_probe_offline_origin(&mut fx)?;
+    let branch = forecast_release_branch(&fx)?;
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (201, bitbucket_pull_body(9, &branch)),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--format", "json"],
+        &[
+            ("BITBUCKET_API_URL", &api),
+            ("BITBUCKET_TOKEN", "bitbucket-smoke"),
+            ("GITHUB_TOKEN", ""),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    assert_eq!(
+        value.get("mode").and_then(serde_json::Value::as_str),
+        Some("live")
+    );
+    assert_eq!(
+        value.get("repo").and_then(serde_json::Value::as_str),
+        Some("octo/halyard-demo"),
+        "the Bitbucket lane reports the workspace/slug as the repo coordinates: {out}"
+    );
+    assert_eq!(
+        forge.received().len(),
+        3,
+        "find + upsert-lookup + create — the content rode git: {received:?}",
+        received = forge.received()
+    );
+    for request in forge.received() {
+        assert_eq!(
+            field(&request, "authorization"),
+            "Bearer bitbucket-smoke",
+            "the OAuth 2.0 Bearer auth rides every call (research §1): {request}"
+        );
+    }
+    let received = forge.received();
+    let create = received.last().expect("the pull create");
+    assert_eq!(field(create, "method"), "POST");
+    assert!(
+        field(create, "path").ends_with("/repositories/octo/halyard-demo/pullrequests"),
+        "the create posts to the repository's pullrequests: {}",
+        field(create, "path")
+    );
+    let create_body: serde_json::Value = serde_json::from_str(&field(create, "body"))?;
+    let expected_base = branch
+        .strip_prefix("halyard/release/")
+        .filter(|base| !base.is_empty())
+        .ok_or("the forecast branch is the §11.2 shape")?;
+    assert_eq!(
+        create_body
+            .get("destination")
+            .and_then(|d| d.get("branch"))
+            .and_then(|b| b.get("name"))
+            .and_then(serde_json::Value::as_str),
+        Some(expected_base),
+        "the §11.2 inverse mapping derives the pull's destination from the release branch"
+    );
+    assert_eq!(
+        create_body
+            .get("source")
+            .and_then(|s| s.get("branch"))
+            .and_then(|b| b.get("name"))
+            .and_then(serde_json::Value::as_str),
+        Some(branch.as_str()),
+        "the pull rides the release branch"
+    );
+    assert_release_branch_carries_the_content(&fx, &branch)?;
+    Ok(())
+}
