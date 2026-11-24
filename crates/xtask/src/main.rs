@@ -18,11 +18,13 @@
 //! | `replay` | History-replay ("time machine") over the corpus (M2.7) |
 //! | `bench-public` | Reproducible public benchmark runner (§14, M6.5) |
 //! | `pgo` | PGO prototype steps for the release pipeline (§14.2) |
+//! | `check-docs-site` | Docs-site structure + link gate (M4.8, ADR-0048) |
 
 mod bench;
 mod competitors;
 mod corpus;
 mod discover_diff;
+mod docs_site;
 mod genrepo;
 mod gitdiff;
 mod layers;
@@ -63,6 +65,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "replay" => replay::replay(rest),
         "bench-public" => bench::bench_public(rest),
         "pgo" => bench::pgo(rest),
+        "check-docs-site" => docs_site::check_docs_site(),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -123,6 +126,7 @@ SUBCOMMANDS:
     replay [--corpus DIR] [--format json]
                                       time-machine replay harness (M2.7)
     bench-public [--dry]              measure the §14.1 scenario budgets (M2.6)
-    pgo                               PGO generate/use prototype (M2.6b)"
+    pgo                               PGO generate/use prototype (M2.6b)
+    check-docs-site                   docs-site structure + link gate (M4.8)"
     );
 }
