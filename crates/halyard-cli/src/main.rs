@@ -330,9 +330,12 @@ enum Command {
     /// the env files verbatim; outside, the preview call log prints
     /// them (nothing is written but the plan file). The `release` mode
     /// (ADR-0046) renders the release executor's pass view — the §11.1
-    /// tag phase, the push and the forge half. The remaining §12 mode
-    /// (`auto`) lands with its milestone and is absent rather than
-    /// stubbed.
+    /// tag phase, the push and the forge half. The `auto` mode
+    /// (ADR-0047) is the §11.1 stateless reconciliation as one mode —
+    /// the composition policy over the two shipped executors: the
+    /// release executor's git-side tag effects ride first, the machine
+    /// pass's own PROPAGATE rule selects the half (pending releases
+    /// gate the Release PR, §11.1 step 2).
     Action {
         /// The §12 behavior mode.
         #[arg(long, value_enum, default_value = "plan")]
@@ -579,29 +582,33 @@ enum CiSelector {
 }
 
 impl CiSelector {
-    /// The adapter-lookup name (the value enum's spelling).
-    fn system_name(self) -> &'static str {
+    /// The adapter: the closed core registry as a total caller's match —
+    /// the exhaustive match over the value enum cannot miss, so no
+    /// unknown-system path exists (the string-keyed
+    /// `ci_selector_adapter` stays the registry's own documented lookup;
+    /// the CLI never routes a panic surface through it).
+    fn adapter(self) -> &'static dyn halyard_core::ci_selector::CiSelectorAdapter {
         match self {
-            Self::Turbo => "turbo",
-            Self::Nx => "nx",
-            Self::Bazel => "bazel",
-            Self::Gha => "gha",
-            Self::Gitlab => "gitlab",
-            Self::Azure => "azure",
-            Self::Teamcity => "teamcity",
-            Self::Circleci => "circleci",
-            Self::Buildkite => "buildkite",
-            Self::Jenkins => "jenkins",
-            Self::Bitbucket => "bitbucket",
-            Self::Drone => "drone",
+            Self::Turbo => &halyard_core::ci_selector::TurboSelector,
+            Self::Nx => &halyard_core::ci_selector::NxSelector,
+            Self::Bazel => &halyard_core::ci_selector::BazelSelector,
+            Self::Gha => &halyard_core::ci_selector::GhaSelector,
+            Self::Gitlab => &halyard_core::ci_selector::GitlabSelector,
+            Self::Azure => &halyard_core::ci_selector::AzureSelector,
+            Self::Teamcity => &halyard_core::ci_selector::TeamcitySelector,
+            Self::Circleci => &halyard_core::ci_selector::CircleciSelector,
+            Self::Buildkite => &halyard_core::ci_selector::BuildkiteSelector,
+            Self::Jenkins => &halyard_core::ci_selector::JenkinsSelector,
+            Self::Bitbucket => &halyard_core::ci_selector::BitbucketSelector,
+            Self::Drone => &halyard_core::ci_selector::DroneSelector,
         }
     }
 }
 
 /// The §12 behavior modes (§12 inputs: `auto|pr|release|plan|check`).
 /// `plan` lands with ADR-0037, `pr` with ADR-0043, `check` with
-/// ADR-0044, `release` with ADR-0046; the remaining §12 mode lands
-/// with its milestone and is absent rather than stubbed.
+/// ADR-0044, `release` with ADR-0046, `auto` with ADR-0047 — the §12
+/// input list is complete, no mode stubbed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum ActionMode {
     /// The offline forecast: plan → the §12 outputs + job summary.
@@ -616,6 +623,13 @@ enum ActionMode {
     /// (git side), the §11.2 push and the forge half → the §12 outputs
     /// + job summary (ADR-0046). `--dry` forecasts offline (I5).
     Release,
+    /// The §11.1 stateless reconciliation as one §12 mode (ADR-0047):
+    /// the composition policy over the two shipped executors — the
+    /// release executor's git-side tag effects ride first, the §11.1
+    /// machine pass then owns the half selection through its own
+    /// PROPAGATE rule (pending releases gate the prepare phase, §11.1
+    /// step 2). `--dry` forecasts the whole pass offline (I5).
+    Auto,
 }
 
 /// `schema` targets (§16.2; the frozen documents live under `schemas/`).
@@ -1984,6 +1998,150 @@ fn run_release_pass(
     })
 }
 
+/// The §12 `auto` mode's outcome (ADR-0047): the composed §11.1 pass —
+/// the release executor's git-side tag effects and the machine report
+/// whose own PROPAGATE rule selected the half. The lean §12 view rides
+/// these fields; the git-side reports (tag rows, provenance, push) are
+/// consumed on the way in — `created` is what the outputs render.
+struct AutoPassOutcome {
+    /// The plan the pass renders (the §12 outputs' source).
+    plan: halyard_core::Plan,
+    /// The §11.1 machine's report — `propagated` is the half selection.
+    machine: halyard_forge::MachineReport,
+    /// The tags the git-side tag phase created (would create, in the
+    /// forecast).
+    created: Vec<String>,
+    /// The forge slug (live only — the machine pass's repo).
+    slug: Option<String>,
+    /// The posture (dry forecast vs live effect).
+    dry: bool,
+    /// The walk's own degraded marker (§12's annotation rides it).
+    degraded: bool,
+}
+
+/// Runs the composed §11.1 pass behind `action --mode auto` (ADR-0047):
+/// one plan, one reconciliation, then §11.1's own order — the release
+/// executor's git-side tag effects first (an empty pending is an honest
+/// no-op: zero directives, zero writes), the §11.1 machine pass second
+/// with both halves' inputs (`pending_releases` and the Release-PR
+/// spec), so the half selection is the machine's own PROPAGATE rule and
+/// never a caller guess. The composition policy is §11.1's, not a new
+/// one: "TAG PHASE (always first) … PROPAGATE to step 3 only if nothing
+/// pending".
+fn run_auto_pass(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    dry: bool,
+) -> Result<AutoPassOutcome, CliError> {
+    // One plan, one reconciliation feeds every half (the ADR-0046
+    // lesson): the tag phase, the machine specs and the §12 outputs
+    // cannot disagree.
+    let context = context(cli, profiler)?;
+    let plan = plan_from_context(&context, profiler)?;
+    let plan_config: PlanConfig = context.config.plan_config();
+    let (states, pending) = reconcile_snapshot(&context, &plan_config, profiler);
+    // The §11.1 step-2 git effects, always first. A repo without
+    // commits refuses before any effect (the release executor's rule —
+    // the reconciliation cannot snapshot a HEAD that does not exist).
+    let Some(head) = context.history.head_oid() else {
+        return Err(CliError::new(
+            "E-GIT-HEAD",
+            "the repository has no commits; make an initial commit before running a release",
+        ));
+    };
+    let (tag_report, _provenance) = release_tag_phase(&context, &pending, &head, dry, profiler)?;
+    let created: Vec<String> = tag_report
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            halyard_git::tag::TagPhaseRow::Applied {
+                tag,
+                outcome: halyard_git::tag::TagOutcome::Created { .. },
+            } => Some(tag.clone()),
+            _ => None,
+        })
+        .collect();
+    let _push = release_push_phase(dry, false, &created, profiler)?;
+    // The §11.2 release branch and the §11.3 body the prepare half
+    // would upsert — the same shapes the `pr` executor feeds the
+    // machine (an empty plan sends the machine on the close probe).
+    let branch = halyard_forge::BranchName::new(&format!("halyard/release/{}", plan.base_branch))
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let body = if plan.releases.is_empty() {
+        None
+    } else {
+        Some(
+            halyard_changelog::render_release_body(&plan)
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?,
+        )
+    };
+    let remote_url = remote_origin_url()?;
+    let pending_specs: Vec<halyard_forge::ReleaseSpec> = pending_specs(
+        &pending,
+        &plan,
+        &states,
+        &context.discovery.workspace,
+        remote_url.as_deref(),
+    )?;
+    // The prepare-phase input: the Release PR the plan would upsert —
+    // the machine gates it behind the tag phase (PROPAGATE, §11.1
+    // step 2) when anything is pending.
+    let title = release_pr_title(&plan);
+    let release_pr = body.map(|body| halyard_forge::PrSpec {
+        branch: branch.clone(),
+        title,
+        body,
+    });
+    // The adapter the posture selects: the preview adapter forecasts
+    // both halves offline; the live mode builds the GitHub REST adapter
+    // from the environment (fail-closed on missing credentials and
+    // foreign forges — the `pr` executor's rule).
+    let (forge, slug): (Box<dyn halyard_forge::Forge>, Option<String>) = if dry {
+        (Box::new(halyard_forge::PreviewForge::new()), None)
+    } else {
+        let env = forge_credentials()?;
+        let slug = env.endpoint.slug();
+        let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
+        (forge, Some(slug))
+    };
+    // The live run rides the §11.5 call governor (M5.5, ADR-0015); the
+    // dry run stays ungoverned — a forecast spends no calls (I5).
+    let policy = if dry {
+        None
+    } else {
+        Some(governor_policy_from_env()?)
+    };
+    let governor = policy.map(|policy| {
+        let (clock, sleeper) = halyard_forge::governor::system_time();
+        halyard_forge::Governor::new(forge.as_ref(), policy, clock, sleeper)
+    });
+    let mode_label = if dry { "auto-dry" } else { "auto-live" };
+    let machine = profiler
+        .span(mode_label, || {
+            let forged: &dyn halyard_forge::Forge = governor
+                .as_ref()
+                .map_or_else(|| forge.as_ref(), |governor| governor);
+            halyard_forge::run_release_machine(
+                forged,
+                &halyard_forge::MachineInput {
+                    branch: branch.clone(),
+                    pending_releases: pending_specs.clone(),
+                    release_pr,
+                },
+            )
+        })
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let degraded = context.stats.degraded;
+    Ok(AutoPassOutcome {
+        plan,
+        machine,
+        created,
+        slug,
+        dry,
+        degraded,
+    })
+}
+
 /// The live release's forge half (§11.1 step 2, M4.1b): the pending
 /// releases ride the §11.1 machine's tag phase over the GitHub REST
 /// adapter — GET-by-tag-first creation with the notes-pipeline payloads.
@@ -2720,8 +2878,7 @@ fn cmd_affected(
             })
             .collect();
         affected.sort_by(|a, b| a.name.cmp(&b.name));
-        let adapter = halyard_core::ci_selector::ci_selector_adapter(ci.system_name())
-            .unwrap_or_else(|| unreachable!("the value enum only names known adapters"));
+        let adapter = ci.adapter();
         for line in adapter.render(&changed, &affected) {
             println!("{line}");
         }
@@ -2790,6 +2947,7 @@ fn cmd_action(
         ActionMode::Pr => cmd_action_pr(cli, profiler, dry, plan_out),
         ActionMode::Check => cmd_action_check(cli, profiler, pr_title, plan_out),
         ActionMode::Release => cmd_action_release(cli, profiler, dry, plan_out),
+        ActionMode::Auto => cmd_action_auto(cli, profiler, dry, plan_out),
     }
 }
 
@@ -2978,6 +3136,112 @@ fn cmd_action_release(
     render_action_run(
         cli,
         "release",
+        &outputs,
+        &summary,
+        &plan_path,
+        outcome.degraded,
+        &extras,
+    )
+}
+
+/// The §12 `auto` mode (ADR-0047): the §11.1 stateless reconciliation
+/// through the action-output seam — the composition policy over the two
+/// shipped executors. The release executor's git-side tag effects ride
+/// first, the §11.1 machine pass then owns the half selection through
+/// its own PROPAGATE rule (pending releases gate the prepare phase, the
+/// Release PR lands on the next pass, §11.1 step 2). `--dry` forecasts
+/// the whole pass offline (I5 — the preview writer, pusher and forge);
+/// live runs fail-closed on credentials exactly like `halyard pr`. The
+/// outputs are the pr/release superset: the PR keys ride only when the
+/// prepare phase ran, `released` is the git-side tag phase's honest
+/// execution value, `releases_json` fills the URLs the machine minted.
+fn cmd_action_auto(
+    cli: &Cli,
+    profiler: &mut Profiler,
+    dry: bool,
+    plan_out: Option<&std::path::Path>,
+) -> Result<(), CliError> {
+    let outcome = run_auto_pass(cli, profiler, dry)?;
+    let plan_path = plan_out.map_or_else(|| PathBuf::from("halyard-plan.json"), PathBuf::from);
+    write_plan_file(&outcome.plan, &plan_path)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // The plain §12 view of the composed pass: the machine's half
+    // selection, the git-side rows and the minted URLs.
+    let pr_effect = outcome
+        .machine
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            halyard_forge::MachineEffect::PrOpened { number, url } => Some(PrEffect::Opened {
+                number: *number,
+                url: url.clone(),
+            }),
+            halyard_forge::MachineEffect::PrUpdated { number, url } => Some(PrEffect::Updated {
+                number: *number,
+                url: url.clone(),
+            }),
+            halyard_forge::MachineEffect::PrUnchanged { number, url } => {
+                Some(PrEffect::Unchanged {
+                    number: *number,
+                    url: url.clone(),
+                })
+            }
+            halyard_forge::MachineEffect::PrClosed { number, url } => Some(PrEffect::Closed {
+                number: *number,
+                url: url.clone(),
+            }),
+            _ => None,
+        });
+    let release_urls: std::collections::BTreeMap<String, String> = outcome
+        .machine
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            halyard_forge::MachineEffect::ReleaseCreated { tag, url } => {
+                Some((tag.clone(), url.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let minted = outcome
+        .machine
+        .effects
+        .iter()
+        .filter(|effect| matches!(effect, halyard_forge::MachineEffect::ReleaseCreated { .. }))
+        .count();
+    let forge = if outcome.dry {
+        ForgePosture::Skipped {
+            reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
+        }
+    } else {
+        // The live adapter is built from the resolved credentials before
+        // the machine runs, so the slug is present on every live pass.
+        let repo = outcome.slug.unwrap_or_else(|| "unknown/unknown".to_owned());
+        ForgePosture::Ran {
+            repo,
+            releases: minted,
+        }
+    };
+    let pass = halyard_action::AutoPass {
+        released: !outcome.dry && !outcome.created.is_empty(),
+        propagated: outcome.machine.propagated,
+        forecast: outcome.dry,
+        created_tags: outcome.created,
+        pr_effect,
+        release_urls,
+        forge,
+    };
+    let outputs = halyard_action::auto_outputs(&outcome.plan, &plan_path, &pass)
+        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    let summary = halyard_action::auto_summary(&outcome.plan, &pass);
+    let extras = serde_json::json!({
+        "dry": outcome.dry,
+        "propagated": outcome.machine.propagated,
+        "created_tags": pass.created_tags,
+    });
+    render_action_run(
+        cli,
+        "auto",
         &outputs,
         &summary,
         &plan_path,
