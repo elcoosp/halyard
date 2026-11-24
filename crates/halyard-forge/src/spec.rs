@@ -101,6 +101,63 @@ pub struct ApiFile {
     pub content: Vec<u8>,
 }
 
+/// The caller-applied EditSet, ready for the prepare phase's content
+/// commit (§11.1 step 3): the caller applied the plan's edits **in
+/// memory**, built the content tree and probed the remote release branch
+/// (`ls-remote`, git-side — 0 REST). The machine owns the rest of the
+/// step: it compares the probe with the applied tree, commits through
+/// [`Forge::commit_via_api`](crate::Forge::commit_via_api) when they
+/// differ and skips the commit when they match (I1 — the branch already
+/// carries the content).
+///
+/// The machine never edits: the payloads are the full file contents the
+/// applied EditSet produced, and the tree id is the git tree hash the
+/// caller computed over them (deterministic — the idempotence key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentCommit {
+    /// Commit message (Conventional-Commit style; we dogfood it, §0.7).
+    pub message: String,
+    /// The edited files' full contents (the applied EditSet, §11.1 "apply
+    /// EditSet in memory").
+    pub files: Vec<ApiFile>,
+    /// The git tree OID of the applied content (the caller hashed the
+    /// built tree; §11.1 "build tree"). The compare key against
+    /// `remote_tree_oid`.
+    pub tree_oid: halyard_core::reason::Oid,
+    /// The remote release branch tip's tree OID the caller probed (§11.1
+    /// "compare tree OID with remote release branch tip"). `None` = the
+    /// branch does not exist remotely yet (the first prepare pass).
+    pub remote_tree_oid: Option<halyard_core::reason::Oid>,
+}
+
+impl ContentCommit {
+    /// Fail-closed spec validation, shared by every consumer: a
+    /// non-empty message and a non-empty payload list. `E-FORGE-REQUEST`
+    /// names the violated rule — an invalid commit never reaches a forge
+    /// call (an empty payload list would silently commit a tree that
+    /// carries nothing).
+    ///
+    /// # Errors
+    ///
+    /// [`ForgeError::Request`] for each rule listed above.
+    pub fn validate(&self) -> Result<(), ForgeError> {
+        if self.message.is_empty() {
+            return Err(ForgeError::request(
+                "content commit message is empty — render the plan's Conventional-Commit \
+                 release title before handing the commit to the machine",
+            ));
+        }
+        if self.files.is_empty() {
+            return Err(ForgeError::request(
+                "content commit carries no files — a plan with releases edits at least one \
+                 file; the caller passes no ContentCommit for an empty plan, never an empty \
+                 payload list",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The input of [`Forge::commit_via_api`](crate::Forge::commit_via_api):
 /// a commit created through the forge's API so the forge signs it
 /// ("Verified", §11.5).
