@@ -15,13 +15,16 @@ use halyard_forge::{
 /// A 40-hex tree fixture (deterministic; only equality matters to the
 /// machine — the OID is opaque data at this seam).
 fn tree_oid(seed: u8) -> Oid {
-    let digits: String = std::iter::repeat_n(format!("{seed:02x}"), 20)
-        .collect::<Vec<_>>()
-        .join("");
-    Oid::from_hex(digits.as_bytes()).expect("hex fixture is 40 digits")
+    use std::fmt::Write as _;
+    let mut digits = String::with_capacity(40);
+    for _ in 0..20 {
+        write!(digits, "{seed:02x}")
+            .unwrap_or_else(|e| unreachable!("string writes never fail: {e}"));
+    }
+    Oid::from_hex(digits.as_bytes()).unwrap_or_else(|| unreachable!("hex fixture is 40 digits"))
 }
 
-/// A content payload of `count` files (the applied EditSet's shape).
+/// A content payload of `count` files (the applied `EditSet`'s shape).
 fn payload(count: usize, seed: u8) -> Vec<ApiFile> {
     (0..count)
         .map(|index| ApiFile {
@@ -33,11 +36,12 @@ fn payload(count: usize, seed: u8) -> Vec<ApiFile> {
 }
 
 fn divergent_input(count: usize) -> MachineInput {
+    let branch = main_branch();
     MachineInput {
-        branch: BranchName::new("halyard/release/main").expect("branch fixture is valid"),
+        branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(PrSpec {
-            branch: BranchName::new("halyard/release/main").expect("branch fixture is valid"),
+            branch,
             title: "chore: release v0.1.0".to_owned(),
             body: "## 🚀 Release plan".to_owned(),
         }),
@@ -51,11 +55,12 @@ fn divergent_input(count: usize) -> MachineInput {
 }
 
 fn matched_input(count: usize) -> MachineInput {
+    let branch = main_branch();
     MachineInput {
-        branch: BranchName::new("halyard/release/main").expect("branch fixture is valid"),
+        branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(PrSpec {
-            branch: BranchName::new("halyard/release/main").expect("branch fixture is valid"),
+            branch,
             title: "chore: release v0.1.0".to_owned(),
             body: "## 🚀 Release plan".to_owned(),
         }),
@@ -70,7 +75,7 @@ fn matched_input(count: usize) -> MachineInput {
 
 fn propagated_input() -> MachineInput {
     MachineInput {
-        branch: BranchName::new("halyard/release/main").expect("branch fixture is valid"),
+        branch: main_branch(),
         pending_releases: vec![ReleaseSpec {
             tag: "pkg-0-v0.1.0".to_owned(),
             notes: "## Features".to_owned(),
@@ -78,6 +83,11 @@ fn propagated_input() -> MachineInput {
         release_pr: None,
         content_commit: None,
     }
+}
+
+/// Branch fixture shared by the bench groups.
+fn main_branch() -> BranchName {
+    BranchName::new("halyard/release/main").unwrap_or_else(|e| unreachable!("valid branch: {e}"))
 }
 
 fn bench_content_commit(c: &mut Criterion) {
@@ -90,8 +100,9 @@ fn bench_content_commit(c: &mut Criterion) {
                 b.iter_batched(
                     || (MemoryForge::new(), divergent_input(*count)),
                     |(forge, input)| {
-                        let _ = run_release_machine(&forge, &input)
-                            .expect("the reference forge commits");
+                        let report = run_release_machine(&forge, &input)
+                            .unwrap_or_else(|e| unreachable!("the reference forge commits: {e}"));
+                        let _ = report;
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -104,8 +115,10 @@ fn bench_content_commit(c: &mut Criterion) {
                 b.iter_batched(
                     || (MemoryForge::new(), matched_input(*count)),
                     |(forge, input)| {
-                        let _ = run_release_machine(&forge, &input)
-                            .expect("the matched pass is a no-op commit");
+                        let report = run_release_machine(&forge, &input).unwrap_or_else(|e| {
+                            unreachable!("the matched pass is a no-op commit: {e}")
+                        });
+                        let _ = report;
                     },
                     criterion::BatchSize::SmallInput,
                 );
@@ -116,7 +129,9 @@ fn bench_content_commit(c: &mut Criterion) {
         b.iter_batched(
             || (MemoryForge::new(), propagated_input()),
             |(forge, input)| {
-                let _ = run_release_machine(&forge, &input).expect("the tag phase owns the pass");
+                let report = run_release_machine(&forge, &input)
+                    .unwrap_or_else(|e| unreachable!("the tag phase owns the pass: {e}"));
+                let _ = report;
             },
             criterion::BatchSize::SmallInput,
         );
