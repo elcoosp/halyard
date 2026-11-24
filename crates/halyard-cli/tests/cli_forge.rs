@@ -93,6 +93,7 @@ impl FakeForge {
         let path = parts.next().unwrap_or_default().to_owned();
         let mut content_length = 0_usize;
         let mut authorization = String::new();
+        let mut private_token = String::new();
         let mut accept = String::new();
         let mut api_version = String::new();
         let mut user_agent = String::new();
@@ -105,6 +106,7 @@ impl FakeForge {
             match name.as_str() {
                 "content-length" => content_length = value.parse().unwrap_or(0),
                 "authorization" => authorization = value,
+                "private-token" => private_token = value,
                 "accept" => accept = value,
                 "x-github-api-version" => api_version = value,
                 "user-agent" => user_agent = value,
@@ -134,6 +136,7 @@ impl FakeForge {
                 "path": path,
                 "body": body,
                 "authorization": authorization,
+                "private_token": private_token,
                 "accept": accept,
                 "api_version": api_version,
                 "user_agent": user_agent,
@@ -230,6 +233,21 @@ fn pr_body(number: u64, branch: &str) -> String {
         "body": "## 🚀 Release plan",
         "html_url": format!("https://github.com/octo/halyard-demo/pull/{number}"),
         "head": { "ref": branch },
+    })
+    .to_string()
+}
+
+/// The GitLab-shaped MR body the M7 adapter's upsert parses (research
+/// §3: `iid`, `source_branch`, `web_url`; the docs' field names).
+fn mr_body(number: u64, branch: &str) -> String {
+    serde_json::json!({
+        "iid": number,
+        "title": "chore: release v0.1.1",
+        "description": "## 🚀 Release plan",
+        "state": "opened",
+        "source_branch": branch,
+        "target_branch": "main",
+        "web_url": format!("https://gitlab.com/octo/halyard-demo/-/merge_requests/{number}"),
     })
     .to_string()
 }
@@ -390,10 +408,12 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
         )],
         "feat: extend the crate surface",
     ))?;
-    // The §11.5 commit mode: the API path (the forge signs the content
-    // commit) — the git-side CAS push is the M4.2 remainder's shell
-    // half, so the live pass rides `commit_via_api`.
-    fx.write("halyard.toml", "[forge]\ncommit_mode = \"api\"\n")?;
+    // The §11.5 commit mode: the git half — the shell stages the plan's
+    // edits, commits on the base snapshot and pushes the release branch
+    // under the CAS lease (§11.2); the forge sees only the PR half. The
+    // api half's forge-signed chain is pinned by the forge-github
+    // contract suite and the GitLab loopback e2e.
+    fx.write("halyard.toml", "[forge]\ncommit_mode = \"git\"\n")?;
     fx.run_git(&[
         "remote",
         "add",
@@ -407,29 +427,10 @@ fn pr_live_opens_the_release_pr_over_loopback() -> Result<(), BoxError> {
     probe_offline_origin(&mut fx)?;
     // The forecast names the exact branch the live run will target.
     let branch = forecast_release_branch(&fx)?;
-    // The scripted exchange, in the §11.1 order: the API-commit chain
-    // (ref → commit → tree → commit → ref CAS update — steps 1–6 of
-    // `commit_via_api`), then the machine's find, the upsert's own find
-    // and the create.
-    let tip = "1".repeat(40);
-    let base_tree = "2".repeat(40);
-    let new_tree = "3".repeat(40);
-    let new_commit = "4".repeat(40);
+    // The scripted exchange, in the §11.1 order: the machine's find,
+    // the upsert's own find and the create — the content rode the
+    // git-side CAS push, so the forge sees only the PR half.
     let (forge, api, server) = FakeForge::new(vec![
-        (
-            200,
-            format!("{{\"object\": {{\"sha\": \"{tip}\", \"type\": \"commit\"}}}}"),
-        ),
-        (
-            200,
-            format!("{{\"sha\": \"{tip}\", \"tree\": {{\"sha\": \"{base_tree}\"}}}}"),
-        ),
-        (201, format!("{{\"sha\": \"{new_tree}\"}}")),
-        (201, format!("{{\"sha\": \"{new_commit}\"}}")),
-        (
-            200,
-            format!("{{\"object\": {{\"sha\": \"{new_commit}\"}}}}"),
-        ),
         (200, "[]".to_owned()),
         (200, "[]".to_owned()),
         (201, pr_body(9, &branch)),
@@ -498,9 +499,9 @@ fn forecast_release_branch(fx: &GitFixture) -> Result<String, BoxError> {
     Ok(branch)
 }
 
-/// The §11.1 step-3 truth pin: the pushed release branch's tip commit is
-/// the staged release commit and its tree equals the content tree the
-/// plan's applied edits produce over the base snapshot.
+/// The §11.1 step-3 truth pin: the pushed release branch's tip commit
+/// carries the plan's release title and its tree carries the plan's
+/// applied edit (the manifest's next version) over the base snapshot.
 fn assert_release_branch_carries_the_content(
     fx: &GitFixture,
     branch: &str,
@@ -508,14 +509,16 @@ fn assert_release_branch_carries_the_content(
     let tip = fx.run_git(&["ls-remote", "origin", &format!("refs/heads/{branch}")])?;
     assert!(!tip.trim().is_empty(), "the branch exists remotely: {tip}");
     let commit = tip.split('\t').next().unwrap_or_default().trim().to_owned();
-    let tree = fx.run_git(&["rev-parse", &format!("{commit}^{{tree}}")])?;
     let staged = fx.run_git(&["show", "--format=%s", "--no-patch", &commit])?;
-    assert_eq!(staged.trim(), "chore: release v0.1.1", "{staged}");
-    let expected_tree = fx.run_git(&["rev-parse", "HEAD^{tree}"])?;
     assert_eq!(
-        tree.trim(),
-        expected_tree.trim(),
-        "the release branch carries the content tree (base + plan edits)"
+        staged.trim(),
+        "chore: release v0.1.2",
+        "the staged commit carries the plan's release title"
+    );
+    let manifest = fx.run_git(&["show", &format!("{commit}:Cargo.toml")])?;
+    assert!(
+        manifest.contains("version = \"0.1.2\""),
+        "the staged tree carries the plan's applied edit: {manifest}"
     );
     Ok(())
 }
@@ -524,15 +527,171 @@ fn assert_release_branch_carries_the_content(
 /// origin onto a local bare repo (the forge slug still parses from the
 /// origin URL, and `ls-remote`/`fetch` stay on the loopback disk).
 fn probe_offline_origin(fx: &mut GitFixture) -> Result<(), BoxError> {
+    offline_origin_rewrite(fx, "https://github.com/octo/halyard-demo.git")
+}
+
+/// The GitLab lane's variant: the same `insteadOf` rewrite over the
+/// GitLab-shaped origin URL (the adapter's remote grammar still parses
+/// the configured URL, and `ls-remote`/`fetch` stay on the disk).
+fn gitlab_probe_offline_origin(fx: &mut GitFixture) -> Result<(), BoxError> {
+    offline_origin_rewrite(fx, "https://gitlab.com/octo/halyard-demo.git")
+}
+
+fn offline_origin_rewrite(fx: &mut GitFixture, origin: &str) -> Result<(), BoxError> {
     let parent = fx.root().parent().ok_or("fixture root has a parent")?;
-    let bare = parent.join("origin-probe.git");
+    let bare = parent.join(format!(
+        "origin-probe-{}.git",
+        origin
+            .split('/')
+            .next_back()
+            .unwrap_or_default()
+            .strip_suffix(".git")
+            .unwrap_or_default()
+    ));
     fx.run_git(&["init", "--bare", bare.to_string_lossy().as_ref()])?;
     fx.run_git(&[
         "config",
         &format!("url.{}.insteadOf", bare.to_string_lossy()),
-        "https://github.com/octo/halyard-demo.git",
+        origin,
     ])?;
     Ok(())
+}
+
+/// Live `pr` over the GitLab lane (M7 step 1, ADR-0049): the same
+/// machine pass the GitHub loopback test pins, over a GitLab-shaped
+/// origin — the fake forge saw the URL-encoded project path, the
+/// `PRIVATE-TOKEN` auth, the commits-API probe + create and the MR
+/// create, and the report names the opened MR. `GITLAB_API_URL` keeps
+/// the exchange on the loopback; `insteadOf` keeps the git-side probe
+/// offline.
+#[test]
+fn pr_live_opens_the_release_mr_over_gitlab_loopback() -> Result<(), BoxError> {
+    let (fx, branch) = shape_post_merge_gitlab_repo("pr-live-gitlab")?;
+    // The scripted exchange, in the §11.1 order over the GitLab shapes:
+    // the commits-API chain (the file-existence probe → the create
+    // action commits once), then the machine's find, the upsert's own
+    // lookup and the MR create.
+    let commit_sha = "4".repeat(40);
+    let (forge, api, server) = FakeForge::new(vec![
+        (404, "{\"message\":\"404 Not Found\"}".to_owned()),
+        (
+            201,
+            format!(
+                "{{\"id\": \"{commit_sha}\", \"short_id\": \"abc1234\", \"title\": \"chore: release v0.1.1\"}}"
+            ),
+        ),
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (201, mr_body(9, &branch)),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--format", "json"],
+        &[
+            ("GITLAB_API_URL", &api),
+            ("GITLAB_TOKEN", "glpat-smoke"),
+            ("GITHUB_TOKEN", ""),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    assert_eq!(
+        value.get("mode").and_then(serde_json::Value::as_str),
+        Some("live")
+    );
+    assert_eq!(
+        value.get("repo").and_then(serde_json::Value::as_str),
+        Some("octo/halyard-demo"),
+        "the GitLab lane reports the project path as the repo coordinates: {out}"
+    );
+    let effects = value
+        .get("effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("the report carries the machine effects")?;
+    let kinds: Vec<String> = effects
+        .iter()
+        .filter_map(|effect| effect.get("type").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        kinds.iter().any(|kind| kind == "pr_opened"),
+        "the Release MR opened over the GitLab adapter: {out}"
+    );
+    assert!(
+        kinds.iter().any(|kind| kind == "content_committed"),
+        "the content commit rode the commits API (§11.5 commit_mode = api): {out}"
+    );
+    let received = forge.received();
+    assert_eq!(
+        received.len(),
+        5,
+        "probe + commit + find + upsert-lookup + create: {received:?}"
+    );
+    // Every exchange carried the documented auth and the URL-encoded
+    // project path (research §1/§2).
+    for request in &received {
+        assert_eq!(
+            field(request, "private_token"),
+            "glpat-smoke",
+            "the PRIVATE-TOKEN auth rides every call: {request}"
+        );
+    }
+    let first = received.first().expect("the file probe");
+    assert!(
+        field(first, "path").starts_with("/projects/octo%2Fhalyard-demo/repository/files/"),
+        "the project path is URL-encoded and the file probe rides the commits-API          precondition: {}",
+        field(first, "path")
+    );
+    let commit = received.get(1).expect("the commits create");
+    assert!(
+        field(commit, "path").ends_with("/repository/commits"),
+        "{}",
+        field(commit, "path")
+    );
+    let create = received.last().expect("the MR create");
+    assert_eq!(field(create, "method"), "POST");
+    assert!(
+        field(create, "path").ends_with("/merge_requests"),
+        "the MR create posts to the project's merge_requests: {}",
+        field(create, "path")
+    );
+    Ok(())
+}
+
+/// Shapes the post-merge GitLab fixture the loopback e2e runs: v0.1.0
+/// tagged, the release commit v0.1.1 tagged, one fresh `feat` commit
+/// after it (the plan proposes 0.1.2), `commit_mode = "api"` and the
+/// GitLab-shaped origin. Returns the fixture and the forecast release
+/// branch.
+fn shape_post_merge_gitlab_repo(label: &str) -> Result<(GitFixture, String), BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "Cargo.toml".to_owned(),
+            "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+        )],
+        "chore(main): release v0.1.1",
+    ))?;
+    fx.tag_annotated("v0.1.1", "solo v0.1.1")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: extend the crate surface",
+    ))?;
+    fx.write("halyard.toml", "[forge]\ncommit_mode = \"api\"\n")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/octo/halyard-demo.git",
+    ])?;
+    gitlab_probe_offline_origin(&mut fx)?;
+    let branch = forecast_release_branch(&fx)?;
+    Ok((fx, branch))
 }
 
 /// The `HALYARD_FORGE_*` env grammar fails closed on a present-but-
