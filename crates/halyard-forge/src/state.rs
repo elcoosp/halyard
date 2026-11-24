@@ -28,7 +28,7 @@
 //!   content tree is reported ([`MachineEffect::ContentMatched`]) and
 //!   never re-committed.
 //! * **The content step** (§11.1 step 3, the M4.2 remainder) — the
-//!   caller applies the plan's EditSet in memory, hashes the built tree
+//!   caller applies the plan's `EditSet` in memory, hashes the built tree
 //!   and probes the remote release branch (`ls-remote`, 0 REST); the
 //!   machine compares and, on a mismatch, commits through
 //!   [`Forge::commit_via_api`] (§11.5 `commit_mode = "api"` — the
@@ -176,7 +176,7 @@ pub struct MachineInput {
     /// instead of upserting one (§11.1 step 3).
     pub release_pr: Option<PrSpec>,
     /// The prepare phase's content (§11.1 step 3): the caller-applied
-    /// EditSet plus the caller's `ls-remote` probe of the release branch.
+    /// `EditSet` plus the caller's `ls-remote` probe of the release branch.
     /// `None` = the plan is empty (no content to commit) or the caller
     /// executes the git-side commit itself — the machine then performs
     /// no content step.
