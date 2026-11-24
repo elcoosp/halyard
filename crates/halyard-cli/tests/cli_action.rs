@@ -838,3 +838,90 @@ fn action_auto_mode_writes_the_env_files_inside_a_workflow_step() -> Result<(), 
     assert!(text.contains("GITHUB_OUTPUT"), "the confirmation: {text}");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §11.1 step-3 content half on the §12 `auto` mode: the plan binds
+// the prepare phase to the auto command — docs/HALYARD_ARCHITECTURE.md
+// §11.1: "On every push to the base branch the same command (`halyard
+// release --auto`) runs" with step 3 "apply EditSet in memory → build
+// tree → compare tree OID with remote release branch tip (`ls-remote`,
+// 0 REST); if equal: update PR body only if plan_hash differs; else
+// commit & `push --force-with-lease`" — and ADR-0047's `content_commit`
+// machine input carries the verdicts. The auto pass now stages and
+// probes the content exactly like the `pr` executor's half (the same
+// `content_commit_for_plan`/`live_content_commit` helpers). Written
+// first (red: the forecast carried no content block), implemented
+// second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn action_auto_mode_prepare_forecasts_the_content_half() -> Result<(), BoxError> {
+    // The two-package shape (manifests == tags, the lib patch pending in
+    // history): nothing is pending — the machine reaches the prepare
+    // phase and the content half rides it: the plan's edits staged in
+    // memory, the content tree hashed, and the forecast commits it
+    // through the preview forge (I5 — nothing executed).
+    let fx = two_package_fixture("cli-action-auto-content")?;
+    let (ok, text) = halyard(
+        fx.root(),
+        &["action", "--mode", "auto", "--dry", "--format", "json"],
+    )?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    let value = parse_json(&text)?;
+    let content = value
+        .get("content")
+        .ok_or("the JSON carries the content block")?;
+    assert_eq!(
+        content.get("type").and_then(serde_json::Value::as_str),
+        Some("content_committed"),
+        "the forecast commits through the preview forge: {text}"
+    );
+    let oid = content
+        .get("oid")
+        .and_then(serde_json::Value::as_str)
+        .filter(|oid| !oid.is_empty())
+        .ok_or("the forecast names the preview content oid")?;
+    assert!(
+        !oid.contains("0000000"),
+        "the oid is the preview forge's own digest, not a placeholder: {oid}"
+    );
+    // Byte-stable I3: the same run renders the same document.
+    let (ok2, text2) = halyard(
+        fx.root(),
+        &["action", "--mode", "auto", "--dry", "--format", "json"],
+    )?;
+    assert!(ok2, "the re-run succeeds: {text2}");
+    assert_eq!(text, text2, "the auto content forecast is byte-stable");
+    Ok(())
+}
+
+#[test]
+fn action_auto_mode_human_summary_names_the_content_half() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-action-auto-content-human")?;
+    let (ok, text) = halyard(fx.root(), &["action", "--mode", "auto", "--dry"])?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    assert!(
+        text.contains(" · content tree committed ("),
+        "the pass line names the content half in the §11.1 order (content, then the PR): {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn action_auto_mode_propagate_forecast_carries_no_content_block() -> Result<(), BoxError> {
+    // The merged-manifest shape: the manifest version is pending, so
+    // PROPAGATE owns the pass and the prepare phase (the content half
+    // with it) does not run — the report keeps its documented shape.
+    let fx = merged_manifest_fixture("cli-action-auto-content-propagate")?;
+    let (ok, text) = halyard(
+        fx.root(),
+        &["action", "--mode", "auto", "--dry", "--format", "json"],
+    )?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    let value = parse_json(&text)?;
+    assert!(
+        value.get("content").is_none(),
+        "PROPAGATE defers the content half with the prepare phase: {text}"
+    );
+    Ok(())
+}
