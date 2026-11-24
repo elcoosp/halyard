@@ -494,16 +494,21 @@ fn machine_runs_against_a_trait_object() {
 
 /// A valid 40-hex OID fixture (a tree the caller hashed, deterministic).
 fn tree_oid_fixture(seed: &str) -> Oid {
+    use std::fmt::Write as _;
     let mut digits = String::with_capacity(40);
     let source = seed.as_bytes();
     for index in 0..20 {
-        let byte = source.get(index).copied().unwrap_or(0xa0 + index as u8);
-        digits.push_str(&format!("{byte:02x}"));
+        let byte = source
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| u8::try_from(0xa0 + index).unwrap_or(0xff));
+        write!(digits, "{byte:02x}")
+            .unwrap_or_else(|e| unreachable!("string writes never fail: {e}"));
     }
     Oid::from_hex(digits.as_bytes()).unwrap_or_else(|| unreachable!("hex fixture is 40 digits"))
 }
 
-/// A one-file content fixture (the applied EditSet's payload).
+/// A one-file content fixture (the applied `EditSet`'s payload).
 fn content_fixture(tree_oid: Oid, remote: Option<Oid>) -> halyard_forge::ContentCommit {
     halyard_forge::ContentCommit {
         message: "chore: release v0.2.0".to_owned(),
@@ -531,12 +536,16 @@ fn content_commit_lands_the_plan_edits_then_upserts_the_pr() {
     };
     let report =
         run(&forge, &input).unwrap_or_else(|e| unreachable!("content pass must succeed: {e}"));
+    let minted_oid = forge
+        .commits()
+        .first()
+        .unwrap_or_else(|| unreachable!("one commit"))
+        .oid
+        .clone();
     assert_eq!(
         report.effects,
         vec![
-            MachineEffect::ContentCommitted {
-                oid: forge.commits()[0].oid.clone()
-            },
+            MachineEffect::ContentCommitted { oid: minted_oid },
             MachineEffect::PrOpened {
                 number: 1,
                 url: "mem://pr/1".to_owned(),
@@ -547,10 +556,18 @@ fn content_commit_lands_the_plan_edits_then_upserts_the_pr() {
     assert_eq!(forge.call_count("commit_via_api"), 1);
     let commits = forge.commits();
     assert_eq!(commits.len(), 1, "exactly one content commit");
-    assert_eq!(commits[0].spec.branch, main_branch());
-    assert_eq!(commits[0].spec.message, "chore: release v0.2.0");
-    assert_eq!(commits[0].spec.files.len(), 1);
-    assert_eq!(commits[0].spec.files[0].path, "Cargo.toml");
+    let minted = commits
+        .first()
+        .unwrap_or_else(|| unreachable!("one commit"));
+    assert_eq!(minted.spec.branch, main_branch());
+    assert_eq!(minted.spec.message, "chore: release v0.2.0");
+    assert_eq!(minted.spec.files.len(), 1);
+    let file = minted
+        .spec
+        .files
+        .first()
+        .unwrap_or_else(|| unreachable!("one file"));
+    assert_eq!(file.path, "Cargo.toml");
     assert_eq!(
         report.calls, 3,
         "commit_via_api + find_release_pr + upsert_pr"
@@ -645,13 +662,14 @@ fn content_commit_validates_fail_closed_before_any_call() {
     // The shared fail-closed contract (the CommentSpec convention): an
     // empty message or an empty payload list is a caller bug — refused
     // with E-FORGE-REQUEST before the first forge call.
-    let cases: [(&str, fn(&mut halyard_forge::ContentCommit)); 2] = [
+    type CommitMutation = fn(&mut halyard_forge::ContentCommit);
+    let cases: [(&str, CommitMutation); 2] = [
         (
             "empty message",
             |commit: &mut halyard_forge::ContentCommit| commit.message.clear(),
         ),
         ("no files", |commit: &mut halyard_forge::ContentCommit| {
-            commit.files.clear()
+            commit.files.clear();
         }),
     ];
     for (name, mutate) in cases {
@@ -695,12 +713,16 @@ fn failure_at_the_content_commit_converges_on_the_rerun() {
     // The failed attempt is an observable call (§11.5) but minted no
     // commit — the re-run commits exactly once.
     assert_eq!(forge.commits().len(), 1, "no duplicate commit");
+    let recovered_oid = forge
+        .commits()
+        .first()
+        .unwrap_or_else(|| unreachable!("one commit"))
+        .oid
+        .clone();
     assert_eq!(
         recovered.effects,
         vec![
-            MachineEffect::ContentCommitted {
-                oid: forge.commits()[0].oid.clone()
-            },
+            MachineEffect::ContentCommitted { oid: recovered_oid },
             MachineEffect::PrOpened {
                 number: 1,
                 url: "mem://pr/1".to_owned(),
