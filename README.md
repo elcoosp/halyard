@@ -132,6 +132,7 @@ Every crate ships runnable examples:
 
 ```bash
 cargo run -p halyard-forge --example release_machine
+cargo run -p halyard-forge --example content_commit
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-cli --example release_pipeline
 cargo run -p halyard-action --example auto_forecast
