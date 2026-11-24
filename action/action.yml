@@ -1,0 +1,230 @@
+# The §12 composite distribution (M5.4 own-artifact slice, ADR-0052):
+# the tiny JS-free composite action — (1) resolves OS/arch, (2)
+# downloads the pre-built static binary from GitHub Releases, (3)
+# verifies checksum **and** GitHub artifact attestation, (4) caches by
+# version, (5) execs `halyard action`. Every piece that must agree
+# with the shipped binary (the §12 inputs/modes, the asset names, the
+# runner-platform table, the checksum manifest grammar) is pinned by
+# `halyard_action::distribution` and gated by
+# `cargo run -p xtask -- check-release`.
+name: 'halyard action'
+description: >
+  Runs the halyard release engine in one workflow step: resolves the
+  runner platform to a pinned static release binary, verifies the
+  checksum manifest and the build attestation, caches by version, then
+  execs `halyard action` and re-exposes the §12 outputs.
+
+inputs:
+  mode:
+    description: 'The §12 behavior mode: auto | pr | release | plan | check.'
+    required: false
+    default: 'plan'
+  token:
+    description: 'The forge token (defaults to the workflow''s own GITHUB_TOKEN; rides both spellings the shell reads).'
+    required: false
+    default: ''
+  app-id:
+    description: 'The GitHub App id (the App-JWT credential lane).'
+    required: false
+    default: ''
+  app-private-key:
+    description: 'The GitHub App private key (the App-JWT credential lane).'
+    required: false
+    default: ''
+  config:
+    description: 'Path to halyard.toml (default: repo root or .config/halyard.toml).'
+    required: false
+    default: ''
+  publish:
+    description: 'Run the publish executor (halyard publish) after the action pass.'
+    required: false
+    default: 'false'
+  dry-run:
+    description: 'Forecast only: preview adapters, no network, no effects.'
+    required: false
+    default: 'false'
+  working-directory:
+    description: 'The directory the executors run in.'
+    required: false
+    default: '.'
+
+outputs:
+  released:
+    description: 'True when the pass created releases.'
+    value: ${{ steps.halyard.outputs.released }}
+  published:
+    description: 'True when the publish executor ran (honest false on a dry run).'
+    value: ${{ steps.halyard.outputs.published }}
+  pr_number:
+    description: 'The Release PR''s number, when the pass has one.'
+    value: ${{ steps.halyard.outputs.pr_number }}
+  pr_url:
+    description: 'The Release PR''s URL, when the pass has one.'
+    value: ${{ steps.halyard.outputs.pr_url }}
+  releases_json:
+    description: 'JSON array: name, version, tag, ecosystem, url per release.'
+    value: ${{ steps.halyard.outputs.releases_json }}
+  plan_json:
+    description: 'Path of the canonical plan file the pass wrote.'
+    value: ${{ steps.halyard.outputs.plan_json }}
+  paths_released:
+    description: 'The distinct edit sites the plan touches.'
+    value: ${{ steps.halyard.outputs.paths_released }}
+
+runs:
+  using: composite
+  steps:
+    # §12 step 1: resolve OS/arch to a pinned release target. The case
+    # rows mirror `RELEASE_TARGETS` (checked by `xtask check-release`);
+    # an unknown platform fails closed.
+    - id: resolve
+      name: Resolve the pinned release target
+      shell: bash
+      run: |
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64)    target=x86_64-unknown-linux-musl ; asset=halyard-x86_64-unknown-linux-musl.tar.gz ;;
+          Linux/ARM64)  target=aarch64-unknown-linux-musl ; asset=halyard-aarch64-unknown-linux-musl.tar.gz ;;
+          macOS/X64)    target=x86_64-apple-darwin ; asset=halyard-x86_64-apple-darwin.tar.gz ;;
+          macOS/ARM64)  target=aarch64-apple-darwin ; asset=halyard-aarch64-apple-darwin.tar.gz ;;
+          Windows/X64)  target=x86_64-pc-windows-msvc ; asset=halyard-x86_64-pc-windows-msvc.zip ;;
+          *) echo "::error::RUNNER_OS=${RUNNER_OS} RUNNER_ARCH=${RUNNER_ARCH} has no pinned release target (halyard_action::distribution::RELEASE_TARGETS)" >&2 ; exit 1 ;;
+        esac
+        echo "target=${target}" >> "$GITHUB_OUTPUT"
+        echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+    # The version the cache keys on: the repository's latest release
+    # tag (the action's default posture — `latest/download` follows
+    # the newest release). Any valid token reads a public repo's tags.
+    - id: version
+      name: Resolve the latest release tag
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token || github.token }}
+      run: |
+        tag="$(gh api "repos/elcoosp/halyard/releases/latest" --jq .tag_name)"
+        if [ -z "$tag" ]; then
+          echo "::error::could not resolve the latest halyard release tag" >&2
+          exit 1
+        fi
+        echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+    # §12 step 4: cache the extracted binary by version + target.
+    - id: cache
+      name: Cache the halyard binary
+      uses: actions/cache@v4
+      with:
+        path: halyard-bin
+        key: halyard-${{ steps.version.outputs.tag }}-${{ steps.resolve.outputs.target }}
+
+    # §12 step 2: download the release asset and the checksum manifest
+    # (skipped on a cache hit — the cached directory holds the
+    # extracted binary).
+    - id: download
+      name: Download the release asset and checksum manifest
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p halyard-dl halyard-bin
+        curl -fsSL --retry 3 -o "halyard-dl/${{ steps.resolve.outputs.asset }}" \
+          "https://github.com/elcoosp/halyard/releases/download/${{ steps.version.outputs.tag }}/${{ steps.resolve.outputs.asset }}"
+        curl -fsSL --retry 3 -o "halyard-dl/SHA256SUMS" \
+          "https://github.com/elcoosp/halyard/releases/download/${{ steps.version.outputs.tag }}/SHA256SUMS"
+
+    # §12 step 3a: verify the downloaded asset's checksum line. The
+    # manifest is `sha256sum`-compatible; macOS runners carry `shasum`
+    # instead of GNU coreutils' `sha256sum` — both read the same
+    # `<digest>  <file>` check grammar.
+    - id: verify-checksum
+      name: Verify the checksum manifest line
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        cd halyard-dl
+        grep -E '^[0-9a-f]{64}  ${{ steps.resolve.outputs.asset }}$' SHA256SUMS > halyard.check
+        test -s halyard.check || { echo "::error::SHA256SUMS has no line for ${{ steps.resolve.outputs.asset }}" >&2; exit 1; }
+        if command -v sha256sum > /dev/null 2>&1; then
+          sha256sum -c halyard.check
+        else
+          shasum -a 256 -c halyard.check
+        fi
+
+    # §12 step 3a on Windows: PowerShell's own digest checker
+    # (Get-FileHash — SHA256 is the default algorithm; its `.Hash`
+    # property renders uppercase hex, compared case-insensitively).
+    - id: verify-checksum-windows
+      name: Verify the checksum manifest line (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $line = Select-String -Path halyard-dl/SHA256SUMS -Pattern '^[0-9a-f]{64}  ${{ steps.resolve.outputs.asset }}$' | Select-Object -First 1
+        if (-not $line) { Write-Error "SHA256SUMS has no line for ${{ steps.resolve.outputs.asset }}"; exit 1 }
+        $expected = ($line.Line -split '  ')[0]
+        $actual = (Get-FileHash "halyard-dl/${{ steps.resolve.outputs.asset }}" -Algorithm SHA256).Hash
+        if ($actual -ne $expected) { Write-Error "checksum mismatch for ${{ steps.resolve.outputs.asset }}"; exit 1 }
+        Write-Host "checksum ok for ${{ steps.resolve.outputs.asset }}"
+
+    # §12 step 3b: verify the artifact attestation (the M5.4 row's own
+    # acceptance: `gh attestation verify` passes). The pipeline's
+    # attest step (actions/attest) is the producer; this is the
+    # documented consumer grammar over the same repository.
+    - id: verify-attestation
+      name: Verify the build attestation
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token || github.token }}
+      run: |
+        gh attestation verify "halyard-dl/${{ steps.resolve.outputs.asset }}" -R elcoosp/halyard
+
+    # Unpack into the cached directory (only when a download ran).
+    - id: install
+      name: Unpack the release archive
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          pwsh -NoProfile -Command "Expand-Archive -Path 'halyard-dl/${{ steps.resolve.outputs.asset }}' -DestinationPath 'halyard-bin'"
+        else
+          tar -xzf "halyard-dl/${{ steps.resolve.outputs.asset }}" -C halyard-bin
+          chmod +x halyard-bin/halyard
+        fi
+
+    - name: Put halyard on PATH
+      shell: bash
+      run: echo "$(pwd)/halyard-bin" >> "$GITHUB_PATH"
+
+    # §12 step 5: exec `halyard action` — the §12 input vocabulary
+    # rides the surfaces the grammar names (`--mode`, `--config`,
+    # `--dry`, the token/App env pairs); the outputs the writers emit
+    # flow straight out of GITHUB_OUTPUT.
+    - id: halyard
+      name: Run halyard action
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.token || github.token }}
+        HALYARD_FORGE_TOKEN: ${{ inputs.token || github.token }}
+        HALYARD_APP_ID: ${{ inputs.app-id }}
+        HALYARD_APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
+      run: |
+        args=(action --mode '${{ inputs.mode }}')
+        if [ '${{ inputs.dry-run }}' = 'true' ]; then args+=(--dry); fi
+        if [ -n '${{ inputs.config }}' ]; then args+=(--config '${{ inputs.config }}'); fi
+        halyard "${args[@]}"
+
+    # The §12 `publish` input rides the shipped §13 executor; the
+    # dry-run posture gates it to the forecast form (nothing ships on
+    # a forecast — I5).
+    - id: publish
+      name: Run halyard publish
+      if: inputs.publish == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.token || github.token }}
+        HALYARD_FORGE_TOKEN: ${{ inputs.token || github.token }}
+      run: |
+        if [ '${{ inputs.dry-run }}' = 'true' ]; then
+          halyard publish --dry
+        else
+          halyard publish
+        fi
