@@ -601,11 +601,25 @@ mod tests {
         let root = tmp.path();
         let src = root.join("docs/site/src");
         std::fs::create_dir_all(src.join("sub")).expect("mkdir");
+        std::fs::create_dir_all(src.join("reference")).expect("mkdir");
+        // Step 6 rides the same run: the fixture's errors area carries
+        // one code, mirrored from the fixture's own index.
+        std::fs::create_dir_all(root.join("docs/errors")).expect("mkdir index dir");
+        std::fs::write(
+            root.join("docs/errors/README.md"),
+            "| Code | Meaning |\n|---|---|\n| `E-FIXTURE` | the fixture's one code |\n",
+        )
+        .expect("index");
+        std::fs::write(
+            src.join("reference/errors.md"),
+            "| Code | Meaning | Page |\n|---|---|---|\n| `E-FIXTURE` | the fixture's one code | `docs/errors/E-FIXTURE.md` |\n",
+        )
+        .expect("errors page");
         std::fs::write(root.join("docs/site/book.toml"), "[book]\ntitle = \"t\"\n")
             .expect("book.toml");
         std::fs::write(
             src.join("SUMMARY.md"),
-            "- [One](one.md)\n- [Sub](sub/two.md)\n",
+            "- [One](one.md)\n- [Sub](sub/two.md)\n- [Errors](reference/errors.md)\n",
         )
         .expect("summary");
         std::fs::write(src.join("one.md"), "[good](sub/two.md) [bad](missing.md)").expect("one");
@@ -623,7 +637,7 @@ mod tests {
         std::fs::write(src.join("one.md"), "[good](sub/two.md)").expect("one");
         std::fs::write(
             src.join("SUMMARY.md"),
-            "- [One](one.md)\n- [Sub](sub/two.md)\n- [Orphan](orphan.md)\n",
+            "- [One](one.md)\n- [Sub](sub/two.md)\n- [Orphan](orphan.md)\n- [Errors](reference/errors.md)\n",
         )
         .expect("summary");
         check_docs_site_at(root).expect("green after fixes");
