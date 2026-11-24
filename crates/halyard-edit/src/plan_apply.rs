@@ -106,7 +106,7 @@ pub fn edit_set_from_plan(plan: &Plan) -> Result<EditSet, EditError> {
     EditSet::from_plan_edits(&plan.edits)
 }
 
-/// The staged half of the apply flow (§11.1 step 3 "apply EditSet in
+/// The staged half of the apply flow (§11.1 step 3 "apply `EditSet` in
 /// memory"): every manifest and lockfile the plan edits, patched and
 /// read-back-verified through the adapters — **without any write**. The
 /// content-commit flow consumes [`StagedEdits::payloads`]; the local
