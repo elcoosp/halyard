@@ -180,11 +180,22 @@ pub fn parse_remote_tag_targets(output: &str) -> BTreeMap<String, String> {
     targets
 }
 
-/// Parses `git push --porcelain` output into per-ref status rows. Header
-/// (`To …`), footer (`Done`) and non-conforming lines are skipped; the
-/// wire format is pinned by [`crate::push`] tests and benches.
+/// Parses `git push --porcelain` output into per-ref status rows for the
+/// tag push (the `refs/tags/` refspec prefix). Header (`To …`), footer
+/// (`Done`) and non-conforming lines are skipped; the wire format is
+/// pinned by [`crate::push`] tests and benches.
 #[must_use]
 pub fn parse_porcelain_push(output: &str) -> Vec<PorcelainRow> {
+    parse_porcelain_ref_push(output, "refs/tags/")
+}
+
+/// Parses `git push --porcelain` output into per-ref status rows for any
+/// ref prefix (the tag push passes `refs/tags/`, the §11.2 branch push
+/// passes `refs/heads/`). `PorcelainRow.tag` carries the pushed ref's
+/// short name (the prefix stripped). The wire format is pinned by
+/// [`crate::push`] tests and benches.
+#[must_use]
+pub fn parse_porcelain_ref_push(output: &str, prefix: &str) -> Vec<PorcelainRow> {
     let mut rows = Vec::new();
     for line in output.lines() {
         let mut fields = line.split('\t');
@@ -198,23 +209,23 @@ pub fn parse_porcelain_push(output: &str) -> Vec<PorcelainRow> {
             continue;
         };
         // The flag is a single-character code on its own field (`*` new
-        // tag, `=` up to date, `!` rejected — probed in ADR-0012); the
+        // ref, `=` up to date, `!` rejected — probed in ADR-0012); the
         // header (`To …`), footer (`Done`) and foreign lines carry other
         // shapes and are skipped.
         let flag = match flag_field.chars().collect::<Vec<_>>().as_slice() {
             [code] => *code,
             _ => continue,
         };
-        let Some(tag) = refspec_field
+        let Some(short) = refspec_field
             .rsplit(':')
             .next()
-            .and_then(|to| to.strip_prefix("refs/tags/"))
+            .and_then(|to| to.strip_prefix(prefix))
         else {
             continue;
         };
         rows.push(PorcelainRow {
             flag,
-            tag: tag.to_owned(),
+            tag: short.to_owned(),
             summary: summary_field.to_owned(),
         });
     }
