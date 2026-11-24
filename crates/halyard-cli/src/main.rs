@@ -1430,6 +1430,12 @@ enum ForgeEnv {
         endpoint: ForgejoEndpoint,
         token: std::sync::Arc<str>,
     },
+    /// The M7 Bitbucket REST lane (ADR-0051): OAuth 2.0 Bearer token
+    /// auth only (the adapter has no App-auth surface — research §1).
+    Bitbucket {
+        endpoint: halyard_forge_bitbucket::BitbucketEndpoint,
+        token: std::sync::Arc<str>,
+    },
 }
 
 impl ForgeEnv {
@@ -1444,6 +1450,9 @@ impl ForgeEnv {
             ForgeEnv::GitLab { endpoint, .. } => endpoint.project_path().to_owned(),
             ForgeEnv::Forgejo { endpoint, .. } => {
                 format!("{}/{}", endpoint.owner(), endpoint.repo())
+            }
+            ForgeEnv::Bitbucket { endpoint, .. } => {
+                format!("{}/{}", endpoint.workspace(), endpoint.repo())
             }
         }
     }
@@ -1557,32 +1566,13 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
     // M7 step 2 (ADR-0050): the Forgejo/Gitea lane rides the adapter's
     // own remote grammar (https / git@ / ssh over codeberg.org and
     // gitea.com — one adapter, two names).
-    if let Some(endpoint) = remote_url
-        .as_deref()
-        .and_then(halyard_forge_forgejo::ForgejoEndpoint::from_remote)
-    {
-        if app.is_some() {
-            return Err(CliError::new(
-                "E-FORGE-AUTH",
-                "the HALYARD_APP_* env configures GitHub App auth, but the origin is a \
-                 Forgejo/Gitea remote: the Forgejo adapter rides an Authorization token \
-                 (export FORGEJO_TOKEN, GITEA_TOKEN, or HALYARD_FORGE_TOKEN) — unset the \
-                 App env or point remote.origin.url at a GitHub remote",
-            ));
-        }
-        let token = forgejo_token_from_env().ok_or_else(|| {
-            CliError::new(
-                "E-FORGE-AUTH",
-                "live forge mode needs credentials: export FORGEJO_TOKEN (a Forgejo/Gitea \
-                 token with repository scope) — or GITEA_TOKEN, or HALYARD_FORGE_TOKEN — \
-                 and re-run `halyard doctor` to verify it can reach the repository",
-            )
-        })?;
-        let endpoint = forgejo_endpoint_with_base_override(endpoint)?;
-        return Ok(ForgeEnv::Forgejo {
-            endpoint,
-            token: std::sync::Arc::from(token.as_str()),
-        });
+    if let Some(env) = forgejo_lane(app.as_ref(), remote_url.as_deref())? {
+        return Ok(env);
+    }
+    // M7 step 3 (ADR-0051): the Bitbucket lane rides the adapter's own
+    // remote grammar (https / git@ / ssh over bitbucket.org).
+    if let Some(env) = bitbucket_lane(app.as_ref(), remote_url.as_deref())? {
+        return Ok(env);
     }
     let credentials = if let Some(app) = app {
         halyard_forge_github::ForgeCredentials::App(Box::new(app))
@@ -1611,7 +1601,7 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
     let (owner, repo) = slug.ok_or_else(|| {
         CliError::new(
             "E-CLI-PR",
-            "live forge mode needs a GitHub, GitLab, or Forgejo/Gitea origin: set \
+            "live forge mode needs a GitHub, GitLab, Forgejo/Gitea, or Bitbucket origin: set \
              remote.origin.url to one (the adapters are the M4.1b GitHub REST, the M7 GitLab \
              REST and the M7 Forgejo/Gitea REST ones; the other forges are later Year-2 \
              milestones)",
@@ -1643,6 +1633,79 @@ fn gitlab_token_from_env() -> Option<String> {
         })
 }
 
+/// The Forgejo/Gitea lane's half of the live credentials resolution (M7
+/// step 2, ADR-0050): the origin grammar's match, the App-env mismatch
+/// fail-closed and the token grammar — `None` when the origin is not
+/// codeberg.org/gitea.com-shaped (the next lane decides).
+fn forgejo_lane(
+    app: Option<&halyard_forge_github::AppCredentials>,
+    remote_url: Option<&str>,
+) -> Result<Option<ForgeEnv>, CliError> {
+    let Some(endpoint) = remote_url.and_then(halyard_forge_forgejo::ForgejoEndpoint::from_remote)
+    else {
+        return Ok(None);
+    };
+    if app.is_some() {
+        return Err(CliError::new(
+            "E-FORGE-AUTH",
+            "the HALYARD_APP_* env configures GitHub App auth, but the origin is a \
+             Forgejo/Gitea remote: the Forgejo adapter rides an Authorization token \
+             (export FORGEJO_TOKEN, GITEA_TOKEN, or HALYARD_FORGE_TOKEN) — unset the \
+             App env or point remote.origin.url at a GitHub remote",
+        ));
+    }
+    let token = forgejo_token_from_env().ok_or_else(|| {
+        CliError::new(
+            "E-FORGE-AUTH",
+            "live forge mode needs credentials: export FORGEJO_TOKEN (a Forgejo/Gitea \
+             token with repository scope) — or GITEA_TOKEN, or HALYARD_FORGE_TOKEN — \
+             and re-run `halyard doctor` to verify it can reach the repository",
+        )
+    })?;
+    let endpoint = forgejo_endpoint_with_base_override(endpoint)?;
+    Ok(Some(ForgeEnv::Forgejo {
+        endpoint,
+        token: std::sync::Arc::from(token.as_str()),
+    }))
+}
+
+/// The Bitbucket lane's half of the live credentials resolution (M7
+/// step 3, ADR-0051): the origin grammar's match, the App-env mismatch
+/// fail-closed and the token grammar — `None` when the origin is not
+/// Bitbucket-shaped (the next lane decides).
+fn bitbucket_lane(
+    app: Option<&halyard_forge_github::AppCredentials>,
+    remote_url: Option<&str>,
+) -> Result<Option<ForgeEnv>, CliError> {
+    let Some(endpoint) =
+        remote_url.and_then(halyard_forge_bitbucket::BitbucketEndpoint::from_remote)
+    else {
+        return Ok(None);
+    };
+    if app.is_some() {
+        return Err(CliError::new(
+            "E-FORGE-AUTH",
+            "the HALYARD_APP_* env configures GitHub App auth, but the origin is a \
+             Bitbucket remote: the Bitbucket adapter rides an OAuth 2.0 Bearer token \
+             (export BITBUCKET_TOKEN or HALYARD_FORGE_TOKEN) — unset the App env or \
+             point remote.origin.url at a GitHub remote",
+        ));
+    }
+    let token = bitbucket_token_from_env().ok_or_else(|| {
+        CliError::new(
+            "E-FORGE-AUTH",
+            "live forge mode needs credentials: export BITBUCKET_TOKEN (an OAuth 2.0 \
+             access token with repository pullrequest scope) — or HALYARD_FORGE_TOKEN — \
+             and re-run `halyard doctor` to verify it can reach the repository",
+        )
+    })?;
+    let endpoint = bitbucket_endpoint_with_base_override(endpoint)?;
+    Ok(Some(ForgeEnv::Bitbucket {
+        endpoint,
+        token: std::sync::Arc::from(token.as_str()),
+    }))
+}
+
 /// The Forgejo/Gitea token (`FORGEJO_TOKEN` first — the adapter's own
 /// env — then the Gitea-native `GITEA_TOKEN` name for gitea.com
 /// origins, then the nightly smoke job's `HALYARD_FORGE_TOKEN`
@@ -1651,6 +1714,34 @@ fn forgejo_token_from_env() -> Option<String> {
     ["FORGEJO_TOKEN", "GITEA_TOKEN", "HALYARD_FORGE_TOKEN"]
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+}
+
+/// The Bitbucket token (`BITBUCKET_TOKEN` first — the adapter's own
+/// env — then the nightly smoke job's `HALYARD_FORGE_TOKEN` contract),
+/// or `None` when none is set (ADR-0051). API tokens and repository
+/// access tokens ride Basic auth with a second credential (research
+/// §1/§7) — outside the single-token grammar; the lane takes the OAuth
+/// 2.0 access token.
+fn bitbucket_token_from_env() -> Option<String> {
+    ["BITBUCKET_TOKEN", "HALYARD_FORGE_TOKEN"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+}
+
+/// The Bitbucket API-base override (`BITBUCKET_API_URL` — the offline
+/// lane; the base carries the `/2.0` root, which is never appended
+/// implicitly).
+fn bitbucket_endpoint_with_base_override(
+    endpoint: halyard_forge_bitbucket::BitbucketEndpoint,
+) -> Result<halyard_forge_bitbucket::BitbucketEndpoint, CliError> {
+    match std::env::var("BITBUCKET_API_URL") {
+        Ok(base) if !base.is_empty() => halyard_forge_bitbucket::BitbucketEndpoint::with_base(
+            &format!("{}/{}", endpoint.workspace(), endpoint.repo()),
+            &base,
+        )
+        .map_err(|e| CliError::new(e.code(), e.to_string())),
+        _ => Ok(endpoint),
+    }
 }
 
 /// The GitLab API-base override (`GITLAB_API_URL` — self-hosted
@@ -1706,6 +1797,13 @@ fn live_forge(env: ForgeEnv) -> Box<dyn halyard_forge::Forge> {
             &token,
             halyard_forge_forgejo::UreqTransport::new(),
         )),
+        ForgeEnv::Bitbucket { endpoint, token } => {
+            Box::new(halyard_forge_bitbucket::BitbucketRestForge::with_transport(
+                endpoint,
+                &token,
+                halyard_forge_bitbucket::UreqTransport::new(),
+            ))
+        }
     }
 }
 
@@ -2452,13 +2550,32 @@ fn run_auto_pass(
     // both halves offline; the live mode builds the GitHub REST adapter
     // from the environment (fail-closed on missing credentials and
     // foreign forges — the `pr` executor's rule).
-    let (forge, slug): (Box<dyn halyard_forge::Forge>, Option<String>) = if dry {
-        (Box::new(halyard_forge::PreviewForge::new()), None)
+    // The §11.1 step-3 content half the prepare phase carries (the same
+    // helpers the `pr` executor feeds the machine): the plan's edits
+    // staged in memory and the content tree hashed; the live run also
+    // resolves the §11.5 commit mode and lands the content before the
+    // machine sees the input — under `git` the shell stages the commit
+    // and pushes the release branch under the §11.2 CAS lease, under
+    // `api` the probe supplies the remote tip the machine compares and
+    // commits through. The dry forecast stays offline (I5): the content
+    // rides the preview forge's own commit forecast.
+    let content_commit = content_commit_for_plan(&context, &plan)?;
+    let (forge, slug, content_commit): (
+        Box<dyn halyard_forge::Forge>,
+        Option<String>,
+        Option<halyard_forge::ContentCommit>,
+    ) = if dry {
+        (
+            Box::new(halyard_forge::PreviewForge::new()),
+            None,
+            content_commit,
+        )
     } else {
         let env = forge_credentials()?;
         let slug = env.repo();
+        let content_commit = live_content_commit(&context, content_commit, &branch)?;
         let forge = live_forge(env);
-        (forge, Some(slug))
+        (forge, Some(slug), content_commit)
     };
     // The live run rides the §11.5 call governor (M5.5, ADR-0015); the
     // dry run stays ungoverned — a forecast spends no calls (I5).
@@ -2483,7 +2600,7 @@ fn run_auto_pass(
                     branch: branch.clone(),
                     pending_releases: pending_specs.clone(),
                     release_pr,
-                    content_commit: None,
+                    content_commit,
                 },
             )
         })
@@ -2571,6 +2688,26 @@ fn release_lane(remote_url: Option<&str>) -> Result<ReleaseLane, CliError> {
             repo: format!("{}/{}", endpoint.owner(), endpoint.repo()),
         });
     }
+    if let Some(endpoint) =
+        remote_url.and_then(halyard_forge_bitbucket::BitbucketEndpoint::from_remote)
+    {
+        let endpoint = bitbucket_endpoint_with_base_override(endpoint)?;
+        let Some(token) = bitbucket_token_from_env() else {
+            return Ok(ReleaseLane::Skipped {
+                reason: "no forge credentials (export BITBUCKET_TOKEN to create forge \
+                         releases on a Bitbucket remote)"
+                    .to_owned(),
+            });
+        };
+        return Ok(ReleaseLane::Forge {
+            forge: Box::new(halyard_forge_bitbucket::BitbucketRestForge::with_transport(
+                endpoint.clone(),
+                &token,
+                halyard_forge_bitbucket::UreqTransport::new(),
+            )),
+            repo: format!("{}/{}", endpoint.workspace(), endpoint.repo()),
+        });
+    }
     Ok(ReleaseLane::GitHub)
 }
 
@@ -2582,62 +2719,63 @@ fn forge_release_phase(
     states: &[halyard_core::PackageTagState],
 ) -> Result<render::ForgeReleases, CliError> {
     let remote_url = remote_origin_url()?;
-    let (forge, repo): (Box<dyn halyard_forge::Forge>, String) =
-        match release_lane(remote_url.as_deref())? {
-            // The GitLab lane (ADR-0049) / the Forgejo/Gitea lane (ADR-0050):
-            // the adapter's own remote grammar, the `*_API_URL` base
-            // override, token auth — missing credentials stay the honest
-            // skip (the git-side half already ran; the re-run completes the
-            // forge half).
-            ReleaseLane::Skipped { reason } => {
-                return Ok(render::ForgeReleases::Skipped { reason });
-            }
-            ReleaseLane::Forge { forge, repo } => (forge, repo),
-            ReleaseLane::GitHub => {
-                let credentials = if let Some(app) = app_credentials_from_env()? {
-                    halyard_forge_github::ForgeCredentials::App(Box::new(app))
-                } else {
-                    let token = std::env::var("HALYARD_FORGE_TOKEN")
-                        .ok()
-                        .filter(|value| !value.is_empty())
-                        .or_else(|| {
-                            std::env::var("GITHUB_TOKEN")
-                                .ok()
-                                .filter(|value| !value.is_empty())
-                        });
-                    let Some(token) = token else {
-                        return Ok(render::ForgeReleases::Skipped {
-                            reason: "no forge credentials (configure the GitHub App env or export \
-                             GITHUB_TOKEN to create forge releases)"
-                                .to_owned(),
-                        });
-                    };
-                    halyard_forge_github::ForgeCredentials::from_token(&token)
-                };
-                let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
-                let Some((owner, repo)) = slug else {
+    let (forge, repo): (Box<dyn halyard_forge::Forge>, String) = match release_lane(
+        remote_url.as_deref(),
+    )? {
+        // The GitLab lane (ADR-0049) / the Forgejo/Gitea lane (ADR-0050):
+        // the adapter's own remote grammar, the `*_API_URL` base
+        // override, token auth — missing credentials stay the honest
+        // skip (the git-side half already ran; the re-run completes the
+        // forge half).
+        ReleaseLane::Skipped { reason } => {
+            return Ok(render::ForgeReleases::Skipped { reason });
+        }
+        ReleaseLane::Forge { forge, repo } => (forge, repo),
+        ReleaseLane::GitHub => {
+            let credentials = if let Some(app) = app_credentials_from_env()? {
+                halyard_forge_github::ForgeCredentials::App(Box::new(app))
+            } else {
+                let token = std::env::var("HALYARD_FORGE_TOKEN")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| {
+                        std::env::var("GITHUB_TOKEN")
+                            .ok()
+                            .filter(|value| !value.is_empty())
+                    });
+                let Some(token) = token else {
                     return Ok(render::ForgeReleases::Skipped {
-                        reason: "origin is not a GitHub, GitLab, or Forgejo/Gitea remote — forge \
-                         releases are skipped, never faked"
+                        reason: "no forge credentials (configure the GitHub App env or export \
+                             GITHUB_TOKEN to create forge releases)"
                             .to_owned(),
                     });
                 };
-                let api_base = std::env::var("GITHUB_API_URL")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| "https://api.github.com".to_owned());
-                let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
-                    .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-                (
-                    Box::new(GitHubRestForge::with_credentials(
-                        endpoint,
-                        credentials,
-                        UreqTransport::new(),
-                    )),
-                    format!("{owner}/{repo}"),
-                )
-            }
-        };
+                halyard_forge_github::ForgeCredentials::from_token(&token)
+            };
+            let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
+            let Some((owner, repo)) = slug else {
+                return Ok(render::ForgeReleases::Skipped {
+                        reason: "origin is not a GitHub, GitLab, Forgejo/Gitea, or Bitbucket remote — forge \
+                         releases are skipped, never faked"
+                            .to_owned(),
+                    });
+            };
+            let api_base = std::env::var("GITHUB_API_URL")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "https://api.github.com".to_owned());
+            let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+            (
+                Box::new(GitHubRestForge::with_credentials(
+                    endpoint,
+                    credentials,
+                    UreqTransport::new(),
+                )),
+                format!("{owner}/{repo}"),
+            )
+        }
+    };
     // The notes payloads ride the same notes pipeline `pr --dry` uses;
     // the plan feeds the entry-preview fallback (no fabrication). The
     // plan and the reconciliation ride in from the shared pass.
@@ -3650,6 +3788,11 @@ fn cmd_action_auto(
             _ => None,
         })
         .collect();
+    // The prepare phase's content verdict (§11.1 step 3): the machine's
+    // own two content effects, mapped onto the §12 view — the git-side
+    // CAS push reports as a match (the branch carries the tree), the
+    // api half and the dry forecast as the forge's commit.
+    let content_effect = content_effect_view(&outcome.machine.effects);
     let minted = outcome
         .machine
         .effects
@@ -3675,17 +3818,32 @@ fn cmd_action_auto(
         forecast: outcome.dry,
         created_tags: outcome.created,
         pr_effect,
+        content_effect,
         release_urls,
         forge,
     };
     let outputs = halyard_action::auto_outputs(&outcome.plan, &plan_path, &pass)
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let summary = halyard_action::auto_summary(&outcome.plan, &pass);
-    let extras = serde_json::json!({
-        "dry": outcome.dry,
-        "propagated": outcome.machine.propagated,
-        "created_tags": pass.created_tags,
-    });
+    // The extras map: the content block rides only when the prepare
+    // phase carried a content verdict — the report keeps its documented
+    // shape on the PROPAGATE and close-probe passes (the `check`
+    // comment block's convention), and the vocabulary is the machine
+    // effects' own (the pr report's effect rows).
+    let mut extras = serde_json::Map::new();
+    extras.insert("dry".to_owned(), serde_json::json!(outcome.dry));
+    extras.insert(
+        "propagated".to_owned(),
+        serde_json::json!(outcome.machine.propagated),
+    );
+    extras.insert(
+        "created_tags".to_owned(),
+        serde_json::json!(pass.created_tags),
+    );
+    if let Some(content) = &pass.content_effect {
+        extras.insert("content".to_owned(), content_json(content));
+    }
+    let extras = serde_json::Value::Object(extras);
     render_action_run(
         cli,
         "auto",
@@ -3695,6 +3853,41 @@ fn cmd_action_auto(
         outcome.degraded,
         &extras,
     )
+}
+
+/// The prepare phase's content verdict (§11.1 step 3): the machine's
+/// own two content effects, mapped onto the §12 view — the git-side CAS
+/// push reports as a match (the branch carries the tree), the api half
+/// and the dry forecast as the forge's commit.
+fn content_effect_view(
+    effects: &[halyard_forge::MachineEffect],
+) -> Option<halyard_action::ContentEffect> {
+    effects.iter().find_map(|effect| match effect {
+        halyard_forge::MachineEffect::ContentMatched { tree_oid } => {
+            Some(halyard_action::ContentEffect::Matched {
+                tree_oid: tree_oid.as_str().to_owned(),
+            })
+        }
+        halyard_forge::MachineEffect::ContentCommitted { oid } => {
+            Some(halyard_action::ContentEffect::Committed {
+                oid: oid.as_str().to_owned(),
+            })
+        }
+        _ => None,
+    })
+}
+
+/// The JSON row of one content verdict — the machine effects' own
+/// vocabulary, the same shapes the `pr` report's effect rows speak.
+fn content_json(content: &halyard_action::ContentEffect) -> serde_json::Value {
+    match content {
+        halyard_action::ContentEffect::Matched { tree_oid } => {
+            serde_json::json!({ "type": "content_matched", "tree_oid": tree_oid })
+        }
+        halyard_action::ContentEffect::Committed { oid } => {
+            serde_json::json!({ "type": "content_committed", "oid": oid })
+        }
+    }
 }
 
 /// The §12 `check` mode (ADR-0044): the check surface's verdict through
