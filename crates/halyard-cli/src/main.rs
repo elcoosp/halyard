@@ -38,6 +38,7 @@ use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_forge::Forge as _;
 use halyard_forge_github::{ForgeEndpoint, GitHubRestForge, UreqTransport};
+use halyard_forge_gitlab::{GitLabEndpoint, GitLabRestForge};
 use halyard_git::GitHistory;
 use halyard_git::fetch::TagFetcher as _;
 use halyard_git::tag_target::{GixTagTargetResolver, ManifestVersionProbe};
@@ -156,12 +157,14 @@ enum Command {
         #[arg(long)]
         dry: bool,
     },
-    /// The §11.1 prepare phase (M4.2b + M4.1b): plan → §11.3 body →
-    /// machine pass over the adapter — `--dry` forecasts offline over
-    /// the preview adapter (no network, I5); live mode runs the same
-    /// machine over the GitHub REST adapter (ADR-0013): the Release PR
-    /// is opened/rewritten/closed for real, gated on
-    /// `GITHUB_TOKEN`/`HALYARD_FORGE_TOKEN` and a GitHub-shaped origin.
+    /// The §11.1 prepare phase (M4.2b + M4.1b + M7 step 1): plan →
+    /// §11.3 body → machine pass over the resolved adapter — `--dry`
+    /// forecasts offline over the preview adapter (no network, I5);
+    /// live mode runs the same machine over the origin-shaped REST
+    /// adapter (ADR-0013 GitHub, ADR-0049 GitLab): the Release PR/MR
+    /// is opened/rewritten/closed for real, gated on the lane's token
+    /// (`GITHUB_TOKEN`/`GITLAB_TOKEN`/`HALYARD_FORGE_TOKEN`) and a
+    /// GitHub- or GitLab-shaped origin.
     Pr {
         /// Forecast the prepare phase offline (no network touched).
         #[arg(long)]
@@ -1052,8 +1055,8 @@ fn run_pr_pass(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<PrPassOu
     } else {
         let env = forge_credentials()?;
         let content_commit = live_content_commit(&context, content_commit, &branch)?;
-        let slug = env.endpoint.slug();
-        let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
+        let slug = env.repo();
+        let forge = live_forge(env);
         (forge, Some(slug), content_commit)
     };
     // The live run rides the §11.5 call governor (M5.5, ADR-0015):
@@ -1394,21 +1397,45 @@ fn render_pr_report(
     Ok(())
 }
 
-/// The live forge wire-up's environment-derived credentials (ADR-0013,
-/// ADR-0014): the GitHub App env (`HALYARD_APP_ID` +
-/// `HALYARD_APP_PRIVATE_KEY`/`HALYARD_APP_PRIVATE_KEY_PATH` +
-/// `HALYARD_APP_INSTALLATION_ID`) wins when present — forge actions
-/// taken with an installation token trigger the repository's own
-/// workflows, which a static `GITHUB_TOKEN` does not (§11.5) — else the
-/// token (`HALYARD_FORGE_TOKEN` first — the nightly smoke job's
-/// contract — then `GITHUB_TOKEN`). The `owner/repo` coordinates come
-/// from the configured `origin` (the changelog crate's remote-shape
-/// grammar, the same parser the compare link rides) and the API base
-/// (`GITHUB_API_URL` override, else github.com — GitHub Enterprise and
-/// the loopback mock lane both ride this).
-struct ForgeEnv {
-    endpoint: ForgeEndpoint,
-    credentials: halyard_forge_github::ForgeCredentials,
+/// The live forge lane the origin resolves to (ADR-0013/0014 for the
+/// GitHub half, M7 step 1/ADR-0049 for the GitLab half): GitLab joins
+/// GitHub as a first-class lane — the adapter, not an assumption, is
+/// invariant I9 at the shell level too. The GitHub lane's credentials
+/// are the App env (`HALYARD_APP_*`; installation tokens trigger the
+/// repository's own workflows, which a static `GITHUB_TOKEN` does not —
+/// §11.5) or the static token (`HALYARD_FORGE_TOKEN` first — the
+/// nightly smoke job's contract — then `GITHUB_TOKEN`); the GitLab
+/// lane's credential is the `PRIVATE-TOKEN` (`GITLAB_TOKEN` first, then
+/// the same `HALYARD_FORGE_TOKEN` contract). The coordinates come from
+/// the configured `origin` (the changelog crate's remote-shape grammar
+/// for GitHub, the adapter's own grammar for GitLab) and the API base
+/// (`GITHUB_API_URL`/`GITLAB_API_URL` overrides — GitHub Enterprise,
+/// self-hosted instances and the loopback mock lanes all ride them).
+enum ForgeEnv {
+    /// The M4.1b GitHub REST lane (token or App credentials).
+    GitHub {
+        endpoint: ForgeEndpoint,
+        credentials: halyard_forge_github::ForgeCredentials,
+    },
+    /// The M7 GitLab REST lane: `PRIVATE-TOKEN` auth only (the adapter
+    /// has no App-auth surface — research §1/§8).
+    GitLab {
+        endpoint: GitLabEndpoint,
+        token: std::sync::Arc<str>,
+    },
+}
+
+impl ForgeEnv {
+    /// The repo coordinates the render surfaces carry: the GitHub
+    /// `owner/repo` slug, or the GitLab project path (the changelog's
+    /// compare-link grammar is GitHub-shaped, so a GitLab slug renders
+    /// the honest no-link form downstream).
+    fn repo(&self) -> String {
+        match self {
+            ForgeEnv::GitHub { endpoint, .. } => endpoint.slug(),
+            ForgeEnv::GitLab { endpoint, .. } => endpoint.project_path().to_owned(),
+        }
+    }
 }
 
 /// The GitHub App env, validated as a complete set: any `HALYARD_APP_*`
@@ -1482,7 +1509,41 @@ fn app_credentials_from_env() -> Result<Option<halyard_forge_github::AppCredenti
 }
 
 fn forge_credentials() -> Result<ForgeEnv, CliError> {
-    let credentials = if let Some(app) = app_credentials_from_env()? {
+    // The App env is committed once any HALYARD_APP_* variable is set —
+    // the fail-closed completeness check runs on every lane (a partial
+    // set is a caller bug whatever the origin is).
+    let app = app_credentials_from_env()?;
+    let remote_url = remote_origin_url()?;
+    // M7 step 1 (ADR-0049): the GitLab lane rides the adapter's own
+    // remote grammar (https / git@ / ssh, nested groups preserved).
+    if let Some(endpoint) = remote_url
+        .as_deref()
+        .and_then(halyard_forge_gitlab::GitLabEndpoint::from_remote)
+    {
+        if app.is_some() {
+            return Err(CliError::new(
+                "E-FORGE-AUTH",
+                "the HALYARD_APP_* env configures GitHub App auth, but the origin is a \
+                 GitLab remote: the GitLab adapter rides a PRIVATE-TOKEN (export \
+                 GITLAB_TOKEN, or HALYARD_FORGE_TOKEN) — unset the App env or point \
+                 remote.origin.url at a GitHub remote",
+            ));
+        }
+        let token = gitlab_token_from_env().ok_or_else(|| {
+            CliError::new(
+                "E-FORGE-AUTH",
+                "live forge mode needs credentials: export GITLAB_TOKEN (a GitLab token \
+                 with api scope) — or HALYARD_FORGE_TOKEN — and re-run `halyard doctor` \
+                 to verify it can reach the repository",
+            )
+        })?;
+        let endpoint = gitlab_endpoint_with_base_override(endpoint)?;
+        return Ok(ForgeEnv::GitLab {
+            endpoint,
+            token: std::sync::Arc::from(token.as_str()),
+        });
+    }
+    let credentials = if let Some(app) = app {
         halyard_forge_github::ForgeCredentials::App(Box::new(app))
     } else {
         let token = std::env::var("HALYARD_FORGE_TOKEN")
@@ -1497,22 +1558,21 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
                 CliError::new(
                     "E-FORGE-AUTH",
                     "live forge mode needs credentials: configure the GitHub App env \
-                         (HALYARD_APP_ID + HALYARD_APP_PRIVATE_KEY_PATH + \
-                         HALYARD_APP_INSTALLATION_ID) or export GITHUB_TOKEN (or \
-                         HALYARD_FORGE_TOKEN) with repo access, and re-run `halyard doctor` \
-                         to verify",
+                     (HALYARD_APP_ID + HALYARD_APP_PRIVATE_KEY_PATH + \
+                     HALYARD_APP_INSTALLATION_ID) or export GITHUB_TOKEN (or \
+                     HALYARD_FORGE_TOKEN) with repo access, and re-run `halyard doctor` \
+                     to verify",
                 )
             })?;
         halyard_forge_github::ForgeCredentials::from_token(&token)
     };
-    let remote_url = remote_origin_url()?;
     let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
     let (owner, repo) = slug.ok_or_else(|| {
         CliError::new(
             "E-CLI-PR",
-            "live forge mode needs a GitHub origin: set remote.origin.url to a GitHub \
-             remote (the adapter is the M4.1b GitHub REST one; foreign forges are Year-2 \
-             milestones)",
+            "live forge mode needs a GitHub or GitLab origin: set remote.origin.url to one \
+             (the adapters are the M4.1b GitHub REST and the M7 GitLab REST ones; the other \
+             forges are later Year-2 milestones)",
         )
     })?;
     let api_base = std::env::var("GITHUB_API_URL")
@@ -1521,18 +1581,60 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
         .unwrap_or_else(|| "https://api.github.com".to_owned());
     let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    Ok(ForgeEnv {
+    Ok(ForgeEnv::GitHub {
         endpoint,
         credentials,
     })
 }
 
-/// The live mode's adapter construction: the REST adapter over the
-/// resolved credentials — token credentials keep the M4.1b behavior,
-/// App credentials mint their installation token through the same
-/// transport (ADR-0014).
-fn live_forge(env: ForgeEnv) -> GitHubRestForge<UreqTransport> {
-    GitHubRestForge::with_credentials(env.endpoint, env.credentials, UreqTransport::new())
+/// The GitLab token (`GITLAB_TOKEN` first — the adapter's own env — then
+/// the nightly smoke job's `HALYARD_FORGE_TOKEN` contract), or `None`
+/// when neither is set.
+fn gitlab_token_from_env() -> Option<String> {
+    std::env::var("GITLAB_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("HALYARD_FORGE_TOKEN")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+}
+
+/// The GitLab API-base override (`GITLAB_API_URL` — self-hosted
+/// instances and the offline lane; the base carries the `/api/v4` root,
+/// which is never appended implicitly).
+fn gitlab_endpoint_with_base_override(
+    endpoint: GitLabEndpoint,
+) -> Result<GitLabEndpoint, CliError> {
+    match std::env::var("GITLAB_API_URL") {
+        Ok(base) if !base.is_empty() => GitLabEndpoint::with_base(endpoint.project_path(), &base)
+            .map_err(|e| CliError::new(e.code(), e.to_string())),
+        _ => Ok(endpoint),
+    }
+}
+
+/// The live mode's adapter construction: the resolved lane builds its
+/// own REST adapter over the real client (ADR-0049: the GitLab lane
+/// rides `PRIVATE-TOKEN`; the GitHub lane keeps the M4.1b behavior —
+/// token credentials and App credentials that mint through the same
+/// transport).
+fn live_forge(env: ForgeEnv) -> Box<dyn halyard_forge::Forge> {
+    match env {
+        ForgeEnv::GitHub {
+            endpoint,
+            credentials,
+        } => Box::new(GitHubRestForge::with_credentials(
+            endpoint,
+            credentials,
+            UreqTransport::new(),
+        )),
+        ForgeEnv::GitLab { endpoint, token } => Box::new(GitLabRestForge::with_transport(
+            endpoint,
+            &token,
+            halyard_forge_gitlab::UreqTransport::new(),
+        )),
+    }
 }
 
 /// The §11.5 call governor's shell policy (M5.5, ADR-0015): the
@@ -2282,8 +2384,8 @@ fn run_auto_pass(
         (Box::new(halyard_forge::PreviewForge::new()), None)
     } else {
         let env = forge_credentials()?;
-        let slug = env.endpoint.slug();
-        let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
+        let slug = env.repo();
+        let forge = live_forge(env);
         (forge, Some(slug))
     };
     // The live run rides the §11.5 call governor (M5.5, ADR-0015); the
@@ -2325,14 +2427,16 @@ fn run_auto_pass(
     })
 }
 
-/// The live release's forge half (§11.1 step 2, M4.1b): the pending
-/// releases ride the §11.1 machine's tag phase over the GitHub REST
-/// adapter — GET-by-tag-first creation with the notes-pipeline payloads.
-/// Missing credentials or a foreign origin is an honest skip rendered
-/// into the report (the git-side half still ran); adapter failures fail
-/// the run fail-closed (I2: the re-run completes — GET finds what
-/// landed). The plan and the reconciliation rows ride in from the
-/// shared pass — one plan, one reconciliation, no recomputation.
+/// The live release's forge half (§11.1 step 2, M4.1b + M7 step 1):
+/// the pending releases ride the §11.1 machine's tag phase over the
+/// resolved adapter — GET-by-tag-first creation with the
+/// notes-pipeline payloads, GitHub (ADR-0013) or GitLab (ADR-0049) per
+/// the origin's shape. Missing credentials or a foreign origin is an
+/// honest skip rendered into the report (the git-side half still ran);
+/// adapter failures fail the run fail-closed (I2: the re-run completes
+/// — GET finds what landed). The plan and the reconciliation rows ride
+/// in from the shared pass — one plan, one reconciliation, no
+/// recomputation.
 fn forge_release_phase(
     context: &Context,
     profiler: &mut Profiler,
@@ -2340,41 +2444,75 @@ fn forge_release_phase(
     plan: &halyard_core::Plan,
     states: &[halyard_core::PackageTagState],
 ) -> Result<render::ForgeReleases, CliError> {
-    let credentials = if let Some(app) = app_credentials_from_env()? {
-        halyard_forge_github::ForgeCredentials::App(Box::new(app))
-    } else {
-        let token = std::env::var("HALYARD_FORGE_TOKEN")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                std::env::var("GITHUB_TOKEN")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-            });
-        let Some(token) = token else {
+    let remote_url = remote_origin_url()?;
+    let (forge, repo): (Box<dyn halyard_forge::Forge>, String) = if let Some(endpoint) = remote_url
+        .as_deref()
+        .and_then(halyard_forge_gitlab::GitLabEndpoint::from_remote)
+    {
+        // The GitLab lane (ADR-0049): the adapter's own remote grammar,
+        // the `GITLAB_API_URL` base override, `PRIVATE-TOKEN` auth —
+        // missing credentials stay the honest skip (the git-side half
+        // already ran; the re-run completes the forge half).
+        let endpoint = gitlab_endpoint_with_base_override(endpoint)?;
+        let Some(token) = gitlab_token_from_env() else {
             return Ok(render::ForgeReleases::Skipped {
-                reason: "no forge credentials (configure the GitHub App env or export \
-                         GITHUB_TOKEN to create forge releases)"
+                reason: "no forge credentials (export GITLAB_TOKEN to create forge \
+                         releases on a GitLab remote)"
                     .to_owned(),
             });
         };
-        halyard_forge_github::ForgeCredentials::from_token(&token)
+        (
+            Box::new(GitLabRestForge::with_transport(
+                endpoint.clone(),
+                &token,
+                halyard_forge_gitlab::UreqTransport::new(),
+            )),
+            endpoint.project_path().to_owned(),
+        )
+    } else {
+        let credentials = if let Some(app) = app_credentials_from_env()? {
+            halyard_forge_github::ForgeCredentials::App(Box::new(app))
+        } else {
+            let token = std::env::var("HALYARD_FORGE_TOKEN")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    std::env::var("GITHUB_TOKEN")
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                });
+            let Some(token) = token else {
+                return Ok(render::ForgeReleases::Skipped {
+                    reason: "no forge credentials (configure the GitHub App env or export \
+                             GITHUB_TOKEN to create forge releases)"
+                        .to_owned(),
+                });
+            };
+            halyard_forge_github::ForgeCredentials::from_token(&token)
+        };
+        let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
+        let Some((owner, repo)) = slug else {
+            return Ok(render::ForgeReleases::Skipped {
+                reason: "origin is not a GitHub or GitLab remote — forge releases are \
+                         skipped, never faked"
+                    .to_owned(),
+            });
+        };
+        let api_base = std::env::var("GITHUB_API_URL")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://api.github.com".to_owned());
+        let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+        (
+            Box::new(GitHubRestForge::with_credentials(
+                endpoint,
+                credentials,
+                UreqTransport::new(),
+            )),
+            format!("{owner}/{repo}"),
+        )
     };
-    let remote_url = remote_origin_url()?;
-    let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
-    let Some((owner, repo)) = slug else {
-        return Ok(render::ForgeReleases::Skipped {
-            reason: "origin is not a GitHub remote — forge releases are skipped, never faked"
-                .to_owned(),
-        });
-    };
-    let api_base = std::env::var("GITHUB_API_URL")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "https://api.github.com".to_owned());
-    let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
-        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let forge = GitHubRestForge::with_credentials(endpoint, credentials, UreqTransport::new());
     // The notes payloads ride the same notes pipeline `pr --dry` uses;
     // the plan feeds the entry-preview fallback (no fabrication). The
     // plan and the reconciliation ride in from the shared pass.
@@ -2394,7 +2532,7 @@ fn forge_release_phase(
     // calls).
     let policy = governor_policy_from_env()?;
     let (clock, sleeper) = halyard_forge::governor::system_time();
-    let governor = halyard_forge::Governor::new(&forge, policy, clock, sleeper);
+    let governor = halyard_forge::Governor::new(forge.as_ref(), policy, clock, sleeper);
     let report = profiler
         .span("release-forge-phase", || {
             halyard_forge::run_release_machine(
@@ -2411,7 +2549,7 @@ fn forge_release_phase(
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     Ok(render::ForgeReleases::Ran {
-        repo: format!("{owner}/{repo}"),
+        repo,
         effects: report.effects,
         calls: report.calls,
         governor: render::GovernorSummary::of(&governor),
@@ -3953,7 +4091,7 @@ fn run_check_comment(
             ),
         )
     })?;
-    let inner: Box<dyn halyard_forge::Forge> = Box::new(live_forge(env));
+    let inner: Box<dyn halyard_forge::Forge> = live_forge(env);
     let (clock, sleeper) = halyard_forge::governor::system_time();
     let governor =
         halyard_forge::Governor::new(inner.as_ref(), governor_policy_from_env()?, clock, sleeper);
