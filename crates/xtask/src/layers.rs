@@ -134,6 +134,18 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core", "halyard-forge"],
         external: Some(&["serde", "serde_json", "ureq"]),
     },
+    // M7 step 3 Bitbucket REST adapter (ADR-0051): the pull-flow twin of
+    // the Forgejo rule — seam crate + core, its own blocking `ureq`
+    // client (the forge adapters are the HTTP clients of the runtime
+    // graph), serde/serde_json for the REST bodies. No `base64` edge
+    // (the commits resource "does NOT support new commit creation" —
+    // the capability is the documented honest decline) and no `ring`
+    // edge (token-only, no App-JWT surface).
+    LayerRule {
+        name: "halyard-forge-bitbucket",
+        workspace: &["halyard-core", "halyard-forge"],
+        external: Some(&["serde", "serde_json", "ureq"]),
+    },
     // M5.1 registry existence probes (§13): the `Registry` seam over the
     // forge's transport vocabulary — the client owns no HTTP client
     // (transports are injected; the blocking one lives in
@@ -370,6 +382,7 @@ mod tests {
             "halyard-eco-npm",
             "halyard-edit",
             "halyard-forge",
+            "halyard-forge-bitbucket",
             "halyard-forge-forgejo",
             "halyard-forge-gitlab",
             "halyard-forge-github",
