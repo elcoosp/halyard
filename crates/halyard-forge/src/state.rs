@@ -24,7 +24,15 @@
 //! * **I1 idempotence** — an identical Release-PR body is a no-op
 //!   ([`MachineEffect::PrUnchanged`], zero mutating calls); a stale PR
 //!   under an empty plan is closed exactly once; releases are
-//!   GET-by-tag-first.
+//!   GET-by-tag-first; a release branch that already carries the plan's
+//!   content tree is reported ([`MachineEffect::ContentMatched`]) and
+//!   never re-committed.
+//! * **The content step** (§11.1 step 3, the M4.2 remainder) — the
+//!   caller applies the plan's EditSet in memory, hashes the built tree
+//!   and probes the remote release branch (`ls-remote`, 0 REST); the
+//!   machine compares and, on a mismatch, commits through
+//!   [`Forge::commit_via_api`] (§11.5 `commit_mode = "api"` — the
+//!   forge-signed path) *before* the Release-PR upsert.
 //! * **§11.5 call budgets** — the update path is find + upsert (2
 //!   calls), the no-op paths spend the one find probe and nothing
 //!   else. [`MachineReport::calls`] counts this pass's forge calls from
@@ -53,13 +61,14 @@
 //!         title: "chore: release v0.5.0".to_owned(),
 //!         body: "## 🚀 Release plan".to_owned(),
 //!     }),
+//!     content_commit: None,
 //! }).unwrap();
 //! assert!(report.propagated, "pending releases ⇒ prepare skipped");
 //! ```
 
 use crate::Forge;
 use crate::error::ForgeError;
-use crate::spec::{BranchName, PrSpec, ReleaseSpec};
+use crate::spec::{ApiCommit, BranchName, ContentCommit, PrSpec, ReleaseSpec};
 
 /// One effect the machine performed (or found already performed), in
 /// execution order inside [`MachineReport::effects`]. Deterministic data
@@ -113,6 +122,21 @@ pub enum MachineEffect {
         /// The forge's own PR URL of the closed PR.
         url: String,
     },
+    /// The release branch already carried the plan's content tree: the
+    /// caller's probe matched the applied tree, so no commit was needed
+    /// (§11.1 step 3 "if equal", I1 — zero mutating calls).
+    ContentMatched {
+        /// The applied content tree the probe matched.
+        tree_oid: halyard_core::reason::Oid,
+    },
+    /// The plan's content was committed onto the release branch through
+    /// the forge's API (§11.1 "else commit", §11.5 `commit_mode = "api"`
+    /// — the forge signs the commit "Verified"). On the preview adapter
+    /// the oid is the documented forecast digest.
+    ContentCommitted {
+        /// The commit the forge minted.
+        oid: halyard_core::reason::Oid,
+    },
 }
 
 /// The outcome of one [`run_release_machine`] pass: what the machine did,
@@ -151,6 +175,12 @@ pub struct MachineInput {
     /// `None` means the plan is empty — the machine closes a stale PR
     /// instead of upserting one (§11.1 step 3).
     pub release_pr: Option<PrSpec>,
+    /// The prepare phase's content (§11.1 step 3): the caller-applied
+    /// EditSet plus the caller's `ls-remote` probe of the release branch.
+    /// `None` = the plan is empty (no content to commit) or the caller
+    /// executes the git-side commit itself — the machine then performs
+    /// no content step.
+    pub content_commit: Option<ContentCommit>,
 }
 
 /// Runs one §11.1 machine pass against `forge`.
@@ -172,7 +202,8 @@ pub fn run_release_machine(
 ) -> Result<MachineReport, ForgeError> {
     // Fail-closed input validation: nothing is attempted with a caller
     // bug in the input (an empty tag would otherwise reach a real forge
-    // call and be rejected there, after the cheaper effects ran).
+    // call and be rejected there, after the cheaper effects ran). The
+    // content commit's shared contract rides the same gate.
     for (index, spec) in input.pending_releases.iter().enumerate() {
         if spec.tag.is_empty() {
             return Err(ForgeError::request(format!(
@@ -180,6 +211,9 @@ pub fn run_release_machine(
                  package's tag_template before handing releases to the machine"
             )));
         }
+    }
+    if let Some(content) = &input.content_commit {
+        content.validate()?;
     }
     let calls_before = forge.calls().len();
     let mut effects = Vec::new();
@@ -212,7 +246,30 @@ pub fn run_release_machine(
         });
     }
 
-    // PREPARE PHASE (§11.1 step 3) — only when nothing is pending.
+    // PREPARE PHASE (§11.1 step 3) — only when nothing is pending. The
+    // content step runs before the Release-PR upsert (§11.1 order: the
+    // branch carries the content the PR previews). The caller probed the
+    // remote branch (`ls-remote`, 0 REST) and hashed the applied tree;
+    // a match means the branch already carries the plan's content — the
+    // commit is skipped (I1, zero mutating calls) — and a mismatch (or
+    // an absent branch) means the content rides `commit_via_api` (§11.5
+    // `commit_mode = "api"`), whose ref update is the forge-side CAS
+    // (§11.2): a racing writer surfaces as the adapter's conflict.
+    if let Some(content) = &input.content_commit {
+        if content.remote_tree_oid.as_ref() == Some(&content.tree_oid) {
+            effects.push(MachineEffect::ContentMatched {
+                tree_oid: content.tree_oid.clone(),
+            });
+        } else {
+            let oid = forge.commit_via_api(&ApiCommit {
+                branch: input.branch.clone(),
+                message: content.message.clone(),
+                files: content.files.clone(),
+            })?;
+            effects.push(MachineEffect::ContentCommitted { oid });
+        }
+    }
+
     let existing = forge.find_release_pr(&input.branch)?;
     match (&input.release_pr, existing) {
         // Plan non-empty: upsert, skipping the write when the forge
