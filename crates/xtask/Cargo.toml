@@ -15,6 +15,9 @@ halyard-discover = { workspace = true }
 halyard-edit = { workspace = true }
 halyard-git = { workspace = true }
 halyard-test-support = { workspace = true }
+# ADR-0052: the §12 distribution drift gate — the check-release runs
+# the templates against the grammar single-sourced in halyard-action.
+halyard-action = { workspace = true }
 semver = { workspace = true }
 tempfile = { workspace = true }
 serde = { workspace = true }
