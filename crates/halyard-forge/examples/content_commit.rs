@@ -1,6 +1,6 @@
 //! The §11.1 step-3 content commit (the M4.2 remainder): the machine's
 //! prepare-phase content step driven over the deterministic
-//! [`MemoryForge`]. The caller applies the plan's EditSet in memory and
+//! [`MemoryForge`]. The caller applies the plan's `EditSet` in memory and
 //! hashes the content tree (the shell's `pr` executor does this through
 //! `halyard-edit::stage_plan_edits` + `halyard-git::content_tree_oid`);
 //! the machine compares against the caller-probed remote tree and
@@ -20,13 +20,11 @@ use halyard_forge::{
 /// A 40-hex OID fixture (deterministic; at this seam the OID is opaque
 /// data — only equality matters to the machine's compare).
 fn tree_oid(seed: u8) -> Oid {
-    let digits: String = std::iter::repeat_n(format!("{seed:02x}"), 20)
-        .collect::<Vec<_>>()
-        .join("");
-    Oid::from_hex(digits.as_bytes()).expect("hex fixture is 40 digits")
+    let digits: String = std::iter::repeat_n(format!("{seed:02x}"), 20).collect();
+    Oid::from_hex(digits.as_bytes()).unwrap_or_else(|| unreachable!("hex fixture is 40 digits"))
 }
 
-/// The applied EditSet the caller assembled: the version row of one
+/// The applied `EditSet` the caller assembled: the version row of one
 /// manifest plus the changelog the plan renders.
 fn applied_files() -> Vec<ApiFile> {
     vec![
