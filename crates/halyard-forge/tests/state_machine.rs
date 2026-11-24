@@ -7,6 +7,7 @@
 //! duplicates). The call log pins the §11.5 budgets: ≤ 2 calls on the
 //! update path, zero mutating calls on the no-op paths.
 
+use halyard_core::reason::Oid;
 use halyard_forge::{
     BranchName, Forge, ForgeError, MachineEffect, MachineInput, MemoryForge, PrSpec, ReleaseSpec,
     run_release_machine,
@@ -59,6 +60,7 @@ fn tag_phase_creates_releases_and_propagates() {
         branch: main_branch(),
         pending_releases: two_pending_releases(),
         release_pr: Some(release_pr_spec("## 🚀 Release plan")),
+        content_commit: None,
     };
     let report =
         run(&forge, &input).unwrap_or_else(|e| unreachable!("tag phase must succeed: {e}"));
@@ -94,6 +96,7 @@ fn tag_phase_rerun_is_fully_idempotent() {
         branch: main_branch(),
         pending_releases: two_pending_releases(),
         release_pr: None,
+        content_commit: None,
     };
     let _ = run(&forge, &input).unwrap_or_else(|e| unreachable!("first pass must succeed: {e}"));
     let rerun = run(&forge, &input).unwrap_or_else(|e| unreachable!("rerun must succeed: {e}"));
@@ -123,6 +126,7 @@ fn prepare_phase_opens_then_updates_in_place() {
         branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(release_pr_spec(body)),
+        content_commit: None,
     };
     let first = run(
         &forge,
@@ -177,6 +181,7 @@ fn update_path_stays_within_the_two_call_budget() {
         branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(release_pr_spec("body-v2")),
+        content_commit: None,
     };
     let _ = run(&forge, &input).unwrap_or_else(|e| unreachable!("open pass must succeed: {e}"));
     let unchanged =
@@ -186,6 +191,7 @@ fn update_path_stays_within_the_two_call_budget() {
         branch,
         pending_releases: Vec::new(),
         release_pr: Some(release_pr_spec("body-v3")),
+        content_commit: None,
     };
     let update =
         run(&forge, &changed).unwrap_or_else(|e| unreachable!("update pass must succeed: {e}"));
@@ -204,6 +210,7 @@ fn empty_plan_closes_the_stale_release_pr() {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     };
     let report =
         run(&forge, &input).unwrap_or_else(|e| unreachable!("close pass must succeed: {e}"));
@@ -233,6 +240,7 @@ fn empty_plan_without_a_stale_pr_is_zero_mutating_calls() {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     };
     let report =
         run(&forge, &input).unwrap_or_else(|e| unreachable!("no-op pass must succeed: {e}"));
@@ -255,6 +263,7 @@ fn failure_injection_midway_recovers_without_duplicates() {
                 branch: main_branch(),
                 pending_releases: two_pending_releases(),
                 release_pr: None,
+                content_commit: None,
             },
         ),
         (
@@ -263,6 +272,7 @@ fn failure_injection_midway_recovers_without_duplicates() {
                 branch: main_branch(),
                 pending_releases: Vec::new(),
                 release_pr: Some(release_pr_spec("plan")),
+                content_commit: None,
             },
         ),
     ];
@@ -324,6 +334,7 @@ fn failure_during_close_leaves_the_pr_open() {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     };
     let Err(err) = run(&forge, &input) else {
         unreachable!("the armed failpoint must fail the close");
@@ -380,6 +391,7 @@ fn close_pr_defaults_to_the_unsupported_decline() {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     };
     let Err(err) = run(&forge, &input) else {
         unreachable!("the default close_pr must decline the machine's close");
@@ -403,6 +415,7 @@ fn machine_input_validation_fails_closed_before_any_call() {
             notes: "notes".to_owned(),
         }],
         release_pr: None,
+        content_commit: None,
     };
     let Err(err) = run(&forge, &input) else {
         unreachable!("an empty pending tag must be rejected");
@@ -425,6 +438,7 @@ fn report_is_deterministic_for_equal_state() {
             branch: branch.clone(),
             pending_releases: two_pending_releases(),
             release_pr: None,
+            content_commit: None,
         };
         let _ =
             run(&forge, &tag_input).unwrap_or_else(|e| unreachable!("tag pass must succeed: {e}"));
@@ -432,6 +446,7 @@ fn report_is_deterministic_for_equal_state() {
             branch: branch.clone(),
             pending_releases: Vec::new(),
             release_pr: Some(release_pr_spec("plan")),
+            content_commit: None,
         };
         let pr = run(&forge, &pr_input)
             .unwrap_or_else(|e| unreachable!("prepare pass must succeed: {e}"));
@@ -453,8 +468,244 @@ fn machine_runs_against_a_trait_object() {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: Some(release_pr_spec("plan")),
+        content_commit: None,
     };
     let report =
         run(forge.as_ref(), &input).unwrap_or_else(|e| unreachable!("dyn pass must succeed: {e}"));
     assert_eq!(report.effects.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// §11.1 step 3, the content-commit half (the M4.2 remainder): the plan's
+// EditSet applied in memory → tree → compare with the remote release
+// branch tip → commit (the forge API path) → upsert the Release PR. The
+// pinned plan line (docs/HALYARD_ARCHITECTURE.md §11.1):
+//
+//   "apply EditSet in memory → build tree → compare tree OID with remote
+//    release branch tip (`ls-remote`, 0 REST)
+//    if equal: update PR body only if plan_hash differs; else commit &
+//    `push --force-with-lease`"
+//
+// The machine never edits: the caller applies the EditSet in memory and
+// hands the applied payloads plus the tree it hashed over. The machine
+// owns the compare decision and the `commit_via_api` call (§11.4) — the
+// caller-probed remote tree is the idempotence gate (I1).
+// ---------------------------------------------------------------------------
+
+/// A valid 40-hex OID fixture (a tree the caller hashed, deterministic).
+fn tree_oid_fixture(seed: &str) -> Oid {
+    let mut digits = String::with_capacity(40);
+    let source = seed.as_bytes();
+    for index in 0..20 {
+        let byte = source.get(index).copied().unwrap_or(0xa0 + index as u8);
+        digits.push_str(&format!("{byte:02x}"));
+    }
+    Oid::from_hex(digits.as_bytes()).unwrap_or_else(|| unreachable!("hex fixture is 40 digits"))
+}
+
+/// A one-file content fixture (the applied EditSet's payload).
+fn content_fixture(tree_oid: Oid, remote: Option<Oid>) -> halyard_forge::ContentCommit {
+    halyard_forge::ContentCommit {
+        message: "chore: release v0.2.0".to_owned(),
+        files: vec![halyard_forge::ApiFile {
+            path: "Cargo.toml".to_owned(),
+            content: b"[package]\nversion = \"0.2.0\"\n".to_vec(),
+        }],
+        tree_oid,
+        remote_tree_oid: remote,
+    }
+}
+
+#[test]
+fn content_commit_lands_the_plan_edits_then_upserts_the_pr() {
+    // §11.1 step 3: the remote tree diverges (first pass: no branch yet)
+    // ⇒ the machine commits the applied payloads through the forge's
+    // `commit_via_api` and then upserts the Release PR — in that order.
+    let forge = MemoryForge::new();
+    let tree = tree_oid_fixture("the-content-tree");
+    let input = MachineInput {
+        branch: main_branch(),
+        pending_releases: Vec::new(),
+        release_pr: Some(release_pr_spec("## 🚀 Release plan")),
+        content_commit: Some(content_fixture(tree.clone(), None)),
+    };
+    let report =
+        run(&forge, &input).unwrap_or_else(|e| unreachable!("content pass must succeed: {e}"));
+    assert_eq!(
+        report.effects,
+        vec![
+            MachineEffect::ContentCommitted {
+                oid: forge.commits()[0].oid.clone()
+            },
+            MachineEffect::PrOpened {
+                number: 1,
+                url: "mem://pr/1".to_owned(),
+            },
+        ],
+        "the content commit precedes the Release-PR upsert (§11.1 order)"
+    );
+    assert_eq!(forge.call_count("commit_via_api"), 1);
+    let commits = forge.commits();
+    assert_eq!(commits.len(), 1, "exactly one content commit");
+    assert_eq!(commits[0].spec.branch, main_branch());
+    assert_eq!(commits[0].spec.message, "chore: release v0.2.0");
+    assert_eq!(commits[0].spec.files.len(), 1);
+    assert_eq!(commits[0].spec.files[0].path, "Cargo.toml");
+    assert_eq!(
+        report.calls, 3,
+        "commit_via_api + find_release_pr + upsert_pr"
+    );
+}
+
+#[test]
+fn content_commit_matched_tree_skips_the_commit() {
+    // §11.1: "if equal: update PR body only" — the caller's probe matched
+    // the applied tree, so the branch already carries the content: zero
+    // mutating calls (I1), the PR upsert still runs.
+    let forge = MemoryForge::new();
+    let tree = tree_oid_fixture("the-content-tree");
+    let input = MachineInput {
+        branch: main_branch(),
+        pending_releases: Vec::new(),
+        release_pr: Some(release_pr_spec("## 🚀 Release plan")),
+        content_commit: Some(content_fixture(tree.clone(), Some(tree))),
+    };
+    let report =
+        run(&forge, &input).unwrap_or_else(|e| unreachable!("content pass must succeed: {e}"));
+    assert_eq!(
+        report.effects,
+        vec![
+            MachineEffect::ContentMatched {
+                tree_oid: tree_oid_fixture("the-content-tree")
+            },
+            MachineEffect::PrOpened {
+                number: 1,
+                url: "mem://pr/1".to_owned(),
+            },
+        ],
+        "the matched tree is reported, then the PR is upserted"
+    );
+    assert_eq!(forge.call_count("commit_via_api"), 0, "nothing to commit");
+    assert_eq!(report.calls, 2, "find_release_pr + upsert_pr only");
+}
+
+#[test]
+fn content_commit_rerun_after_landing_matches() {
+    // I1/I2: pass 1 commits the content; pass 2 re-probes the branch —
+    // the tip's tree now equals the applied tree ⇒ no duplicate commit.
+    let forge = MemoryForge::new();
+    let tree = tree_oid_fixture("the-content-tree");
+    let first = MachineInput {
+        branch: main_branch(),
+        pending_releases: Vec::new(),
+        release_pr: Some(release_pr_spec("plan")),
+        content_commit: Some(content_fixture(tree.clone(), None)),
+    };
+    let _ = run(&forge, &first).unwrap_or_else(|e| unreachable!("first pass: {e}"));
+    let second = MachineInput {
+        branch: main_branch(),
+        pending_releases: Vec::new(),
+        release_pr: Some(release_pr_spec("plan")),
+        content_commit: Some(content_fixture(tree.clone(), Some(tree.clone()))),
+    };
+    let rerun = run(&forge, &second).unwrap_or_else(|e| unreachable!("rerun: {e}"));
+    assert_eq!(
+        rerun.effects.first(),
+        Some(&MachineEffect::ContentMatched { tree_oid: tree }),
+        "the re-run observes the landed content, no duplicate commit"
+    );
+    assert_eq!(forge.call_count("commit_via_api"), 1);
+}
+
+#[test]
+fn content_commit_propagates_with_the_prepare_phase() {
+    // §11.1 PROPAGATE: pending releases gate the whole prepare phase —
+    // the content step never runs on a tag-phase pass.
+    let forge = MemoryForge::new();
+    let input = MachineInput {
+        branch: main_branch(),
+        pending_releases: two_pending_releases(),
+        release_pr: Some(release_pr_spec("plan")),
+        content_commit: Some(content_fixture(tree_oid_fixture("t"), None)),
+    };
+    let report = run(&forge, &input).unwrap_or_else(|e| unreachable!("tag pass must succeed: {e}"));
+    assert!(report.propagated);
+    assert!(
+        !report
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, MachineEffect::ContentCommitted { .. })),
+        "the content step is prepare-phase work, never tag-phase work"
+    );
+    assert_eq!(forge.call_count("commit_via_api"), 0);
+}
+
+#[test]
+fn content_commit_validates_fail_closed_before_any_call() {
+    // The shared fail-closed contract (the CommentSpec convention): an
+    // empty message or an empty payload list is a caller bug — refused
+    // with E-FORGE-REQUEST before the first forge call.
+    let cases: [(&str, fn(&mut halyard_forge::ContentCommit)); 2] = [
+        (
+            "empty message",
+            |commit: &mut halyard_forge::ContentCommit| commit.message.clear(),
+        ),
+        ("no files", |commit: &mut halyard_forge::ContentCommit| {
+            commit.files.clear()
+        }),
+    ];
+    for (name, mutate) in cases {
+        let forge = MemoryForge::new();
+        let mut commit = content_fixture(tree_oid_fixture("t"), None);
+        mutate(&mut commit);
+        let input = MachineInput {
+            branch: main_branch(),
+            pending_releases: Vec::new(),
+            release_pr: Some(release_pr_spec("plan")),
+            content_commit: Some(commit),
+        };
+        let Err(err) = run(&forge, &input) else {
+            unreachable!("{name} must be rejected");
+        };
+        assert_eq!(err.code(), "E-FORGE-REQUEST", "{name}: {err}");
+        assert!(forge.calls().is_empty(), "{name}: no call ran");
+    }
+}
+
+#[test]
+fn failure_at_the_content_commit_converges_on_the_rerun() {
+    // §15.2 failure injection (I2): the commit_via_api call fails → the
+    // pass aborts fail-closed → the re-run commits exactly once and
+    // reaches the uninterrupted end state.
+    let forge = MemoryForge::new();
+    let tree = tree_oid_fixture("the-content-tree");
+    let input = MachineInput {
+        branch: main_branch(),
+        pending_releases: Vec::new(),
+        release_pr: Some(release_pr_spec("plan")),
+        content_commit: Some(content_fixture(tree, None)),
+    };
+    forge.set_failure(Some(ForgeError::rate_limited(30)));
+    let Err(err) = run(&forge, &input) else {
+        unreachable!("the armed failpoint must fail the content commit");
+    };
+    assert_eq!(err.code(), "E-FORGE-RATE-LIMIT");
+    forge.set_failure(None);
+    let recovered = run(&forge, &input).unwrap_or_else(|e| unreachable!("recovery pass: {e}"));
+    // The failed attempt is an observable call (§11.5) but minted no
+    // commit — the re-run commits exactly once.
+    assert_eq!(forge.commits().len(), 1, "no duplicate commit");
+    assert_eq!(
+        recovered.effects,
+        vec![
+            MachineEffect::ContentCommitted {
+                oid: forge.commits()[0].oid.clone()
+            },
+            MachineEffect::PrOpened {
+                number: 1,
+                url: "mem://pr/1".to_owned(),
+            },
+        ],
+        "the re-run completes the pass with zero duplicates"
+    );
 }
