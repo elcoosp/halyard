@@ -533,7 +533,10 @@ fn stage_plan_edits_yields_the_payloads_without_writing() -> Result<(), BoxError
         2,
         "the manifest + the patched lockfile"
     );
-    let (first_path, first_content) = &staged.payloads[0];
+    let (first_path, first_content) = staged
+        .payloads
+        .first()
+        .ok_or("the manifest payload is staged")?;
     assert_eq!(first_path.as_str(), "Cargo.toml");
     let manifest = std::str::from_utf8(first_content)?;
     assert!(
@@ -557,12 +560,20 @@ fn stage_plan_edits_yields_the_payloads_without_writing() -> Result<(), BoxError
         "no file was written"
     );
     assert_eq!(staged.files.len(), 1);
+    let manifest_summary = staged.files.first().ok_or("the manifest summary")?;
     assert_eq!(
-        staged.files[0].applied, 2,
+        manifest_summary.applied, 2,
         "own version + dependent requirement"
     );
     assert_eq!(staged.lockfiles.len(), 1);
-    assert!(staged.lockfiles[0].native_reason.is_none());
+    assert!(
+        staged
+            .lockfiles
+            .first()
+            .ok_or("the lockfile summary")?
+            .native_reason
+            .is_none()
+    );
     Ok(())
 }
 
