@@ -65,6 +65,7 @@ fn bench_tag_phase_create(c: &mut Criterion) {
                 branch: main_branch(),
                 pending_releases: two_pending_releases(),
                 release_pr: None,
+                content_commit: None,
             };
             let _ = run_release_machine(&forge, &input);
         });
@@ -79,6 +80,7 @@ fn bench_tag_phase_rerun(c: &mut Criterion) {
             branch: main_branch(),
             pending_releases: two_pending_releases(),
             release_pr: None,
+            content_commit: None,
         };
         let _ = run_release_machine(&forge, &input);
         b.iter(|| {
@@ -96,6 +98,7 @@ fn bench_prepare_noop(c: &mut Criterion) {
             branch: main_branch(),
             pending_releases: Vec::new(),
             release_pr: Some(pr_spec("")),
+            content_commit: None,
         };
         b.iter(|| {
             let _ = run_release_machine(&forge, &input);
@@ -111,6 +114,7 @@ fn bench_prepare_update(c: &mut Criterion) {
             branch: main_branch(),
             pending_releases: Vec::new(),
             release_pr: Some(pr_spec("")),
+            content_commit: None,
         };
         b.iter(|| {
             let _ = run_release_machine(&forge, &input);
@@ -126,6 +130,7 @@ fn bench_empty_plan_no_pr(c: &mut Criterion) {
             branch: main_branch(),
             pending_releases: Vec::new(),
             release_pr: None,
+            content_commit: None,
         };
         b.iter(|| {
             let _ = run_release_machine(&forge, &input);
