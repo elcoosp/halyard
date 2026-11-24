@@ -1025,17 +1025,36 @@ fn run_pr_pass(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<PrPassOu
         title: title.clone(),
         body,
     });
+    // §11.1 step 3, the content half (the M4.2 remainder): the plan's
+    // EditSet applied in memory and the content tree hashed over HEAD —
+    // the offline half both postures share. The machine owns the compare
+    // and the `commit_via_api` call (§11.5 `commit_mode = "api"`); the
+    // remote probe is the live gate below (a dry forecast spends no
+    // network, I5).
+    let content_commit = content_commit_for_plan(&context, &plan)?;
     // The adapter the mode selects: the preview adapter forecasts an
     // empty forge offline; the live mode builds the GitHub REST adapter
     // from the environment and the origin remote (fail-closed on
-    // missing credentials and foreign forges).
-    let (forge, slug): (Box<dyn halyard_forge::Forge>, Option<String>) = if dry {
-        (Box::new(halyard_forge::PreviewForge::new()), None)
+    // missing credentials and foreign forges). The live content probe is
+    // a gate after the credentials: under `commit_mode = "git"` the
+    // git-side CAS push is the M4.2 remainder's shell half — absent
+    // rather than stubbed, the live run refuses naming the fix.
+    let (forge, slug, content_commit): (
+        Box<dyn halyard_forge::Forge>,
+        Option<String>,
+        Option<halyard_forge::ContentCommit>,
+    ) = if dry {
+        (
+            Box::new(halyard_forge::PreviewForge::new()),
+            None,
+            content_commit,
+        )
     } else {
         let env = forge_credentials()?;
+        let content_commit = live_content_commit(&context, content_commit, &branch)?;
         let slug = env.endpoint.slug();
         let forge = Box::new(live_forge(env)) as Box<dyn halyard_forge::Forge>;
-        (forge, Some(slug))
+        (forge, Some(slug), content_commit)
     };
     // The live run rides the §11.5 call governor (M5.5, ADR-0015):
     // pacing, Retry-After, deterministic backoff and the per-run budget
@@ -1062,6 +1081,7 @@ fn run_pr_pass(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<PrPassOu
                     branch: branch.clone(),
                     pending_releases: pending_specs.clone(),
                     release_pr,
+                    content_commit,
                 },
             )
         })
@@ -1088,6 +1108,170 @@ fn run_pr_pass(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<PrPassOu
         walk_line,
         degraded,
     })
+}
+
+/// The resolved §11.5 commit mode for a live prepare phase: the
+/// configured `[forge] commit_mode` with `auto` spelled out — `api`
+/// when GitHub App credentials are present, `git` otherwise (§11.5
+/// "Default `api` when App token present").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResolvedCommitMode {
+    /// The plan's content rides `commit_via_api` (the forge signs the
+    /// commit "Verified").
+    Api,
+    /// The plan's content commits locally and pushes with the §11.2
+    /// CAS (`--force-with-lease`).
+    Git,
+}
+
+/// Resolves the shell-side commit mode ([`ResolvedCommitMode`]) from
+/// the loaded config and the App-credential presence.
+fn resolved_commit_mode(context: &Context) -> Result<ResolvedCommitMode, CliError> {
+    let app_present = app_credentials_from_env()?.is_some();
+    Ok(match context.config.forge_commit_mode {
+        halyard_config::CommitMode::Api => ResolvedCommitMode::Api,
+        halyard_config::CommitMode::Git => ResolvedCommitMode::Git,
+        halyard_config::CommitMode::Auto if app_present => ResolvedCommitMode::Api,
+        halyard_config::CommitMode::Auto => ResolvedCommitMode::Git,
+    })
+}
+
+/// Assembles the prepare phase's content commit, offline half (§11.1
+/// step 3, the M4.2 remainder): the plan's EditSet staged in memory
+/// ([`halyard_edit::stage_plan_edits`]) and the content tree hashed over
+/// HEAD ([`halyard_git::content_tree_oid`]). Both postures share this
+/// half; the live probe ([`live_content_commit`]) supplies the remote
+/// tip the machine compares against, and a dry forecast honestly runs
+/// with the branch absent (I5 — no network).
+///
+/// An empty plan carries no content (the machine runs the close probe);
+/// a plan with releases but zero staged edits is refused — the release
+/// branch must carry the version edits, never an empty tree.
+fn content_commit_for_plan(
+    context: &Context,
+    plan: &halyard_core::Plan,
+) -> Result<Option<halyard_forge::ContentCommit>, CliError> {
+    if plan.releases.is_empty() {
+        return Ok(None);
+    }
+    let root = std::path::Path::new(".");
+    let adapters = halyard_discover::registered_adapters();
+    let staged =
+        halyard_edit::stage_plan_edits(root, plan, &context.discovery.workspace, &adapters)
+            .map_err(|e| {
+                CliError::new(
+                    "E-CLI-PR",
+                    format!("the prepare phase cannot stage the plan's edits in memory: {e}"),
+                )
+            })?;
+    if staged.payloads.is_empty() {
+        return Err(CliError::new(
+            "E-CLI-PR",
+            "the plan has releases but stages no file edits — the release branch must \
+             carry the version edits; re-plan and verify the edit sites",
+        ));
+    }
+    let tree_oid = halyard_git::content_tree_oid(
+        root,
+        &staged
+            .payloads
+            .iter()
+            .map(|(path, content)| (path.to_string(), content.clone()))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    Ok(Some(halyard_forge::ContentCommit {
+        message: release_pr_title(plan),
+        files: staged
+            .payloads
+            .into_iter()
+            .map(|(path, content)| halyard_forge::ApiFile {
+                path: path.to_string(),
+                content,
+            })
+            .collect(),
+        tree_oid,
+        remote_tree_oid: None,
+    }))
+}
+
+/// The live content gate (§11.1 step 3): resolve the §11.5 commit mode,
+/// then supply the probe the machine compares against. Under `api` the
+/// machine commits through `commit_via_api`; under `git` the shell's
+/// half runs here — the content commit materialized on the base snapshot
+/// ([`halyard_git::stage_release_commit`]) and the release branch pushed
+/// under the §11.2 CAS lease
+/// ([`halyard_git::push_release_branch`]) — and the probe reports the
+/// tree the branch now carries.
+fn live_content_commit(
+    context: &Context,
+    content: Option<halyard_forge::ContentCommit>,
+    branch: &halyard_forge::BranchName,
+) -> Result<Option<halyard_forge::ContentCommit>, CliError> {
+    let Some(mut content) = content else {
+        return Ok(None);
+    };
+    match resolved_commit_mode(context)? {
+        ResolvedCommitMode::Api => {
+            content.remote_tree_oid = halyard_git::remote_release_tip(
+                std::path::Path::new("."),
+                "origin",
+                branch.as_str(),
+            )
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?
+            .map(|tip| tip.tree);
+            Ok(Some(content))
+        }
+        ResolvedCommitMode::Git => {
+            // §11.1 step 3, git side (§11.2): skip when the branch already
+            // carries the plan's tree (I1 — the machine reports the match);
+            // else commit locally on the base snapshot and push under the
+            // CAS lease. A rejected lease is fail-closed: the branch moved
+            // under us, the re-run re-probes and converges.
+            let root = std::path::Path::new(".");
+            let probed = halyard_git::remote_release_tip(root, "origin", branch.as_str())
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+            if probed
+                .as_ref()
+                .is_some_and(|tip| tip.tree == content.tree_oid)
+            {
+                content.remote_tree_oid = probed.map(|tip| tip.tree);
+                return Ok(Some(content));
+            }
+            let identity = tagger_identity()?;
+            let commit = halyard_git::stage_release_commit(
+                root,
+                &content.message,
+                &content
+                    .files
+                    .iter()
+                    .map(|file| (file.path.clone(), file.content.clone()))
+                    .collect::<Vec<_>>(),
+                &identity,
+            )
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+            let push = halyard_git::push_release_branch(
+                root,
+                "origin",
+                branch.as_str(),
+                &commit,
+                probed.as_ref().map(|tip| &tip.commit),
+            )
+            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+            if let Some(halyard_git::BranchPushRow::Rejected { summary, .. }) = push.row {
+                return Err(CliError::new(
+                    "E-CLI-PR",
+                    format!(
+                        "the §11.2 CAS lease rejected the release-branch push (the branch \
+                         moved under us): {summary}; re-run after re-probing — the push is \
+                         never forced past the lease"
+                    ),
+                ));
+            }
+            content.remote_tree_oid = Some(content.tree_oid.clone());
+            Ok(Some(content))
+        }
+    }
 }
 
 /// The pending-release JSON rows (the pr report's `pending_releases`):
@@ -2127,6 +2311,7 @@ fn run_auto_pass(
                     branch: branch.clone(),
                     pending_releases: pending_specs.clone(),
                     release_pr,
+                    content_commit: None,
                 },
             )
         })
@@ -2222,6 +2407,7 @@ fn forge_release_phase(
                     // The tag phase owns this pass (§11.1 step 2); the
                     // Release PR is the `pr` command's prepare phase.
                     release_pr: None,
+                    content_commit: None,
                 },
             )
         })
