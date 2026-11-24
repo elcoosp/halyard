@@ -11,6 +11,11 @@ repository.workspace = true
 # §7.2: `forge` depends on core only. The seam is plain data plus the
 # trait — the effectful HTTP lives in future forge adapters (M4.1b).
 halyard-core = { workspace = true }
+# The preview adapter's forecast digest (the dry-run `commit_via_api`
+# returns a deterministic content-derived oid — the "preview://"
+# vocabulary at oid scale). Hashing only, no I/O — the §7.2 layer rule
+# holds.
+blake3 = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -42,6 +47,12 @@ harness = false
 # the seam, the create and marker-rewrite upsert shapes.
 [[bench]]
 name = "pr_comment"
+harness = false
+
+# The M4.2 remainder: the §11.1 step-3 content-commit pass shapes — the
+# divergent commit, the matched re-run (I1) and the PROPAGATE gate.
+[[bench]]
+name = "content_commit"
 harness = false
 
 [lints]
