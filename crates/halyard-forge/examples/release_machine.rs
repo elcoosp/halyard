@@ -104,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             title: "chore: release v0.5.0".to_owned(),
             body: "## 🚀 Release plan".to_owned(),
         }),
+        content_commit: None,
     };
     let report = run_release_machine(&forge, &tag_input)?;
     println!("pass 1 (tag phase): propagated = {}", report.propagated);
@@ -124,6 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(plan_pr_spec(&branch)?),
+        content_commit: None,
     };
     let report = run_release_machine(&forge, &pr_input)?;
     println!("pass 2 (prepare): {:?}", report.effects);
@@ -141,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: Some(plan_pr_spec_with_cascade(&branch)?),
+        content_commit: None,
     };
     let report = run_release_machine(&forge, &moved)?;
     println!("pass 4 (update):   {:?}", report.effects);
@@ -152,6 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         branch: branch.clone(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     };
     let report = run_release_machine(&forge, &empty)?;
     println!("pass 5 (close):    {:?}", report.effects);
