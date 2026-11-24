@@ -28,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bloom;
+pub mod content;
 pub mod fetch;
 pub mod merge;
 pub mod push;
@@ -36,6 +37,14 @@ pub mod tag;
 pub mod tag_target;
 pub mod tree_diff;
 pub mod walk;
+
+// The §11.1 step-3 content seam (the M4.2 remainder): the shell's `pr`
+// executor stages the plan's edits, hashes the content tree and probes
+// the remote release branch through these two entry points.
+pub use content::{
+    BranchPushReport, BranchPushRow, RemoteTip, content_tree_oid, push_release_branch,
+    remote_release_tip, stage_release_commit,
+};
 
 // Re-export for downstream differential tests and integrators that need
 // the exact `gix` version this engine was compiled against.
@@ -132,6 +141,16 @@ pub enum GitError {
         /// What went wrong (which cache operation and why).
         message: String,
     },
+    /// The §11.1 step-3 content machinery failed (`E-GIT-CONTENT`, the
+    /// M4.2 remainder): a malformed payload path, a base tree that
+    /// contradicts a payload path, a failed `git ls-remote`/`git fetch`
+    /// probe of the remote release branch, or an object the probe
+    /// should have delivered. The caller re-plans or fixes the remote —
+    /// the failure never guesses a tree.
+    Content {
+        /// What went wrong (includes the offending path or command).
+        message: String,
+    },
 }
 
 impl GitError {
@@ -148,6 +167,7 @@ impl GitError {
             Self::TagPush { .. } => "E-GIT-PUSH",
             Self::Fetch { .. } => "E-GIT-FETCH",
             Self::Cache { .. } => "E-GIT-CACHE",
+            Self::Content { .. } => "E-GIT-CONTENT",
         }
     }
 }
@@ -184,6 +204,7 @@ impl std::fmt::Display for GitError {
             Self::TagPush { message } => write!(f, "[E-GIT-PUSH] {message}"),
             Self::Fetch { message } => write!(f, "[E-GIT-FETCH] {message}"),
             Self::Cache { message } => write!(f, "[E-GIT-CACHE] {message}"),
+            Self::Content { message } => write!(f, "[E-GIT-CONTENT] {message}"),
         }
     }
 }
