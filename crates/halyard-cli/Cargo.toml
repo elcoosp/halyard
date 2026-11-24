@@ -41,6 +41,7 @@ halyard-forge = { workspace = true }
 # M4.1b (ADR-0013): the live forge effects — `pr` (live), the release
 # report's forge half and `forge-smoke` run over the GitHub REST adapter
 # (the seam stays adapter-free; the shell owns the wire-up).
+halyard-forge-gitlab = { workspace = true }
 halyard-forge-github = { workspace = true }
 halyard-changelog = { workspace = true }
 # M5.1 (§13): the doctor's opt-in `--registries` probe rides the
