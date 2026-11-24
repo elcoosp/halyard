@@ -137,9 +137,8 @@ pub fn discover_from_ctx(
         group_name,
         GroupPolicy::Independent,
         members,
-        default_tag_template(),
+        TagTemplate::independent_default(),
     );
-
     // Resolve proven-internal dependency rows to edges (§5.3: out edges
     // to workspace members only).
     for (ecosystem, rows) in &raw_rows {
@@ -233,7 +232,7 @@ fn register_package(
         tag_template: row
             .tag_template
             .clone()
-            .unwrap_or_else(default_tag_template),
+            .unwrap_or_else(TagTemplate::independent_default),
         changelog: row.changelog.as_ref().and_then(|c| RelPath::new(c)),
         version_site: row.version_site.clone(),
         include: PathFilter::new(Vec::new(), Vec::new()),
@@ -241,17 +240,6 @@ fn register_package(
         facets: row.facets,
     };
     Ok(workspace.push_package(pkg))
-}
-
-/// `{name}-v{version}` — the independent-package default (appendix A.3).
-/// The literal is a compile-time constant that satisfies every
-/// `TagTemplate` validation rule; a parse failure is impossible by
-/// construction, so it aborts loudly instead of inventing a fallback.
-fn default_tag_template() -> TagTemplate {
-    match TagTemplate::parse("{name}-v{version}") {
-        Ok(t) => t,
-        Err(e) => unreachable!("default tag template is always valid: {e}"),
-    }
 }
 
 /// Resolves one raw dependency: proven-internal rows match a same-
