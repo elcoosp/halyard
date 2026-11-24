@@ -672,3 +672,169 @@ fn action_release_mode_json_document_carries_the_pass() -> Result<(), BoxError> 
     assert_eq!(text, text2, "the release JSON document is byte-stable");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// The §12 `auto` mode (ADR-0047): the §11.1 stateless reconciliation as
+// one §12 mode — the composition policy over the two shipped executors
+// (the release executor's git-side tag effects ride first, the §11.1
+// machine pass then owns the half selection through its own PROPAGATE
+// rule). The plan pins the mode in §12's input list (`mode`
+// (`auto|pr|release|plan|check)`, docs/HALYARD_ARCHITECTURE.md §12) and
+// PROGRESS.md's next-session start point names it ("the §12 `auto` mode
+// (the composition policy over the two shipped executors)") — ADR-0046
+// declared it "absent rather than stubbed". Written first (red on the
+// unknown `--mode auto` value), implemented second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn action_auto_mode_propagate_forecasts_the_release_half() -> Result<(), BoxError> {
+    // The merged-manifest shape (solo at 0.1.1, tagged v0.1.0): the
+    // §11.1 reconciliation makes the manifest version pending, so the
+    // tag phase owns the pass — the forecast names the would-create
+    // tag, mints the preview forge releases and defers the Release PR
+    // (§11.1 step 2: "PROPAGATE to step 3 only if nothing pending").
+    let fx = merged_manifest_fixture("cli-action-auto-propagate")?;
+    let (ok, text) = halyard(fx.root(), &["action", "--mode", "auto", "--dry"])?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    // The §12 scalars: the auto mode executes nothing in dry mode.
+    assert!(text.contains("released=false\n"), "the scalar: {text}");
+    assert!(text.contains("published=false\n"), "the scalar: {text}");
+    // PROPAGATE: the Release PR is not touched, no PR keys exist.
+    assert!(
+        !text.contains("pr_number="),
+        "PROPAGATE defers the Release PR: {text}"
+    );
+    // The release half's forecast: the would-create tag is named (the
+    // preview writer's row) and the machine's mints ride the report.
+    assert!(
+        text.contains("created v0.1.1"),
+        "the forecast's created tag is named: {text}"
+    );
+    assert!(
+        text.contains("minted v0.1.1 (preview://v0.1.1)"),
+        "the machine's forecast mint: {text}"
+    );
+    assert!(
+        text.contains("tag phase owns this pass"),
+        "the PROPAGATE posture: {text}"
+    );
+    assert!(
+        text.contains("forge releases skipped (dry run"),
+        "the forge half's honest skip: {text}"
+    );
+    assert!(
+        text.contains("forecast (nothing executed)"),
+        "the forecast posture: {text}"
+    );
+    // The plan file is written (the `plan_json` pointer's target).
+    let document = fs::read_to_string(fx.root().join("halyard-plan.json"))?;
+    let value: serde_json::Value = serde_json::from_str(&document)?;
+    assert_eq!(
+        value.get("schema"),
+        Some(&serde_json::json!("halyard-plan/v1"))
+    );
+    Ok(())
+}
+
+#[test]
+fn action_auto_mode_prepare_forecasts_the_release_pr() -> Result<(), BoxError> {
+    // The two-package shape (manifests == tags, the lib patch pending in
+    // history): nothing is pending — the machine reaches the prepare
+    // phase and forecasts the Release PR (§11.1 step 3), while the tag
+    // phase honestly forecasts zero creations.
+    let fx = two_package_fixture("cli-action-auto-prepare")?;
+    let (ok, text) = halyard(fx.root(), &["action", "--mode", "auto", "--dry"])?;
+    assert!(ok, "the dry forecast succeeds: {text}");
+    assert!(text.contains("released=false\n"), "the scalar: {text}");
+    assert!(
+        text.contains("no tags created"),
+        "the honest no-creation posture: {text}"
+    );
+    // The prepare half's forecast: the forge's own PR values (number 0
+    // + preview:// URL mark the forecast; a real forge can produce
+    // neither).
+    assert!(text.contains("pr_number=0\n"), "the PR number: {text}");
+    assert!(
+        text.contains("pr_url=preview://halyard/release/HEAD\n"),
+        "the forge's own URL: {text}"
+    );
+    assert!(
+        text.contains("PR #0 opened (preview://halyard/release/HEAD)"),
+        "the pass line: {text}"
+    );
+    assert!(
+        text.contains("## halyard auto"),
+        "the summary heading: {text}"
+    );
+    assert!(
+        text.contains("forecast (nothing executed)"),
+        "the forecast posture: {text}"
+    );
+    Ok(())
+}
+
+#[test]
+fn action_auto_mode_json_document_carries_the_pass() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-action-auto-json")?;
+    let (ok, text) = halyard(
+        fx.root(),
+        &["action", "--mode", "auto", "--dry", "--format", "json"],
+    )?;
+    assert!(ok, "the JSON run succeeds: {text}");
+    let value = parse_json(&text)?;
+    assert_eq!(value.get("mode"), Some(&serde_json::json!("auto")));
+    assert_eq!(value.get("dry"), Some(&serde_json::json!(true)));
+    assert_eq!(value.get("propagated"), Some(&serde_json::json!(false)));
+    assert_eq!(value.get("created_tags"), Some(&serde_json::json!([])));
+    let outputs = value
+        .get("outputs")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("the document carries the outputs map")?;
+    assert_eq!(outputs.get("released"), Some(&serde_json::json!("false")));
+    assert_eq!(outputs.get("published"), Some(&serde_json::json!("false")));
+    assert!(outputs.get("plan_json").is_some());
+    // Byte-stable I3: the same run renders the same document.
+    let (ok2, text2) = halyard(
+        fx.root(),
+        &["action", "--mode", "auto", "--dry", "--format", "json"],
+    )?;
+    assert!(ok2, "the re-run succeeds: {text2}");
+    assert_eq!(text, text2, "the auto JSON document is byte-stable");
+    Ok(())
+}
+
+#[test]
+fn action_auto_mode_writes_the_env_files_inside_a_workflow_step() -> Result<(), BoxError> {
+    let fx = two_package_fixture("cli-action-auto-env-files")?;
+    let sinks = TempDir::new()?;
+    let outputs = sinks.path().join("output.txt");
+    let summary = sinks.path().join("summary.md");
+    let (ok, text) = halyard_with_env(fx.root(), &["action", "--mode", "auto", "--dry"], |cmd| {
+        cmd.env("GITHUB_OUTPUT", &outputs)
+            .env("GITHUB_STEP_SUMMARY", &summary);
+    })?;
+    assert!(ok, "the in-step run succeeds: {text}");
+    // The outputs landed verbatim — the prepare half's PR keys among
+    // them.
+    let outputs_text = fs::read_to_string(&outputs)?;
+    assert!(
+        outputs_text.contains("pr_number=0\n"),
+        "the sink: {outputs_text}"
+    );
+    assert!(
+        outputs_text.contains("pr_url=preview://halyard/release/HEAD\n"),
+        "the sink: {outputs_text}"
+    );
+    // The job summary landed (the §12 auto heading + the release row).
+    let summary_text = fs::read_to_string(&summary)?;
+    assert!(
+        summary_text.contains("## halyard auto"),
+        "the summary: {summary_text}"
+    );
+    assert!(
+        summary_text.contains("| lib | 0.1.0 → 0.1.1 | patch | lib-v0.1.1 |"),
+        "the row: {summary_text}"
+    );
+    assert!(text.contains("GITHUB_OUTPUT"), "the confirmation: {text}");
+    Ok(())
+}
