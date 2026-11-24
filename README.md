@@ -63,6 +63,7 @@ cargo build --release
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
+- **Ship a release step, not a setup script**: the composite GitHub Action (`action/action.yml`) resolves the runner platform, downloads the pinned static release binary, verifies the checksum manifest **and** the build attestation (`gh attestation verify`), caches by version, and execs `halyard action` — every piece pinned to one grammar by `cargo run -p xtask -- check-release`. GitLab pipelines include the same release step as a CI component (`templates/halyard.yml`), checksum-verified from the same release set.
 - **GitHub and GitLab and Forgejo/Gitea and Bitbucket supported**: the Release PR flow runs on GitHub, GitLab (M7 step 1), and Forgejo/Gitea — codeberg.org and gitea.com, self-hosted via `FORGEJO_API_URL` (M7 step 2) — MRs/pulls instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
 
 ## How it works
@@ -139,6 +140,7 @@ cargo run -p halyard-forge --example content_commit
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-cli --example release_pipeline
 cargo run -p halyard-action --example auto_forecast
+cargo run -p halyard-action --example distribution_plan
 ```
 
 ## Compared to alternatives
