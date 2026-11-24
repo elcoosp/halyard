@@ -57,6 +57,7 @@ fn prepare_input() -> MachineInput {
         branch: main_branch(),
         pending_releases: Vec::new(),
         release_pr: Some(release_pr_spec()),
+        content_commit: None,
     }
 }
 
