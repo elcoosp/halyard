@@ -10,7 +10,9 @@ use halyard_core::package::Workspace;
 use halyard_core::plan::{PLAN_SCHEMA_V1, Plan, PlanEdit, PlanPatch, PlanRelease};
 use halyard_core::rewrite::{RewriteOutcome, UpperBoundPolicy, rewrite_requirement};
 use halyard_discover::DiscoverInput;
-use halyard_edit::{ApplyReport, apply_plan, dry_run_preview, edit_set_from_plan};
+use halyard_edit::{
+    ApplyReport, apply_plan, dry_run_preview, edit_set_from_plan, stage_plan_edits,
+};
 use semver::Version;
 
 type BoxError = Box<dyn std::error::Error>;
@@ -507,5 +509,89 @@ fn pnpm_lockfile_resolution_keys_decline_to_native() -> Result<(), BoxError> {
     let on_disk = std::fs::read_to_string(tmp.path().join("pnpm-lock.yaml"))?;
     assert_eq!(on_disk, with_key);
     assert_eq!(report.files.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn stage_plan_edits_yields_the_payloads_without_writing() -> Result<(), BoxError> {
+    // §11.1 step 3 "apply EditSet in memory": the content-commit flow
+    // stages the plan's edits WITHOUT touching the working tree — the
+    // staged payloads are the bytes the apply flow would write, and the
+    // files on disk stay untouched.
+    let (ws, files) = discovered()?;
+    let plan = plan_for(&ws)?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    let mut files = files;
+    files.push(("Cargo.lock", ROOT_LOCKFILE));
+    write_files(tmp.path(), &files)?;
+
+    let staged = stage_plan_edits(tmp.path(), &plan, &ws, &adapters)?;
+    assert_eq!(
+        staged.payloads.len(),
+        2,
+        "the manifest + the patched lockfile"
+    );
+    let (first_path, first_content) = &staged.payloads[0];
+    assert_eq!(first_path.as_str(), "Cargo.toml");
+    let manifest = std::str::from_utf8(first_content)?;
+    assert!(
+        manifest.contains("version = \"0.2.0\"") && manifest.contains("\"0.2\""),
+        "the staged manifest carries the patch in memory: {manifest}"
+    );
+    let lock_payload = staged
+        .payloads
+        .iter()
+        .find(|(path, _)| path.as_str() == "Cargo.lock")
+        .ok_or("lockfile payload present")?;
+    let on_disk = std::fs::read_to_string(tmp.path().join("Cargo.lock"))?;
+    assert_ne!(
+        std::str::from_utf8(&lock_payload.1)?,
+        on_disk,
+        "the staged lockfile is ahead of the untouched disk bytes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("Cargo.toml"))?,
+        ROOT_MANIFEST,
+        "no file was written"
+    );
+    assert_eq!(staged.files.len(), 1);
+    assert_eq!(
+        staged.files[0].applied, 2,
+        "own version + dependent requirement"
+    );
+    assert_eq!(staged.lockfiles.len(), 1);
+    assert!(staged.lockfiles[0].native_reason.is_none());
+    Ok(())
+}
+
+#[test]
+fn apply_plan_writes_exactly_the_staged_payloads() -> Result<(), BoxError> {
+    // apply == stage + write: the two halves of one flow cannot disagree.
+    // A fresh copy is staged, another is applied, and every payload's
+    // bytes equal the applied file's bytes.
+    let (ws, files) = discovered()?;
+    let plan = plan_for(&ws)?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+
+    let staged_dir = tempfile::tempdir()?;
+    let mut files_staged = files.clone();
+    files_staged.push(("Cargo.lock", ROOT_LOCKFILE));
+    write_files(staged_dir.path(), &files_staged)?;
+    let staged = stage_plan_edits(staged_dir.path(), &plan, &ws, &adapters)?;
+
+    let applied_dir = tempfile::tempdir()?;
+    write_files(applied_dir.path(), &files_staged)?;
+    let _ = apply_plan(applied_dir.path(), &plan, &ws, &adapters)?;
+
+    for (path, content) in &staged.payloads {
+        let written = std::fs::read(applied_dir.path().join(path.to_path_buf()))?;
+        assert_eq!(
+            &written, content,
+            "payload for {path} equals the applied bytes"
+        );
+    }
     Ok(())
 }
