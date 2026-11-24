@@ -1226,6 +1226,12 @@ pub fn pr_effect_json(effect: &MachineEffect) -> serde_json::Value {
         MachineEffect::PrClosed { number, url } => {
             serde_json::json!({ "type": "pr_closed", "number": number, "url": url })
         }
+        MachineEffect::ContentMatched { tree_oid } => {
+            serde_json::json!({ "type": "content_matched", "tree_oid": tree_oid.as_str() })
+        }
+        MachineEffect::ContentCommitted { oid } => {
+            serde_json::json!({ "type": "content_committed", "oid": oid.as_str() })
+        }
     }
 }
 
@@ -1244,6 +1250,12 @@ fn pr_effect_gha(effect: &MachineEffect) -> String {
             format!("PR #{number} already current (no mutating calls)")
         }
         MachineEffect::PrClosed { number, url: _ } => format!("would close PR #{number}"),
+        MachineEffect::ContentMatched { tree_oid } => {
+            format!("release branch already carries the content tree {tree_oid}")
+        }
+        MachineEffect::ContentCommitted { oid } => {
+            format!("would commit the content tree ({oid})")
+        }
     }
 }
 
