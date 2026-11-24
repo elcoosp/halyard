@@ -13,7 +13,6 @@
 //! Layer note (§7.2): this module is plain data — the effectful
 //! filesystem work (reads, atomic writes) stays in `halyard-edit`.
 
-use crate::package::Span;
 use crate::rewrite::VersionError;
 
 /// Result of one adapter edit pass over one manifest (§7.3 edit subset).
@@ -115,14 +114,4 @@ impl std::error::Error for EditFailure {
             _ => None,
         }
     }
-}
-
-/// Widens a [`Span`] to `usize` range bounds (`u32` offsets never exceed
-/// `usize` on the platforms this tool targets; an oversized span reads as
-/// "past the end").
-pub fn span_range(span: Span) -> (usize, usize) {
-    (
-        usize::try_from(span.start).unwrap_or(usize::MAX),
-        usize::try_from(span.end).unwrap_or(usize::MAX),
-    )
 }
