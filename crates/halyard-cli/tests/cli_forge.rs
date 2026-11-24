@@ -1017,3 +1017,162 @@ fn check_comment_without_a_target_pr_reports_the_skip() -> Result<(), BoxError> 
     assert_eq!(forge.received().len(), 1, "one find probe, no comment POST");
     Ok(())
 }
+
+/// A Forgejo-shaped pull body the M7 step-2 adapter's upsert parses
+/// (research §2: `number`, `title`, `body`, `html_url`, `head.ref`).
+fn forgejo_pull_body(number: u64, branch: &str) -> String {
+    serde_json::json!({
+        "number": number,
+        "title": "chore: release v0.1.1",
+        "body": "## 🚀 Release plan",
+        "state": "open",
+        "html_url": format!("https://codeberg.org/octo/halyard-demo/pulls/{number}"),
+        "head": { "ref": branch },
+    })
+    .to_string()
+}
+
+/// The Forgejo lane's variant of the offline probe rewrite: the same
+/// `insteadOf` rewrite over the codeberg.org-shaped origin URL (the
+/// adapter's remote grammar still parses the configured URL, and
+/// `ls-remote`/`fetch` stay on the disk).
+fn forgejo_probe_offline_origin(fx: &mut GitFixture) -> Result<(), BoxError> {
+    offline_origin_rewrite(fx, "https://codeberg.org/octo/halyard-demo.git")
+}
+
+/// Live `pr` over the Forgejo/Gitea lane (M7 step 2, ADR-0050): the
+/// same machine pass the GitHub and GitLab loopback tests pin, over a
+/// codeberg.org-shaped origin — the fake forge saw the
+/// `Authorization: token` auth and the pull find + create, and the
+/// report names the opened pull. The content rides the git half
+/// (`commit_mode = "git"` — the lane's documented mode: the surface has
+/// no atomic multi-file commit, research §5), so the forge sees only
+/// the PR half. `FORGEJO_API_URL` keeps the exchange on the loopback;
+/// `insteadOf` keeps the git-side probe offline.
+/// Shapes the post-merge Forgejo fixture the loopback e2e runs: v0.1.0
+/// tagged, the release commit v0.1.1 tagged, one fresh `feat` commit
+/// after it (the plan proposes 0.1.2), `commit_mode = "git"` (the
+/// lane's documented mode — ADR-0050) and the codeberg.org-shaped
+/// origin. Returns the fixture and the forecast release branch.
+fn shape_post_merge_forgejo_repo(label: &str) -> Result<(GitFixture, String), BoxError> {
+    let mut fx = build_workspace(label)?;
+    fx.tag_annotated("v0.1.0", "solo v0.1.0")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "Cargo.toml".to_owned(),
+            "[package]\nname = \"solo\"\nversion = \"0.1.1\"\nedition = \"2021\"\n".to_owned(),
+        )],
+        "chore(main): release v0.1.1",
+    ))?;
+    fx.tag_annotated("v0.1.1", "solo v0.1.1")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/lib.rs".to_owned(),
+            "pub const C: usize = 2;\n".to_owned(),
+        )],
+        "feat: extend the crate surface",
+    ))?;
+    fx.write("halyard.toml", "[forge]\ncommit_mode = \"git\"\n")?;
+    fx.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://codeberg.org/octo/halyard-demo.git",
+    ])?;
+    forgejo_probe_offline_origin(&mut fx)?;
+    let branch = forecast_release_branch(&fx)?;
+    Ok((fx, branch))
+}
+
+#[test]
+fn pr_live_opens_the_release_pull_over_forgejo_loopback() -> Result<(), BoxError> {
+    let (fx, branch) = shape_post_merge_forgejo_repo("pr-live-forgejo")?;
+    // The scripted exchange, in the §11.1 order over the Forgejo
+    // shapes: the machine's find, the upsert's own lookup and the
+    // create — the content rode the git-side CAS push, so the forge
+    // sees only the PR half.
+    let (forge, api, server) = FakeForge::new(vec![
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (201, forgejo_pull_body(9, &branch)),
+    ])?;
+    let (code, out) = halyard_with_env(
+        fx.root(),
+        &["pr", "--format", "json"],
+        &[
+            ("FORGEJO_API_URL", &api),
+            ("FORGEJO_TOKEN", "forgejo-smoke"),
+            ("GITHUB_TOKEN", ""),
+        ],
+    )?;
+    server.join().expect("the fake forge served the pass");
+    assert_eq!(code, 0, "{out}");
+    let value: serde_json::Value = serde_json::from_str(out.trim())?;
+    assert_eq!(
+        value.get("mode").and_then(serde_json::Value::as_str),
+        Some("live")
+    );
+    assert_eq!(
+        value.get("repo").and_then(serde_json::Value::as_str),
+        Some("octo/halyard-demo"),
+        "the Forgejo lane reports the owner/repo path as the repo coordinates: {out}"
+    );
+    let effects = value
+        .get("effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("the report carries the machine effects")?;
+    let kinds: Vec<String> = effects
+        .iter()
+        .filter_map(|effect| effect.get("type").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        kinds.iter().any(|kind| kind == "pr_opened"),
+        "the Release pull opened over the Forgejo adapter: {out}"
+    );
+    assert_eq!(
+        forge.received().len(),
+        3,
+        "find + upsert-lookup + create — the content rode git: {received:?}",
+        received = forge.received()
+    );
+    // Every exchange carried the documented auth (research §1: the
+    // token is prepended with `token` followed by a space).
+    for request in forge.received() {
+        assert_eq!(
+            field(&request, "authorization"),
+            "token forgejo-smoke",
+            "the Authorization token auth rides every call: {request}"
+        );
+    }
+    let received = forge.received();
+    let create = received.last().expect("the pull create");
+    assert_eq!(field(create, "method"), "POST");
+    assert!(
+        field(create, "path").ends_with("/repos/octo/halyard-demo/pulls"),
+        "the create posts to the repository's pulls: {}",
+        field(create, "path")
+    );
+    let create_body: serde_json::Value = serde_json::from_str(&field(create, "body"))?;
+    // The §11.2 inverse mapping: the pull's base is the release branch's
+    // own base segment (whatever the planner resolved — the fixture
+    // repos' recorded no-base-tag quirk resolves `HEAD`).
+    let expected_base = branch
+        .strip_prefix("halyard/release/")
+        .filter(|base| !base.is_empty())
+        .ok_or("the forecast branch is the §11.2 shape")?;
+    assert_eq!(
+        create_body.get("base").and_then(serde_json::Value::as_str),
+        Some(expected_base),
+        "the §11.2 inverse mapping derives the pull's base from the release          branch the planner resolved (never a guess)"
+    );
+    assert_eq!(
+        create_body.get("head").and_then(serde_json::Value::as_str),
+        Some(branch.as_str()),
+        "the pull rides the release branch"
+    );
+    // The remote release branch carries the content commit: its tree is
+    // the content tree the plan's edits produce (the lane's git half).
+    assert_release_branch_carries_the_content(&fx, &branch)?;
+    Ok(())
+}
