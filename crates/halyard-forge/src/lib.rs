@@ -68,11 +68,11 @@ pub use error::ForgeError;
 pub use governor::{
     Governor, GovernorClock, GovernorEvent, GovernorPolicy, GovernorSleeper, system_time,
 };
-pub use memory::{CallRecord, MemoryForge};
+pub use memory::{CallRecord, MemoryForge, RecordedCommit};
 pub use preview::PreviewForge;
 pub use spec::{
-    ApiCommit, ApiFile, BranchName, CommentSpec, Pr, PrComment, PrSpec, RateInfo, Release,
-    ReleaseSpec,
+    ApiCommit, ApiFile, BranchName, CommentSpec, ContentCommit, Pr, PrComment, PrSpec, RateInfo,
+    Release, ReleaseSpec,
 };
 pub use state::{MachineEffect, MachineInput, MachineReport, run_release_machine};
 pub use transport::{HttpRequest, HttpResponse, HttpTransport, MemoryTransport};
