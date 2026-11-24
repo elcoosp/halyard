@@ -484,6 +484,27 @@ fn token_check(offline: bool) -> Check {
             ),
         };
     }
+    // M7 step 1 (ADR-0049): the GitLab lane's `PRIVATE-TOKEN` —
+    // `GITLAB_TOKEN` first, then the smoke job's `HALYARD_FORGE_TOKEN`
+    // contract the GitHub lane shares.
+    let gitlab_token = std::env::var("GITLAB_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            std::env::var("HALYARD_FORGE_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty())
+        });
+    if gitlab_token.is_some() {
+        return Check {
+            name: "token".to_owned(),
+            ok: true,
+            detail: "GITLAB_TOKEN (or HALYARD_FORGE_TOKEN) present — the GitLab lane's \
+                     PRIVATE-TOKEN auth (ADR-0049; a GitHub origin needs GITHUB_TOKEN \
+                     or the App env instead)"
+                .to_owned(),
+        };
+    }
     let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
     Check {
         name: "token".to_owned(),
@@ -495,8 +516,9 @@ fn token_check(offline: bool) -> Check {
                 .to_owned(),
             None => "no forge credentials: planning works offline, but `pr`/`release`/\
                      `publish` need the GitHub App env (HALYARD_APP_ID + \
-                     HALYARD_APP_PRIVATE_KEY_PATH + HALYARD_APP_INSTALLATION_ID) or \
-                     GITHUB_TOKEN (or run with --offline to silence this check)"
+                     HALYARD_APP_PRIVATE_KEY_PATH + HALYARD_APP_INSTALLATION_ID), \
+                     GITHUB_TOKEN, or GITLAB_TOKEN (or run with --offline to silence \
+                     this check)"
                 .to_owned(),
         },
     }
