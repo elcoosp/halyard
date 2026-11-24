@@ -579,6 +579,7 @@ fn machine_update_path_call_budget() -> Result<(), BoxError> {
                 title: "new".to_owned(),
                 body: "new".to_owned(),
             }),
+            content_commit: None,
         },
     )?;
     assert_eq!(
