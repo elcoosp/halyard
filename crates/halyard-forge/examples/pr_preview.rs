@@ -59,6 +59,7 @@ fn main() {
                 title: "chore: release p1-v0.1.1".to_owned(),
                 body: body(),
             }),
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
@@ -71,6 +72,7 @@ fn main() {
             branch: branch.clone(),
             pending_releases: Vec::new(),
             release_pr: None,
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
@@ -87,6 +89,7 @@ fn main() {
                 notes: "## Features\n\n- fix the thing\n".to_owned(),
             }],
             release_pr: None,
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
