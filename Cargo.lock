@@ -1441,6 +1441,7 @@ dependencies = [
  "halyard-eco-npm",
  "halyard-edit",
  "halyard-forge",
+ "halyard-forge-bitbucket",
  "halyard-forge-forgejo",
  "halyard-forge-github",
  "halyard-forge-gitlab",
@@ -1560,6 +1561,18 @@ dependencies = [
  "criterion",
  "halyard-changelog",
  "halyard-core",
+]
+
+[[package]]
+name = "halyard-forge-bitbucket"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "halyard-forge",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
