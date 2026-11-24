@@ -153,4 +153,5 @@ Supported platforms follow the CI matrix: Linux, macOS, and Windows.
 
 - [Architecture and master plan](docs/HALYARD_ARCHITECTURE.md)
 - [Milestone progress](PROGRESS.md)
+- [Docs site](docs/site/src/SUMMARY.md) — quickstart, concepts, and reference as a book (`mdbook build docs/site`; link-gated by `cargo run -p xtask -- check-docs-site`)
 - [Runnable examples](crates/) — each crate has an `examples/` directory
