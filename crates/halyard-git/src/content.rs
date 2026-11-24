@@ -1,11 +1,10 @@
 //! The §11.1 step-3 content machinery (the M4.2 remainder): the pure
 //! content-tree builder and the remote release-branch probe behind the
-//! prepare phase's
-//! "`apply EditSet in memory → build tree → compare tree OID with
-//! remote release branch tip (`ls-remote`, 0 REST)".
+//! prepare phase's "apply `EditSet` in memory → build tree → compare
+//! tree OID with remote release branch tip (`ls-remote`, 0 REST)".
 //!
 //! Division of labor: the caller (the shell's `pr` executor) applies the
-//! plan's EditSet in memory (the `halyard-edit` staging half of the apply
+//! plan's `EditSet` in memory (the `halyard-edit` staging half of the apply
 //! flow) and hands the payloads here. [`content_tree_oid`] hashes the
 //! resulting tree over the checkout's HEAD — a **pure** function (objects
 //! are hashed, never written; the content tree exists only as its id
@@ -172,7 +171,7 @@ fn load_tree(
         let name: BString = entry.filename.to_owned();
         if EntryKind::from(entry.mode) == EntryKind::Tree {
             let mut children = BTreeMap::new();
-            load_tree(repo, &entry.oid, &mut children)?;
+            load_tree(repo, entry.oid, &mut children)?;
             map.insert(name, Node::Dir(children));
         } else {
             map.insert(
@@ -189,7 +188,7 @@ fn load_tree(
 
 /// Inserts one payload at its slash-separated path, creating intermediate
 /// directories and replacing whatever the base carried there (§11.1
-/// "apply EditSet in memory": the payload is the file's full content).
+/// "apply `EditSet` in memory": the payload is the file's full content).
 fn insert_payload(
     root: &mut BTreeMap<BString, Node>,
     path: &str,
@@ -243,7 +242,7 @@ fn insert_payload(
 }
 
 /// Builds the git tree OID for `files` applied over `root`'s HEAD (§11.1
-/// step 3 "apply EditSet in memory → build tree"): every payload path is
+/// step 3 "apply `EditSet` in memory → build tree"): every payload path is
 /// replaced with its content; every other path stays exactly as HEAD
 /// carries it. **Pure**: objects are hashed, never written — the content
 /// tree exists only as its id until a committer materializes it, and the
