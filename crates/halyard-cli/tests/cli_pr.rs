@@ -131,8 +131,18 @@ fn pr_dry_forecasts_the_open_path_with_the_call_budget() -> Result<(), BoxError>
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("dry run"), "{out}");
     assert!(out.contains("branch: halyard/release/HEAD"), "{out}");
+    // The §11.1 step-3 content half is forecast too (the M4.2
+    // remainder): the machine's content step rides the preview adapter —
+    // the payload digest marks the forecast — before the PR row.
+    assert!(
+        out.contains("would commit the content tree (") && out.contains(")"),
+        "the content commit is forecast: {out}"
+    );
     assert!(out.contains("would open PR #0 (preview)"), "{out}");
-    assert!(out.contains("forge calls forecast: 2"), "{out}");
+    assert!(
+        out.contains("forge calls forecast: 3"),
+        "commit_via_api + find + upsert: {out}"
+    );
     // The §11.3 body is the previewed artifact.
     assert!(out.contains("## 🚀 Release plan"), "{out}");
     assert!(out.contains("solo"), "{out}");
@@ -242,7 +252,7 @@ fn pr_dry_json_is_a_stable_document() -> Result<(), BoxError> {
     );
     assert_eq!(
         value.get("calls").and_then(serde_json::Value::as_u64),
-        Some(2)
+        Some(3)
     );
     // The §11.1 step-2 reconciliation rides in the document: nothing
     // pending (the manifest version is tagged), no PROPAGATE.
@@ -261,16 +271,34 @@ fn pr_dry_json_is_a_stable_document() -> Result<(), BoxError> {
         .get("effects")
         .and_then(serde_json::Value::as_array)
         .unwrap_or_else(|| panic!("effects rows missing: {out}"));
-    assert_eq!(effects.len(), 1, "{out}");
+    assert_eq!(effects.len(), 2, "{out}");
     let first = effects
         .first()
-        .unwrap_or_else(|| unreachable!("one effect"));
+        .unwrap_or_else(|| unreachable!("two effects"));
+    // The §11.1 step-3 content half lands first: the machine's content
+    // step forecasts the commit through the preview adapter (the
+    // content-derived digest marks the forecast — never a real git
+    // object), then the Release-PR row.
     assert_eq!(
         first.get("type").and_then(serde_json::Value::as_str),
+        Some("content_committed")
+    );
+    assert!(
+        first
+            .get("oid")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|oid| oid.len() == 64),
+        "the forecast oid is the 64-hex content digest: {out}"
+    );
+    let second = effects
+        .get(1)
+        .unwrap_or_else(|| unreachable!("two effects"));
+    assert_eq!(
+        second.get("type").and_then(serde_json::Value::as_str),
         Some("pr_opened")
     );
     assert_eq!(
-        first.get("number").and_then(serde_json::Value::as_u64),
+        second.get("number").and_then(serde_json::Value::as_u64),
         Some(0)
     );
     assert!(
