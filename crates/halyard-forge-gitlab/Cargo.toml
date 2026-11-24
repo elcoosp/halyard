@@ -1,0 +1,34 @@
+[package]
+name = "halyard-forge-gitlab"
+description = "The GitLab REST adapter (M7 step 1, §17 more-forges): a full `Forge` implementation over REST v4 (MR flow, releases, notes, the commits API) riding the shared forge conformance suite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# §7.2 as widened by ADR-0049: `halyard-forge-gitlab → core + forge`, with
+# the HTTP client the adapter needs (the same `ureq` + rustls choice the
+# GitHub adapter made — §19 default decision 4).
+halyard-core = { workspace = true }
+halyard-forge = { workspace = true }
+ureq = { version = "2.9", default-features = false, features = ["tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The commits API's `encoding: "base64"` payloads (research §6); the same
+# engine choice as halyard-changelog's embedded-plan encoding.
+base64 = "0.22"
+
+[dev-dependencies]
+# The scripted-contract tests parse GitLab-shaped bodies and the
+# conformance suite runs the shared matrix over the adapter.
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "forge_calls"
+harness = false
+
+[lints]
+workspace = true
