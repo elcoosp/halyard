@@ -135,7 +135,7 @@ fn pr_dry_forecasts_the_open_path_with_the_call_budget() -> Result<(), BoxError>
     // remainder): the machine's content step rides the preview adapter —
     // the payload digest marks the forecast — before the PR row.
     assert!(
-        out.contains("would commit the content tree (") && out.contains(")"),
+        out.contains("would commit the content tree (") && out.contains(')'),
         "the content commit is forecast: {out}"
     );
     assert!(out.contains("would open PR #0 (preview)"), "{out}");
