@@ -117,6 +117,9 @@ insta = "1"
 # Cargo-audit: override transitive dependencies with patched versions
 url = "2.5.9"
 heapless = "0.9.4"
+# ADR-0052: the §12 distribution's SHA256SUMS grammar hashes the release
+# assets with SHA-256 (the `sha256sum`/`Get-FileHash` checker contract).
+sha2 = "0.10"
 
 [profile.release]
 lto = "fat"
