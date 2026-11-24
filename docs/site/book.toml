@@ -1,0 +1,16 @@
+# M4.8 docs site v1 (ADR-0048). The book renders with `mdbook build docs/site`;
+# the structural/link gate is `cargo run -p xtask -- check-docs-site` — the two
+# halves are independent: the gate proves every page is reachable and every
+# relative link resolves, the renderer proves the book builds. `src` is the
+# mdBook default; it is stated here so the gate and the renderer cannot drift
+# apart about where the pages live.
+[book]
+title = "Halyard — the polyglot release engine"
+authors = ["The Halyard maintainers"]
+description = "Zero-config release planning for Cargo and pnpm monorepos, from conventional commits to Release PR, tags and publishes."
+src = "src"
+language = "en"
+
+[output.html]
+git-repository-url = "https://github.com/elcoosp/halyard"
+edit-url-template = "https://github.com/elcoosp/halyard/edit/main/docs/site/{path}"
