@@ -6,8 +6,9 @@
 //! §12 outputs an auto workflow step receives (`released` is the
 //! git-side tag phase's honest execution value, no `pr_number`/`pr_url`
 //! keys exist on the PROPAGATE pass — the Release PR lands on the next
-//! pass) and the job summary naming the pass's posture. Offline: the
-//! preview records every call, nothing is written anywhere.
+//! pass) and the job summary naming the pass's posture, plus the next
+//! pass's prepare half with its §11.1 step-3 content verdict. Offline:
+//! the preview records every call, nothing is written anywhere.
 //!
 //! Run: `cargo run -p halyard-action --example auto_forecast`
 
@@ -15,18 +16,91 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use halyard_action::{
-    ActionCall, ActionWriter, AutoPass, ForgePosture, PreviewActionWriter, auto_outputs,
-    auto_summary, env_file_entry,
+    ActionCall, ActionWriter, AutoPass, ContentEffect, ForgePosture, PrEffect, PreviewActionWriter,
+    auto_outputs, auto_summary, env_file_entry,
 };
 use halyard_core::{
     Bump, PLAN_SCHEMA_V1, Plan, PlanEdit, PlanPatch, PlanReason, PlanRelease, PlanSkip,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // The two-package plan the composed pass renders (the same shape the
-    // plan_forecast example renders — the auto mode's plan vocabulary is
-    // identical, only the pass keys ride on top).
-    let plan = Plan {
+    let plan = sample_plan();
+
+    // A live PROPAGATE pass: both tags created (the tag phase's own
+    // name-sorted row order, I3), the machine minted one URL and its
+    // own PROPAGATE rule owned the run — pending releases gate the
+    // Release PR (§11.1 step 2), so no PR effect rides the view. The
+    // shell maps the phase and machine reports onto this view.
+    let pass = AutoPass {
+        released: true,
+        propagated: true,
+        forecast: false,
+        created_tags: vec!["app-v1.1.0".to_owned(), "core-v0.5.0".to_owned()],
+        pr_effect: None,
+        content_effect: None,
+        release_urls: BTreeMap::from([(
+            "core-v0.5.0".to_owned(),
+            "https://github.com/example/monorepo/releases/tag/core-v0.5.0".to_owned(),
+        )]),
+        forge: ForgePosture::Ran {
+            repo: "example/monorepo".to_owned(),
+            releases: 1,
+        },
+    };
+
+    // The pass view renders the §12 vocabulary over the preview writer:
+    // every call is recorded, in order, exactly as the real writer
+    // would perform it against the env files.
+    let outputs = auto_outputs(&plan, Path::new("halyard-plan.json"), &pass)?;
+    let preview = PreviewActionWriter::new();
+    for (name, value) in &outputs {
+        preview.set_output(name, value)?;
+    }
+    preview.append_summary(&auto_summary(&plan, &pass))?;
+
+    // The next pass (§11.1 step 3): nothing pending any more, so the
+    // prepare phase owns the run — the content half's verdict (the
+    // branch already carries the plan's content tree: the I1 match the
+    // git-side CAS push reports) rides the view before the PR it
+    // enables, in the machine's own order.
+    let prepare_pass = AutoPass {
+        released: false,
+        propagated: false,
+        forecast: false,
+        created_tags: Vec::new(),
+        pr_effect: Some(PrEffect::Updated {
+            number: 9,
+            url: "https://github.com/example/monorepo/pull/9".to_owned(),
+        }),
+        content_effect: Some(ContentEffect::Matched {
+            tree_oid: "3fa1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0".to_owned(),
+        }),
+        release_urls: BTreeMap::new(),
+        forge: ForgePosture::Ran {
+            repo: "example/monorepo".to_owned(),
+            releases: 0,
+        },
+    };
+    preview.append_summary(&auto_summary(&plan, &prepare_pass))?;
+
+    for call in preview.calls() {
+        match call {
+            ActionCall::SetOutput { name, value } => print!("{}", env_file_entry(&name, &value)?),
+            ActionCall::AppendSummary { markdown } => {
+                println!("# >> $GITHUB_STEP_SUMMARY");
+                println!("{markdown}");
+            }
+            ActionCall::Warning { message } => println!("::warning::{message}"),
+        }
+    }
+    Ok(())
+}
+
+/// The two-package plan the composed pass renders (the same shape the
+/// `plan_forecast` example renders — the auto mode's plan vocabulary is
+/// identical, only the pass keys ride on top).
+fn sample_plan() -> Plan {
+    Plan {
         schema: PLAN_SCHEMA_V1.to_owned(),
         base_branch: "main".to_owned(),
         head: "9f2ca67".to_owned(),
@@ -76,48 +150,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             package: "docs".to_owned(),
             reason: "no_changes".to_owned(),
         }],
-    };
-
-    // A live PROPAGATE pass: both tags created (the tag phase's own
-    // name-sorted row order, I3), the machine minted one URL and its
-    // own PROPAGATE rule owned the run — pending releases gate the
-    // Release PR (§11.1 step 2), so no PR effect rides the view. The
-    // shell maps the phase and machine reports onto this view.
-    let pass = AutoPass {
-        released: true,
-        propagated: true,
-        forecast: false,
-        created_tags: vec!["app-v1.1.0".to_owned(), "core-v0.5.0".to_owned()],
-        pr_effect: None,
-        release_urls: BTreeMap::from([(
-            "core-v0.5.0".to_owned(),
-            "https://github.com/example/monorepo/releases/tag/core-v0.5.0".to_owned(),
-        )]),
-        forge: ForgePosture::Ran {
-            repo: "example/monorepo".to_owned(),
-            releases: 1,
-        },
-    };
-
-    // The pass view renders the §12 vocabulary over the preview writer:
-    // every call is recorded, in order, exactly as the real writer
-    // would perform it against the env files.
-    let outputs = auto_outputs(&plan, Path::new("halyard-plan.json"), &pass)?;
-    let preview = PreviewActionWriter::new();
-    for (name, value) in &outputs {
-        preview.set_output(name, value)?;
     }
-    preview.append_summary(&auto_summary(&plan, &pass))?;
-
-    for call in preview.calls() {
-        match call {
-            ActionCall::SetOutput { name, value } => print!("{}", env_file_entry(&name, &value)?),
-            ActionCall::AppendSummary { markdown } => {
-                println!("# >> $GITHUB_STEP_SUMMARY");
-                println!("{markdown}");
-            }
-            ActionCall::Warning { message } => println!("::warning::{message}"),
-        }
-    }
-    Ok(())
 }
