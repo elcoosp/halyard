@@ -19,6 +19,7 @@
 //! | `bench-public` | Reproducible public benchmark runner (§14, M6.5) |
 //! | `pgo` | PGO prototype steps for the release pipeline (§14.2) |
 //! | `check-docs-site` | Docs-site structure + link gate (M4.8, ADR-0048) |
+//! | `check-release` | The §12 composite distribution drift gate (M5.4, ADR-0052) |
 
 mod bench;
 mod competitors;
@@ -29,6 +30,7 @@ mod genrepo;
 mod gitdiff;
 mod layers;
 mod perf;
+mod release;
 mod replay;
 mod schema;
 mod size;
@@ -66,6 +68,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "bench-public" => bench::bench_public(rest),
         "pgo" => bench::pgo(rest),
         "check-docs-site" => docs_site::check_docs_site(),
+        "check-release" => release::check_release(),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -127,6 +130,7 @@ SUBCOMMANDS:
                                       time-machine replay harness (M2.7)
     bench-public [--dry]              measure the §14.1 scenario budgets (M2.6)
     pgo                               PGO generate/use prototype (M2.6b)
-    check-docs-site                   docs-site structure + link gate (M4.8)"
+    check-docs-site                   docs-site structure + link gate (M4.8)
+    check-release                     the §12 distribution drift gate (M5.4, ADR-0052)"
     );
 }
