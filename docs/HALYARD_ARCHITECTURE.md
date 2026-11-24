@@ -303,7 +303,10 @@ minus the one remaining planned-but-unbuilt slot — `halyard-plugin-host`
 `halyard-action` (the §12 action-output seam, ADR-0037) joined in its
 session; `docs/` carries `adr/`,
 `research/` and `errors/` — no `spec/` — and the `action/` directory
-lands with the composite distribution (M5.4's own-artifact slice).)*
+landed with the composite distribution (M5.4's own-artifact slice,
+ADR-0052: `action/action.yml` + `.github/workflows/release.yml`,
+pinned to `halyard_action::distribution` by `cargo run -p xtask --
+check-release`).)*
 ```
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
@@ -642,7 +645,8 @@ honest counts, the walk's own work counters standing in for the timing
 breakdown — wall-clock would break I3). The degraded-mode annotation
 wires to the walk's own `HistoryStats::degraded` marker (`::warning::`,
 never a guess). The composite distribution (binary download, checksum +
-attestation) stays with M5.4's own-artifact slice, and the §12 modes
+attestation) landed with M5.4's own-artifact slice (ADR-0052 — see the
+as-built note at this section's end), and the §12 modes
 landed with their executors — `check` (ADR-0044), `release` (ADR-0046),
 `auto` (ADR-0047); the input list is complete, no mode stubbed;
 VERIFIED quotes in
@@ -737,6 +741,35 @@ documented shape. The release executor's separate forge half stays
 out — its machine input carries no Release-PR spec, and its
 PROPAGATE-pass content input stays `None` by the machine's own
 gating.)*
+
+*(As-built note, 2026-11-24 (ADR-0052): the composite distribution
+ships — the M4.5 row's remaining half and M5.4's own-artifact slice.
+`action/action.yml` is the §12 "tiny JS-free composite action": the
+five documented steps (resolve OS/arch → download → verify checksum
+**and** attestation → cache by version → exec `halyard action`), the
+step grammar VERIFIED (composite steps carry `shell`/`if`/`env`/
+`working-directory`; `actions/attest@v4` produces the attestation the
+M5.4 acceptance's `gh attestation verify <asset> -R elcoosp/halyard`
+consumes inside the action). `.github/workflows/release.yml` is the
+producer pipeline: the pinned static targets built on their runners,
+packaged under the grammar's asset names, attested, the `SHA256SUMS`
+manifest assembled in the grammar's canonical order and uploaded with
+the release. Every piece the three artifacts (template, pipeline,
+binary) must agree on is single-sourced in `halyard_action::
+distribution` — the §12 input list with each input's surface (`--mode`/
+`--config`/`--dry`, the `GITHUB_TOKEN`+`HALYARD_FORGE_TOKEN` and
+`HALYARD_APP_*` env pairs, the `halyard publish` executor, the
+`working-directory` step key), the §12 output keys, the five pinned
+targets with the `RUNNER_OS`/`RUNNER_ARCH` mapping, the
+`halyard-<triple>.tar.gz`/`.zip` asset grammar, and the
+`<digest>␣␣<file>` checksum manifest (parse/render/verify/coverage —
+`E-ACTION-DISTRIBUTION` page joins the taxonomy). The drift gate is
+`cargo run -p xtask -- check-release` (the `schema-check` discipline
+over the templates, wired into CI); the runner checkers branch
+(`sha256sum`/`shasum -a 256`/`Get-FileHash` — VERIFIED in
+`docs/research/own-artifact-attestation.md`); `sha2` joins the
+halyard-action layer consciously. M5.4's cosign/SBOM rows and the live
+attested-release run stay open, recorded.)*
 
 ---
 
@@ -1041,6 +1074,20 @@ Resolution layers (low→high): built-in defaults < `halyard.toml` < `package.me
 | **M12 (T+34→T+36)** Policy & compliance | Release gates as code (CEL expressions: required checks, CODEOWNERS approval, freeze windows, vuln scan), audit log export, org-wide config inheritance | policy conformance tests |
 
 *(As-built note, 2026-11-24 (ADR-0049): M7 step 1 ships — the shared forge conformance suite (`halyard_forge::conformance`, the "same e2e matrix passes per forge" gate made executable over `MemoryForge`/`PreviewForge`/GitHub/GitLab) and the GitLab MR-flow adapter (`halyard-forge-gitlab`, VERIFIED shapes in `docs/research/gitlab-rest-forge.md`), wired into the shell's origin resolution (`GITLAB_TOKEN`, `GITLAB_API_URL`). As-built 2026-11-24 (ADR-0050): M7 step 2 ships the Forgejo/Gitea adapter (`halyard-forge-forgejo`, VERIFIED in `docs/research/forgejo-rest-forge.md`; the lane rides `commit_mode = "git"` — the surface has no atomic multi-file commit). As-built 2026-11-24 (ADR-0051): M7 step 3 ships the Bitbucket adapter (`halyard-forge-bitbucket`, VERIFIED in `docs/research/bitbucket-rest-forge.md`): the pull flow by the documented `q` grammar, the close verb is the decline POST, the release act is the tag probe (the API group index documents no Releases group — the git tag is the release marker, halyard invents none, §7.3), `commit_via_api` is the documented honest decline (the commits resource "does NOT support new commit creation"), and the lane rides the OAuth 2.0 Bearer scheme (`BITBUCKET_TOKEN`; API tokens' Basic auth needs a second credential and stays out of the single-token grammar). The GitLab CI component and the corpus-lane e2e stay the M7 rows' remaining open items — recorded, not silently re-scoped.)*
+
+*(As-built note, 2026-11-24 (ADR-0053): the M7 row's GitLab **CI component** ships — `templates/halyard.yml` (the documented component layout: the `spec:`/`inputs` header above the `---`, `$[[ inputs.* ]]` interpolation, VERIFIED in `docs/research/own-artifact-attestation.md`'s GitLab section): the job consumes the same distribution the composite action does (the pinned musl static binary from `elcoosp/halyard`'s GitHub Releases over an `alpine:3.20` runner, the `SHA256SUMS` line verified with `sha256sum -c`), the §12 five-mode vocabulary with the `stage`/`mode`/`dry-run` inputs, the token riding the pipeline's own `HALYARD_FORGE_TOKEN`/`GITHUB_TOKEN` contract, and the attestation verify recorded as the GitHub lane's honest decline on this lane. The `check-release` drift gate pins the component beside the action template and the release pipeline. The corpus-lane e2e stays the M7 row's remaining open item — forge-token-bound, recorded.)*
+
+*(As-built note, 2026-11-24 (ADR-0052): M5.4's own-artifact slice
+ships — the composite distribution (the M4.5 row's remaining half):
+`action/action.yml` (the §12 composite action: download, checksum +
+attestation verify, version-keyed cache, exec), the
+`.github/workflows/release.yml` producer pipeline, the
+single-sourced grammar (`halyard_action::distribution`: §12
+inputs/outputs, pinned targets, asset names, the SHA256SUMS manifest)
+and the `check-release` drift gate. The npm-provenance half of M5.4
+landed with ADR-0033. The row's cosign-signing and SBOM artifacts and
+the live attested-release run (a real `v*` tag push) stay open —
+recorded, not silently re-scoped.)*
 
 ### YEAR 3 — Moat & platform
 
