@@ -24,6 +24,7 @@ manifest and enforces the dependency rules on every run.
 | `halyard-changelog` | changelog styles, Release PR body, change-file grammar |
 | `halyard-forge` | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth |
+| `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1 |
 | `halyard-registry` | crates.io sparse index + npm packument probes |
 | `halyard-publish` | publish engine: plan validation, topological layers, resume, auth |
 | `halyard-action` | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY` |
@@ -36,9 +37,11 @@ manifest and enforces the dependency rules on every run.
 The adapters above the core are driven through narrow, object-safe traits, so
 the real network adapters and the preview adapters are interchangeable:
 
-- `Forge` — create/upsert the Release PR, create releases, API commits,
-  comments; implemented by the GitHub REST adapter, the deterministic
-  `MemoryForge` reference, and the `PreviewForge` dry-run forecast.
+- `Forge` — create/upsert the Release PR (GitLab: the MR flow), create
+  releases, API commits, comments; implemented by the GitHub REST
+  adapter, the GitLab REST adapter (M7 step 1), the deterministic
+  `MemoryForge` reference, and the `PreviewForge` dry-run forecast —
+  every adapter passing the shared conformance matrix (`halyard_forge::conformance`).
 - `Registry` — existence probes against the crates.io sparse index and npm
   packuments, with the HTTP transport injected (no client lives in the crate).
 - `PublishEffect` — the spawned publish tools, injected so the engine is
