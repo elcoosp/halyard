@@ -63,6 +63,7 @@ cargo build --release
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
+- **GitLab supported**: the Release PR flow runs on GitLab too (M7 step 1) — MRs instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
 
 ## How it works
 
@@ -88,6 +89,7 @@ The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE
 | `halyard-changelog`    | changelog styles, Release PR body, change-file grammar                |
 | `halyard-forge`        | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth                                    |
+| `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1                             |
 | `halyard-registry`     | crates.io sparse index + npm packument probes                         |
 | `halyard-publish`      | publish engine: plan validation, topological layers, resume, auth     |
 | `halyard-action`       | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`     |
