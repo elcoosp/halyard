@@ -63,11 +63,15 @@
 //! cannot represent verbatim is [`ActionError::Output`] — never
 //! silently rewritten; a summary with no `GITHUB_STEP_SUMMARY` path is
 //! [`ActionError::Summary`]; an unwritable plan file is
-//! [`ActionError::PlanFile`].
+//! [`ActionError::PlanFile`]; a release asset, checksum line or
+//! template shape the distribution grammar cannot interpret is
+//! [`ActionError::Distribution`].
 //!
 //! Layer note: `action → core` (the plan wire types) + `serde_json`
-//! (the rows and the plan file) and nothing else — the env-file
-//! grammar is this crate's own surface, the shell owns the wire-up.
+//! (the rows and the plan file) + `sha2` (the distribution grammar's
+//! checksum digest) and nothing else — the env-file grammar and the
+//! distribution contract are this crate's own surface, the shell owns
+//! the wire-up.
 
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -76,6 +80,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use halyard_core::Plan;
+
+pub mod distribution;
 
 /// The heredoc delimiter of the multi-line env-file form (VERIFIED
 /// 2026-11-17: the docs' `{name}<<{delimiter}` multiline-string shape
@@ -111,6 +117,17 @@ pub enum ActionError {
         /// What is wrong and what to check.
         message: String,
     },
+    /// A distribution artifact, checksum line, or template shape the
+    /// §12 distribution grammar cannot interpret (`E-ACTION-DISTRIBUTION`,
+    /// ADR-0052): a release asset without a checksum
+    /// line, a tampered download, a manifest the checker would
+    /// misread, an unpinned runner platform, or a template block that
+    /// does not fit the restricted grammar. Fail-closed — a checksum
+    /// mismatch or a skipped platform is never tolerated.
+    Distribution {
+        /// What is wrong, what the grammar expects, and the fix.
+        message: String,
+    },
 }
 
 impl ActionError {
@@ -120,6 +137,7 @@ impl ActionError {
             Self::Output { .. } => "E-ACTION-OUTPUT",
             Self::Summary { .. } => "E-ACTION-SUMMARY",
             Self::PlanFile { .. } => "E-ACTION-PLAN",
+            Self::Distribution { .. } => "E-ACTION-DISTRIBUTION",
         }
     }
 }
@@ -130,6 +148,9 @@ impl std::fmt::Display for ActionError {
             Self::Output { message } => write!(f, "[E-ACTION-OUTPUT] {message}"),
             Self::Summary { message } => write!(f, "[E-ACTION-SUMMARY] {message}"),
             Self::PlanFile { message } => write!(f, "[E-ACTION-PLAN] {message}"),
+            Self::Distribution { message } => {
+                write!(f, "[E-ACTION-DISTRIBUTION] {message}")
+            }
         }
     }
 }
