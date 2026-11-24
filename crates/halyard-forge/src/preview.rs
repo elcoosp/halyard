@@ -147,10 +147,29 @@ impl Forge for PreviewForge {
             .unwrap_or_default()
     }
 
-    /// Declines like the seam default: the preview never commits
-    /// (`E-FORGE-UNSUPPORTED`), mirroring [`Forge::commit_via_api`]'s
-    /// documented default (§7.3).
-    fn commit_via_api(&self, _spec: &ApiCommit) -> Result<halyard_core::reason::Oid, ForgeError> {
-        Err(ForgeError::unsupported(std::any::type_name::<Self>()))
+    /// Forecasts the content commit (the M4.2 caller: the machine's
+    /// §11.1 step-3 prepare phase): the call is recorded, nothing is
+    /// stored, and the returned oid is a deterministic blake3 digest of
+    /// the commit's payloads — a valid OID shape so the report renders,
+    /// never a real git object (the preview mints no objects; the
+    /// 64-hex shape distinguishes it from the adapters' real commits the
+    /// same way `preview://` distinguishes the URLs).
+    fn commit_via_api(&self, spec: &ApiCommit) -> Result<halyard_core::reason::Oid, ForgeError> {
+        self.record("commit_via_api", spec.branch.as_str());
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"halyard-preview-commit-v1");
+        hasher.update(spec.branch.as_str().as_bytes());
+        hasher.update(spec.message.as_bytes());
+        for file in &spec.files {
+            hasher.update(file.path.as_bytes());
+            hasher.update(&file.content);
+        }
+        let hex = hasher.finalize().to_hex().to_string();
+        let oid = halyard_core::reason::Oid::from_hex(hex.as_bytes()).ok_or_else(|| {
+            ForgeError::Transport {
+                reason: format!("the preview digest produced a non-hex oid: {hex:.200}"),
+            }
+        })?;
+        Ok(oid)
     }
 }
