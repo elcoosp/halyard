@@ -27,6 +27,7 @@ fn open_input() -> MachineInput {
             title: "chore: release p1-v0.1.1".to_owned(),
             body: "## 🚀 Release plan\n\n| Package | Current | Next | Bump | Why |\n|---|---|---|---|---|\n| p1 | 0.1.0 | **0.1.1** | patch | `fix: …` |\n".to_owned(),
         }),
+        content_commit: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn close_probe_input() -> MachineInput {
         branch: branch(),
         pending_releases: Vec::new(),
         release_pr: None,
+        content_commit: None,
     }
 }
 
@@ -48,6 +50,7 @@ fn tag_phase_input() -> MachineInput {
             notes: "## Features\n\n- fix the thing\n".to_owned(),
         }],
         release_pr: None,
+        content_commit: None,
     }
 }
 
