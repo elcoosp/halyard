@@ -122,3 +122,4 @@ repository path column names the page file to open.
 | `E-ACTION-OUTPUT` | action-output seam: an output name/value the GITHUB_OUTPUT grammar cannot carry verbatim, or the sink is unwritable (§12 step 1, ADR-0037) | `docs/errors/E-ACTION-OUTPUT.md` |
 | `E-ACTION-SUMMARY` | action-output seam: the §12 job summary has no GITHUB_STEP_SUMMARY sink or the sink is unwritable (§12 step 1, ADR-0037) | `docs/errors/E-ACTION-SUMMARY.md` |
 | `E-ACTION-PLAN` | action-output seam: the canonical plan file cannot be written (§12 step 1, ADR-0037) | `docs/errors/E-ACTION-PLAN.md` |
+| `E-ACTION-DISTRIBUTION` | §12 composite distribution: a checksum line, release asset, runner platform or template shape the distribution grammar cannot pin (M5.4 own-artifact slice, ADR-0052) | `docs/errors/E-ACTION-DISTRIBUTION.md` |
