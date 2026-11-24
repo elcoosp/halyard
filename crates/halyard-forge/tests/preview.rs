@@ -99,18 +99,42 @@ fn close_pr_is_a_value_false() {
 }
 
 #[test]
-fn commit_via_api_declines_like_the_seam_default() {
+fn commit_via_api_forecasts_the_mutation() {
+    // The M4.2 content commit gave `commit_via_api` its caller (the
+    // machine's prepare phase), so the dry pass forecasts the mutation
+    // like every other preview write: the call is recorded, nothing is
+    // stored, and the returned oid is a deterministic forecast digest —
+    // never a real git object (the preview mints no objects).
     let forge = PreviewForge::new();
     let dyn_forge: &dyn Forge = &forge;
     let branch = main_branch();
-    let error = dyn_forge
-        .commit_via_api(&halyard_forge::ApiCommit {
-            branch,
-            message: "chore: release".to_owned(),
-            files: Vec::new(),
-        })
-        .unwrap_err();
-    assert_eq!(error.code(), "E-FORGE-UNSUPPORTED");
+    let spec = halyard_forge::ApiCommit {
+        branch,
+        message: "chore: release".to_owned(),
+        files: vec![halyard_forge::ApiFile {
+            path: "Cargo.toml".to_owned(),
+            content: b"[package]\nversion = \"0.2.0\"\n".to_vec(),
+        }],
+    };
+    let oid = dyn_forge
+        .commit_via_api(&spec)
+        .unwrap_or_else(|e| unreachable!("the preview forecasts the commit: {e}"));
+    assert!(
+        oid.as_str().len() == 64 || oid.as_str().len() == 40,
+        "the forecast oid is a valid OID shape: {oid}"
+    );
+    assert_eq!(
+        dyn_forge
+            .commit_via_api(&spec)
+            .unwrap_or_else(|e| unreachable!("deterministic: {e}")),
+        oid,
+        "the forecast digest is deterministic over the same payloads (I3)"
+    );
+    assert_eq!(
+        dyn_forge.calls().len(),
+        2,
+        "the forecast calls are recorded"
+    );
 }
 
 #[test]
@@ -123,6 +147,7 @@ fn machine_pass_over_the_preview_forge_is_the_open_forecast() {
             branch: branch.clone(),
             pending_releases: Vec::new(),
             release_pr: Some(spec(branch)),
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
@@ -148,6 +173,7 @@ fn machine_pass_with_an_empty_plan_spends_one_probe() {
             branch: main_branch(),
             pending_releases: Vec::new(),
             release_pr: None,
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
@@ -170,6 +196,7 @@ fn machine_tag_phase_forecasts_the_release_creations() {
                 notes: "## Features".to_owned(),
             }],
             release_pr: None,
+            content_commit: None,
         },
     )
     .unwrap_or_else(|e| unreachable!("preview passes never fail: {e}"));
