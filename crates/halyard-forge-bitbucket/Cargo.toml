@@ -1,0 +1,34 @@
+[package]
+name = "halyard-forge-bitbucket"
+description = "The Bitbucket Cloud REST adapter (M7 step 3, §17 more-forges): a full `Forge` implementation over REST 2.0 (the PR flow, the tag-as-release-marker probe, the PR comments' marker scan) riding the shared forge conformance suite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# §7.2 as widened by ADR-0051: `halyard-forge-bitbucket → core + forge`, with
+# the HTTP client the adapter needs (the same `ureq` + rustls choice the
+# GitHub, GitLab and Forgejo adapters made — §19 default decision 4). No
+# `base64` edge: the surface documents "this resource does NOT support new
+# commit creation" (research §5), so `commit_via_api` rides the trait's
+# documented honest decline and no payload encoder ships.
+halyard-core = { workspace = true }
+halyard-forge = { workspace = true }
+ureq = { version = "2.9", default-features = false, features = ["tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The scripted-contract tests parse Bitbucket-shaped bodies and the
+# conformance suite runs the shared matrix over the adapter.
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "forge_calls"
+harness = false
+
+[lints]
+workspace = true
