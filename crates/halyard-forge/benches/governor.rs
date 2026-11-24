@@ -50,6 +50,7 @@ fn bench_governor_passthrough(c: &mut Criterion) {
                     branch: main_branch(),
                     pending_releases: Vec::new(),
                     release_pr: Some(pr_spec()),
+                    content_commit: None,
                 },
             )
             .unwrap_or_else(|e| unreachable!("update path must succeed: {e}"));
