@@ -52,10 +52,15 @@
 //! `Retry-After`, deterministic backoff and the per-run call budget
 //! (`E-FORGE-BUDGET`) with injected time — the seam *types* stay
 //! clock-free; the production [`governor::system_time`] pair is the
-//! sanctioned effect.
+//! sanctioned effect. M7 ships the shared forge conformance suite
+//! ([`conformance`], §17 "forge conformance test-suite shared across
+//! adapters" — the gate is "same e2e matrix passes per forge"): the
+//! scenario matrix every adapter crate's suite executes against its
+//! adapter.
 
 #![forbid(unsafe_code)]
 
+pub mod conformance;
 pub mod error;
 pub mod governor;
 pub mod memory;
@@ -64,6 +69,7 @@ pub mod spec;
 pub mod state;
 pub mod transport;
 
+pub use conformance::{ConformanceReport, ForgeFactory, Scenario, Verdict, run_conformance_matrix};
 pub use error::ForgeError;
 pub use governor::{
     Governor, GovernorClock, GovernorEvent, GovernorPolicy, GovernorSleeper, system_time,
