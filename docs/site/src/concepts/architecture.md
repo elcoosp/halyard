@@ -25,6 +25,7 @@ manifest and enforces the dependency rules on every run.
 | `halyard-forge` | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth |
 | `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1 |
+| `halyard-forge-forgejo` | Forgejo/Gitea REST adapter (pull flow) — M7 step 2 |
 | `halyard-registry` | crates.io sparse index + npm packument probes |
 | `halyard-publish` | publish engine: plan validation, topological layers, resume, auth |
 | `halyard-action` | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY` |
@@ -39,7 +40,8 @@ the real network adapters and the preview adapters are interchangeable:
 
 - `Forge` — create/upsert the Release PR (GitLab: the MR flow), create
   releases, API commits, comments; implemented by the GitHub REST
-  adapter, the GitLab REST adapter (M7 step 1), the deterministic
+  adapter, the GitLab REST adapter (M7 step 1), the Forgejo/Gitea REST
+  adapter (M7 step 2), the deterministic
   `MemoryForge` reference, and the `PreviewForge` dry-run forecast —
   every adapter passing the shared conformance matrix (`halyard_forge::conformance`).
 - `Registry` — existence probes against the crates.io sparse index and npm
