@@ -30,6 +30,6 @@ pub use apply::{EditSet, LineEndings, Patch, apply, detect_line_endings, verify_
 pub use atomic::{apply_to_file, apply_to_file_verified, atomic_write};
 pub use error::EditError;
 pub use plan_apply::{
-    ApplyReport, DryPatch, FileSummary, LockfileSummary, apply_plan, dry_run_preview,
-    edit_set_from_plan,
+    ApplyReport, DryPatch, FileSummary, LockfileSummary, StagedEdits, apply_plan, dry_run_preview,
+    edit_set_from_plan, stage_plan_edits,
 };
