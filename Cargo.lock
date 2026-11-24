@@ -1554,6 +1554,7 @@ dependencies = [
 name = "halyard-forge"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "criterion",
  "halyard-changelog",
  "halyard-core",
