@@ -11,6 +11,22 @@ use halyard_forge::transport::{HttpResponse, MemoryTransport};
 use halyard_forge::{BranchName, Forge, MachineInput, PrSpec, ReleaseSpec, run_release_machine};
 use halyard_forge_github::{ForgeEndpoint, GitHubRestForge, UreqTransport};
 
+/// The prepare-phase input the first two passes share: no pending
+/// releases, the same Release-PR spec (the identical body is the I1
+/// no-op key).
+fn pr_input(branch: &BranchName) -> MachineInput {
+    MachineInput {
+        branch: branch.clone(),
+        pending_releases: Vec::new(),
+        release_pr: Some(PrSpec {
+            branch: branch.clone(),
+            title: "chore: release v0.5.0".to_owned(),
+            body: "## 🚀 Release plan".to_owned(),
+        }),
+        content_commit: None,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint = ForgeEndpoint::new("octo", "halyard-demo")?;
     let branch = BranchName::new("halyard/release/main")?;
@@ -45,19 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Pass 1: the tag phase is empty; the prepare phase opens the PR
     // (find + upsert find + POST = the observable call shapes).
-    let report = run_release_machine(
-        &forge,
-        &MachineInput {
-            branch: branch.clone(),
-            pending_releases: Vec::new(),
-            release_pr: Some(PrSpec {
-                branch: branch.clone(),
-                title: "chore: release v0.5.0".to_owned(),
-                body: "## 🚀 Release plan".to_owned(),
-            }),
-            content_commit: None,
-        },
-    )?;
+    let report = run_release_machine(&forge, &pr_input(&branch))?;
     println!("pass 1 (prepare): {:?}", report.effects);
 
     // Pass 2: the identical body is a no-op (I1) — the conditional
@@ -67,19 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         headers: Vec::new(),
         body: String::new(),
     });
-    let report = run_release_machine(
-        &forge,
-        &MachineInput {
-            branch: branch.clone(),
-            pending_releases: Vec::new(),
-            release_pr: Some(PrSpec {
-                branch: branch.clone(),
-                title: "chore: release v0.5.0".to_owned(),
-                body: "## 🚀 Release plan".to_owned(),
-            }),
-            content_commit: None,
-        },
-    )?;
+    let report = run_release_machine(&forge, &pr_input(&branch))?;
     println!(
         "pass 2 (no-op):   {:?} (calls: {})",
         report.effects, report.calls
