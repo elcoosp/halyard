@@ -839,3 +839,78 @@ fn release_summary_names_the_tags_the_push_and_the_forge_posture() {
         "the skip reason rides verbatim: {dry_summary}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The §11.1 step-3 content effect on the §12 `auto` view (ADR-0047's
+// `content_commit` machine input): the machine's own two content
+// verdicts ride the plain pass view, and the pass line renders them.
+// The plan binds the prepare phase to the auto command —
+// docs/HALYARD_ARCHITECTURE.md §11.1: "On every push to the base branch
+// the same command (`halyard release --auto`) runs" with step 3 "apply
+// EditSet in memory → build tree → compare tree OID with remote release
+// branch tip (`ls-remote`, 0 REST); if equal: update PR body only if
+// plan_hash differs; else commit & `push --force-with-lease`". Written
+// first (red on the unknown `content_effect` field), implemented second.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn auto_pass_line_renders_the_content_effect_of_the_prepare_half() {
+    use std::collections::BTreeMap;
+
+    use halyard_action::{AutoPass, ContentEffect, ForgePosture, PrEffect, auto_summary};
+
+    let plan = sample_plan();
+    let pass = |content: Option<ContentEffect>| AutoPass {
+        released: false,
+        propagated: false,
+        forecast: true,
+        created_tags: Vec::new(),
+        pr_effect: Some(PrEffect::Opened {
+            number: 0,
+            url: "preview://halyard/release/main".to_owned(),
+        }),
+        content_effect: content,
+        release_urls: BTreeMap::new(),
+        forge: ForgePosture::Skipped {
+            reason: "dry run — the forge half is forecast, not executed (I5)".to_owned(),
+        },
+    };
+
+    // The prepare phase committed the content through the forge (the
+    // live `api` mode, or the dry forecast's preview oid): the pass
+    // line names it before the PR it enables (the §11.1 order).
+    let committed = auto_summary(
+        &plan,
+        &pass(Some(ContentEffect::Committed {
+            oid: "blake3:5fa1".to_owned(),
+        })),
+    );
+    assert!(
+        committed.contains(" · content tree committed (blake3:5fa1) · PR #0 opened"),
+        "the committed content rides the pass line before the PR: {committed}"
+    );
+
+    // The I1 match (the git-side half pushed the content under the
+    // §11.2 lease, or the branch was already current): the machine
+    // spent no content call, and the line says so.
+    let matched = auto_summary(
+        &plan,
+        &pass(Some(ContentEffect::Matched {
+            tree_oid: "3fa1b2c4d5e6f7a8".to_owned(),
+        })),
+    );
+    assert!(
+        matched.contains(
+            " · the release branch already carries the content tree 3fa1b2c4d5e6f7a8 · PR #0 opened"
+        ),
+        "the matched content rides the pass line: {matched}"
+    );
+
+    // No content effect (PROPAGATE pass, empty plan, the close probe):
+    // the line keeps its documented shape — no content piece.
+    let none = auto_summary(&plan, &pass(None));
+    assert!(
+        !none.contains("content tree"),
+        "the absent effect renders nothing: {none}"
+    );
+}
