@@ -306,6 +306,21 @@ impl TagTemplate {
     const SUPPORTED: &'static [&'static str] =
         &["name", "version", "major", "minor", "patch", "ecosystem"];
 
+    /// The appendix-A.3 independent-package default: `{name}-v{version}`.
+    pub const INDEPENDENT_DEFAULT: &str = "{name}-v{version}";
+
+    /// The independent-package default template (`{name}-v{version}`).
+    ///
+    /// The literal bypasses [`TagTemplate::parse`]; that bypass is
+    /// pinned by the `independent_default_is_a_valid_template` test,
+    /// which parses [`TagTemplate::INDEPENDENT_DEFAULT`] and asserts
+    /// equality — the guarantee lives in the test-pinned constant, not
+    /// in a runtime `unreachable!` panic surface.
+    #[must_use]
+    pub fn independent_default() -> Self {
+        Self(Self::INDEPENDENT_DEFAULT.to_owned())
+    }
+
     /// Parses and validates a template string.
     pub fn parse(raw: &str) -> Result<Self, TagTemplateError> {
         if raw.is_empty() {
@@ -731,6 +746,21 @@ mod tests {
             TagTemplate::parse("{version}-{version}"),
             Err(TagTemplateError::DuplicatePlaceholder { .. })
         ));
+    }
+
+    /// The appendix-A.3 independent default is a real template: the
+    /// constructor's bypass of `parse` is pinned by this test, so the
+    /// guarantee lives in the pinned constant instead of a runtime
+    /// `unreachable!` (the discover crate's former default-template
+    /// helper carried the panic surface).
+    #[test]
+    fn independent_default_is_a_valid_template() {
+        let parsed = TagTemplate::parse(TagTemplate::INDEPENDENT_DEFAULT).unwrap();
+        assert_eq!(parsed, TagTemplate::independent_default());
+        assert_eq!(
+            TagTemplate::independent_default().as_str(),
+            "{name}-v{version}"
+        );
     }
 
     #[test]
