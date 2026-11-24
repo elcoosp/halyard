@@ -62,8 +62,11 @@ impl TaggerIdentity {
         !self.name.trim().is_empty() && !self.email.trim().is_empty()
     }
 
-    /// The `gix` signature this identity renders to.
-    fn signature(&self) -> gix::actor::Signature {
+    /// The `gix` signature this identity renders to — the tag phase's
+    /// tagger and the §11.1 step-3 content commit's author/committer
+    /// (one shell-owned identity: git config + clock).
+    #[must_use]
+    pub fn signature(&self) -> gix::actor::Signature {
         gix::actor::Signature {
             name: self.name.clone().into(),
             email: self.email.clone().into(),
