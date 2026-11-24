@@ -149,3 +149,20 @@ jobs:
             echo "::error::lint suppressions are forbidden outside [lints] with rationale"
             exit 1
           fi
+
+  docs-site:
+    name: docs-site link gate (M4.8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # M4.8: the acceptance row's "link-checked in CI" half — the same
+      # xtask gate the tree runs locally (the §15.6 convention), then a
+      # real render so a book that no longer builds cannot hide behind a
+      # structurally valid tree.
+      - run: cargo run -p xtask -- check-docs-site
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook
+      - run: mdbook build docs/site
