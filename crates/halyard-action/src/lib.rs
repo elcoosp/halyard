@@ -50,6 +50,14 @@
 //! PROPAGATE tag phase). The crate stays forge-free: the mapping is the
 //! shell's, the vocabulary is this crate's.
 //!
+//! The §12 `auto` mode renderers ([`auto_outputs`] / [`auto_summary`],
+//! ADR-0047) feed the composed §11.1 pass — the same plain-data shape
+//! ([`AutoPass`]): the git-side tag phase's rows, the machine's own
+//! half selection (`propagated`), the PR effect when the prepare phase
+//! ran, and the forge half's posture. The vocabulary is the
+//! pr/release superset, so a workflow step gates on the same keys
+//! whichever mode ran.
+//!
 //! Fail-closed taxonomy (§15.4 `E-ACTION-*`, each variant with a page
 //! under `docs/errors/`): an output name or value the env-file grammar
 //! cannot represent verbatim is [`ActionError::Output`] — never
@@ -910,6 +918,151 @@ fn release_pass_line(pass: &ReleasePass) -> String {
     } else {
         format!("created {}", pass.created_tags.join(", "))
     };
+    line.push_str(" · ");
+    match &pass.forge {
+        ForgePosture::Ran { repo, releases } => {
+            let _ = write!(line, "forge releases in {repo} ({releases} minted)");
+        }
+        ForgePosture::Skipped { reason } => {
+            let _ = write!(line, "forge releases skipped ({reason})");
+        }
+    }
+    if pass.forecast {
+        line.push_str(" · forecast (nothing executed)");
+    }
+    line
+}
+
+/// The §12 view of one `auto` pass (ADR-0047): plain, deterministic
+/// data (I3) — the git-side tags the §11.1 tag phase created, which
+/// half owned the run (the §11.1 machine's own PROPAGATE rule, never a
+/// caller guess), the Release-PR effect when the prepare phase ran,
+/// and the forge half's posture. The shell composes the two executors
+/// and maps their reports onto this view; this crate renders the
+/// vocabulary and stays git-free and forge-free (the layer note).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoPass {
+    /// `true` when the live tag phase created at least one tag — the
+    /// release act (§11.1 step 2). A dry forecast stays `false`:
+    /// nothing was executed (I5), even though its would-create tags
+    /// ride [`AutoPass::created_tags`].
+    pub released: bool,
+    /// `true` when the §11.1 machine's own PROPAGATE rule owned the
+    /// pass: pending releases gated the prepare phase, so the Release
+    /// PR lands on the next pass (§11.1 step 2).
+    pub propagated: bool,
+    /// `true` for a dry forecast — the summary states the posture.
+    pub forecast: bool,
+    /// The tags the pass created (would create, in the forecast), in
+    /// the tag phase's own name-sorted row order.
+    pub created_tags: Vec<String>,
+    /// The pass's Release-PR effect (`None` on the §11.1 PROPAGATE
+    /// pass, where the tag phase owns the run, or on the one-probe
+    /// no-op — empty plan, no stale PR).
+    pub pr_effect: Option<PrEffect>,
+    /// The release URLs minted this pass, keyed by tag (the created
+    /// releases; rows the machine did not touch keep the empty `url`
+    /// in `releases_json`).
+    pub release_urls: std::collections::BTreeMap<String, String>,
+    /// The forge half's posture (the machine's tag phase, §11.1 step
+    /// 2): what ran, or the honest skip's reason — never a pretended
+    /// release.
+    pub forge: ForgePosture,
+}
+
+/// The §12 outputs for the `auto` mode (ADR-0047), in the documented
+/// order: `released` (the pass's honest execution value — the git-side
+/// tag phase's), `published` (always `false` — the auto mode never
+/// publishes), the `pr_number` / `pr_url` pair when the pass has a
+/// Release PR to report (absent on the PROPAGATE and no-op passes —
+/// the §11.1 machine's own half selection), `plan_json`,
+/// `releases_json` (the pass's minted URLs filled by tag), the
+/// per-package keys and `paths_released` — the plan vocabulary
+/// unchanged, the same superset the `pr` and `release` modes speak.
+///
+/// # Errors
+///
+/// [`ActionError::Output`] when a key violates the output-key grammar
+/// or the rows fail to serialize.
+pub fn auto_outputs(
+    plan: &Plan,
+    plan_json_path: &Path,
+    pass: &AutoPass,
+) -> Result<Vec<(OutputName, String)>, ActionError> {
+    let mut outputs = Vec::new();
+    let released = if pass.released { "true" } else { "false" };
+    outputs.push((OutputName::new("released")?, released.to_owned()));
+    outputs.push((OutputName::new("published")?, "false".to_owned()));
+    if let Some(view) = pass.pr_effect.as_ref().map(PrEffect::view) {
+        outputs.push((OutputName::new("pr_number")?, view.number.to_string()));
+        outputs.push((OutputName::new("pr_url")?, view.url));
+    }
+    outputs.push((
+        OutputName::new("plan_json")?,
+        plan_json_path.display().to_string(),
+    ));
+    let release_urls = &pass.release_urls;
+    outputs.push(releases_json(plan, |row| {
+        release_urls.get(&row.tag).cloned().unwrap_or_default()
+    })?);
+    outputs.extend(package_keys(plan)?);
+    outputs.push(paths_released(plan)?);
+    Ok(outputs)
+}
+
+/// The §12 job summary for the `auto` mode: the release table (the
+/// plan vocabulary's layout) and the pass line — the created tags, the
+/// machine's own half selection, the minted URLs, the forge posture
+/// and the forecast marker, byte-stable (I3).
+#[must_use]
+pub fn auto_summary(plan: &Plan, pass: &AutoPass) -> String {
+    let mut summary = String::from("## halyard auto\n\n");
+    summary.push_str(&release_table(plan));
+    let planned = plan.releases.len();
+    let skipped = plan.skipped.len();
+    let _ = writeln!(summary);
+    let _ = writeln!(
+        summary,
+        "{planned} planned, {skipped} skipped · {}",
+        auto_pass_line(pass)
+    );
+    summary
+}
+
+/// The pass line the `auto` summary renders: the release half's rows
+/// (the created tags), the machine's own half selection (the §11.1
+/// PROPAGATE rule or the prepare phase's PR effect), the minted URLs,
+/// the forge posture and the forecast marker.
+fn auto_pass_line(pass: &AutoPass) -> String {
+    let mut line = if pass.created_tags.is_empty() {
+        "no tags created (nothing pending, already tagged or failed rows — the report names them)"
+            .to_owned()
+    } else {
+        format!("created {}", pass.created_tags.join(", "))
+    };
+    line.push_str(" · ");
+    if pass.propagated {
+        line.push_str("tag phase owns this pass (the Release PR lands on the next pass)");
+    } else {
+        match &pass.pr_effect {
+            Some(PrEffect::Opened { number, url }) => {
+                let _ = write!(line, "PR #{number} opened ({url})");
+            }
+            Some(PrEffect::Updated { number, url }) => {
+                let _ = write!(line, "PR #{number} updated ({url})");
+            }
+            Some(PrEffect::Unchanged { number, url }) => {
+                let _ = write!(line, "PR #{number} already current ({url})");
+            }
+            Some(PrEffect::Closed { number, url }) => {
+                let _ = write!(line, "PR #{number} closed ({url})");
+            }
+            None => line.push_str("no Release PR (nothing to open, none stale)"),
+        }
+    }
+    for (tag, url) in &pass.release_urls {
+        let _ = write!(line, " · minted {tag} ({url})");
+    }
     line.push_str(" · ");
     match &pass.forge {
         ForgePosture::Ran { repo, releases } => {
