@@ -933,6 +933,33 @@ fn release_pass_line(pass: &ReleasePass) -> String {
     line
 }
 
+/// The §11.1 step-3 content effect a pass's prepare phase carried (the
+/// machine's own verdict over its `content_commit` input, ADR-0047):
+/// plain data on the pass view — the machine compared the plan's
+/// content tree against the remote release branch's tip and either
+/// found the branch already carrying it or committed it through the
+/// forge. The git-side CAS push (the shell's `commit_mode = "git"`
+/// half, §11.2) reports as a match too: the branch carries the tree,
+/// which is all the machine's compare keys on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContentEffect {
+    /// The release branch already carried the plan's content tree (the
+    /// I1 match — the git-side half pushed it under the §11.2 lease, or
+    /// the branch was already current): the machine spent no content
+    /// call.
+    Matched {
+        /// The content tree OID both sides agreed on.
+        tree_oid: String,
+    },
+    /// The content was committed through the forge's `commit_via_api`
+    /// (the live `api` mode's real oid, or the dry forecast's preview
+    /// oid — I5, the preview marks it like every forecast value).
+    Committed {
+        /// The forge-reported commit oid.
+        oid: String,
+    },
+}
+
 /// The §12 view of one `auto` pass (ADR-0047): plain, deterministic
 /// data (I3) — the git-side tags the §11.1 tag phase created, which
 /// half owned the run (the §11.1 machine's own PROPAGATE rule, never a
@@ -960,6 +987,12 @@ pub struct AutoPass {
     /// pass, where the tag phase owns the run, or on the one-probe
     /// no-op — empty plan, no stale PR).
     pub pr_effect: Option<PrEffect>,
+    /// The prepare phase's content verdict (§11.1 step 3) — `None`
+    /// whenever the prepare phase did not run (the PROPAGATE pass, the
+    /// empty plan's close probe) or the plan staged no content: the
+    /// machine's `content_commit` input was absent, so no content
+    /// effect exists to report.
+    pub content_effect: Option<ContentEffect>,
     /// The release URLs minted this pass, keyed by tag (the created
     /// releases; rows the machine did not touch keep the empty `url`
     /// in `releases_json`).
@@ -1031,8 +1064,9 @@ pub fn auto_summary(plan: &Plan, pass: &AutoPass) -> String {
 
 /// The pass line the `auto` summary renders: the release half's rows
 /// (the created tags), the machine's own half selection (the §11.1
-/// PROPAGATE rule or the prepare phase's PR effect), the minted URLs,
-/// the forge posture and the forecast marker.
+/// PROPAGATE rule or the prepare phase's content verdict then PR
+/// effect, in the machine's own §11.1 order), the minted URLs, the
+/// forge posture and the forecast marker.
 fn auto_pass_line(pass: &AutoPass) -> String {
     let mut line = if pass.created_tags.is_empty() {
         "no tags created (nothing pending, already tagged or failed rows — the report names them)"
@@ -1044,6 +1078,20 @@ fn auto_pass_line(pass: &AutoPass) -> String {
     if pass.propagated {
         line.push_str("tag phase owns this pass (the Release PR lands on the next pass)");
     } else {
+        // The prepare phase's §11.1 order: the content step commits (or
+        // matches) before the PR half rides the branch it just carried.
+        match &pass.content_effect {
+            Some(ContentEffect::Matched { tree_oid }) => {
+                let _ = write!(
+                    line,
+                    "the release branch already carries the content tree {tree_oid} · "
+                );
+            }
+            Some(ContentEffect::Committed { oid }) => {
+                let _ = write!(line, "content tree committed ({oid}) · ");
+            }
+            None => {}
+        }
         match &pass.pr_effect {
             Some(PrEffect::Opened { number, url }) => {
                 let _ = write!(line, "PR #{number} opened ({url})");
