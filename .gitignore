@@ -33,3 +33,6 @@ fuzz/Cargo.lock
 # session deliverables (ship ceremony, not codebase)
 ship.toml
 .github/pr-body.md
+
+# mdBook render output (the gate + CI render the book; the HTML is a build artifact)
+/docs/site/book
