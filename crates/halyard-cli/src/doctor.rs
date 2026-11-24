@@ -521,6 +521,23 @@ fn token_check(offline: bool) -> Check {
                 .to_owned(),
         };
     }
+    // M7 step 3 (ADR-0051): the Bitbucket lane's OAuth 2.0 Bearer
+    // token auth — `BITBUCKET_TOKEN` first, then the smoke job's
+    // `HALYARD_FORGE_TOKEN` contract.
+    let bitbucket_token = ["BITBUCKET_TOKEN", "HALYARD_FORGE_TOKEN"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()));
+    if bitbucket_token.is_some() {
+        return Check {
+            name: "token".to_owned(),
+            ok: true,
+            detail: "BITBUCKET_TOKEN (or HALYARD_FORGE_TOKEN) present — the Bitbucket \
+                     lane's OAuth 2.0 Bearer auth (ADR-0051; an API token rides Basic \
+                     auth with the account email, outside this lane; a GitHub origin \
+                     needs GITHUB_TOKEN or the App env instead)"
+                .to_owned(),
+        };
+    }
     let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
     Check {
         name: "token".to_owned(),
@@ -533,8 +550,8 @@ fn token_check(offline: bool) -> Check {
             None => "no forge credentials: planning works offline, but `pr`/`release`/\
                      `publish` need the GitHub App env (HALYARD_APP_ID + \
                      HALYARD_APP_PRIVATE_KEY_PATH + HALYARD_APP_INSTALLATION_ID), \
-                     GITHUB_TOKEN, GITLAB_TOKEN, or FORGEJO_TOKEN (or run with \
-                     --offline to silence this check)"
+                     GITHUB_TOKEN, GITLAB_TOKEN, FORGEJO_TOKEN, or BITBUCKET_TOKEN (or \
+                     run with --offline to silence this check)"
                 .to_owned(),
         },
     }
