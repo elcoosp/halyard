@@ -505,6 +505,22 @@ fn token_check(offline: bool) -> Check {
                 .to_owned(),
         };
     }
+    // M7 step 2 (ADR-0050): the Forgejo/Gitea lane's token auth —
+    // `FORGEJO_TOKEN` first, then the Gitea-native `GITEA_TOKEN` name,
+    // then the smoke job's `HALYARD_FORGE_TOKEN` contract.
+    let forgejo_token = ["FORGEJO_TOKEN", "GITEA_TOKEN", "HALYARD_FORGE_TOKEN"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()));
+    if forgejo_token.is_some() {
+        return Check {
+            name: "token".to_owned(),
+            ok: true,
+            detail: "FORGEJO_TOKEN (or GITEA_TOKEN, or HALYARD_FORGE_TOKEN) present — the \
+                     Forgejo/Gitea lane's Authorization token auth (ADR-0050; a GitHub \
+                     origin needs GITHUB_TOKEN or the App env instead)"
+                .to_owned(),
+        };
+    }
     let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
     Check {
         name: "token".to_owned(),
@@ -517,8 +533,8 @@ fn token_check(offline: bool) -> Check {
             None => "no forge credentials: planning works offline, but `pr`/`release`/\
                      `publish` need the GitHub App env (HALYARD_APP_ID + \
                      HALYARD_APP_PRIVATE_KEY_PATH + HALYARD_APP_INSTALLATION_ID), \
-                     GITHUB_TOKEN, or GITLAB_TOKEN (or run with --offline to silence \
-                     this check)"
+                     GITHUB_TOKEN, GITLAB_TOKEN, or FORGEJO_TOKEN (or run with \
+                     --offline to silence this check)"
                 .to_owned(),
         },
     }
