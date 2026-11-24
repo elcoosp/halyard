@@ -135,3 +135,44 @@ usage documentation.
   unconditional probes.
 - The `since`/`before` comment filters: not needed — the scan walks
   the full array the endpoint returns.
+
+## 8. The pull-close shape, verified for the implementation (2026-11-24)
+
+The sections above scope the find/create/rewrite surface; the adapter's
+`close_pr` needed the one shape this note had not yet pinned. It was
+verified against the live `/api/v1` specification this session (the
+hosted Forgejo instance codeberg.org publishes the same swagger.v1.json
+the `forgejo.org/docs/latest/user/api/` page names — fetched
+`https://codeberg.org/swagger.v1.json`, `basePath: /api/v1`, 248
+definitions; every shape in §1–§7 re-checked against it, none drifted):
+
+- `PATCH /repos/{owner}/{repo}/pulls/{index}` takes the
+  `EditPullRequestOption` body, and the definition carries a `state`
+  field (`"state": string`, alongside `title`, `body`, `base`,
+  `milestone`, … — none required). The close sends
+  `{"state": "closed"}` — the documented state vocabulary is the
+  `StateType` enum (`open`/`closed`; the list endpoint's `state`
+  parameter documents the same values).
+- The endpoint's documented responses are exactly: `201` (the
+  `PullRequest`), `403` (forbidden), `404` (not found), `409` (error —
+  e.g. a head branch that cannot be reopened/closed), `412`, `422`
+  (validation error). The adapter maps `409` onto `E-FORGE-CONFLICT`
+  and `422` onto `E-FORGE-REQUEST` accordingly (the GitLab lane's
+  close carried no documented 409; this one does).
+- `PATCH /repos/{owner}/{repo}/pulls` responses: `400` (error) and
+  `500` (error) ride the same `APIError` shape (`{"message": "…"}` —
+  the spec's own error definition; `Gitea`'s `APIError` carries
+  `message` + `url`, the url being the doc link, not a diagnosis).
+- The find probe's `head`/`state` query parameters, the
+  `CreatePullRequestOption` (`head`, `base`, `title`, `body`), the
+  release surface (`GET /releases/tags/{tag}`, `POST /releases`,
+  `CreateReleaseOption` `required: [tag_name]`), and the issue-comment
+  surface (`GET/POST /repos/{owner}/{repo}/issues/{index}/comments`
+  with no pagination parameters, `PATCH
+  /repos/{owner}/{repo}/issues/comments/{id}`) all re-verified
+  verbatim.
+
+One grammar tightening recorded: `ForgejoEndpoint::from_remote`'s
+https branch requires the exact host (`codeberg.org` or `gitea.com`,
+the next character `/`) — port-bearing and look-alike hosts are the
+`FORGEJO_API_URL` override's territory, never the origin grammar's.
