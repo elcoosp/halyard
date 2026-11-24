@@ -1442,6 +1442,7 @@ dependencies = [
  "halyard-edit",
  "halyard-forge",
  "halyard-forge-github",
+ "halyard-forge-gitlab",
  "halyard-git",
  "halyard-publish",
  "halyard-registry",
@@ -1569,6 +1570,19 @@ dependencies = [
  "halyard-core",
  "halyard-forge",
  "ring",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
+name = "halyard-forge-gitlab"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "criterion",
+ "halyard-core",
+ "halyard-forge",
  "serde",
  "serde_json",
  "ureq",
