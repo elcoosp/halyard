@@ -165,6 +165,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect(),
         release_pr: None,
+        content_commit: None,
     };
     let machine = run_release_machine(&forge, &input)?;
     println!(
