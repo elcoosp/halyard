@@ -94,6 +94,7 @@ link would rot with the page paths).
 | `E-ACTION-OUTPUT` | [E-ACTION-OUTPUT.md](E-ACTION-OUTPUT.md) | action-output seam: an output name/value the GITHUB_OUTPUT grammar cannot carry verbatim, or the sink is unwritable (§12 step 1, ADR-0037) |
 | `E-ACTION-SUMMARY` | [E-ACTION-SUMMARY.md](E-ACTION-SUMMARY.md) | action-output seam: the §12 job summary has no GITHUB_STEP_SUMMARY sink or the sink is unwritable (§12 step 1, ADR-0037) |
 | `E-ACTION-PLAN` | [E-ACTION-PLAN.md](E-ACTION-PLAN.md) | action-output seam: the canonical plan file cannot be written (§12 step 1, ADR-0037) |
+| `E-ACTION-DISTRIBUTION` | [E-ACTION-DISTRIBUTION.md](E-ACTION-DISTRIBUTION.md) | §12 composite distribution: a checksum line, release asset, runner platform or template shape the distribution grammar cannot pin (M5.4 own-artifact slice, ADR-0052) |
 
 ## Extension policy
 
