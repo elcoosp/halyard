@@ -36,7 +36,7 @@ fn nested_fixture(label: &str) -> Result<GitFixture, BoxError> {
     Ok(fx)
 }
 
-/// The §11.1 payloads the plan's EditSet would produce: the two
+/// The §11.1 payloads the plan's `EditSet` would produce: the two
 /// manifests at their new versions plus a brand-new file.
 fn payloads() -> Vec<(String, Vec<u8>)> {
     vec![
@@ -54,7 +54,7 @@ fn payloads() -> Vec<(String, Vec<u8>)> {
 
 /// The `git write-tree` ground truth: apply the payloads to the fixture's
 /// worktree, stage everything and hash the index — the same semantics the
-/// content builder must reproduce (§11.1 "apply EditSet in memory → build
+/// content builder must reproduce (§11.1 "apply `EditSet` in memory → build
 /// tree").
 fn git_write_tree_ground_truth(
     fx: &GitFixture,
@@ -134,7 +134,7 @@ fn fixture_with_origin(label: &str) -> Result<GitFixture, BoxError> {
     let origin = fx
         .root()
         .parent()
-        .expect("fixture root has a parent")
+        .ok_or("fixture root has a parent")?
         .join(format!("{label}-origin.git"));
     fx.run_git(&["init", "--bare", origin.to_string_lossy().as_ref()])?;
     fx.run_git(&["remote", "add", "origin", origin.to_string_lossy().as_ref()])?;
@@ -261,7 +261,7 @@ fn fixture_with_bare(label: &str) -> Result<(GitFixture, std::path::PathBuf), Bo
     let bare = fx
         .root()
         .parent()
-        .expect("fixture root has a parent")
+        .ok_or("fixture root has a parent")?
         .join(format!("{label}-origin.git"));
     fx.run_git(&["init", "--bare", bare.to_string_lossy().as_ref()])?;
     Ok((fx, bare))
@@ -373,7 +373,7 @@ fn push_release_branch_rejects_a_stale_lease_fail_closed() -> Result<(), BoxErro
     let second = stage_release_commit(
         fx.root(),
         "chore: release v0.3.0",
-        &vec![(
+        &[(
             "Cargo.toml".to_owned(),
             b"[package]\nname = \"app\"\nversion = \"0.3.0\"\n".to_vec(),
         )],
@@ -384,7 +384,7 @@ fn push_release_branch_rejects_a_stale_lease_fail_closed() -> Result<(), BoxErro
         "origin",
         BRANCH,
         &second,
-        Some(&stale_tip.commit),
+        Some(&stale_tip),
     )?;
     assert!(
         matches!(rejected.row, Some(BranchPushRow::Rejected { .. })),
