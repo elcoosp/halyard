@@ -37,6 +37,7 @@ use halyard_core::planner::{PlanConfig, Snapshot, plan as core_plan};
 use halyard_core::{HistoryProvider, ReleaseRefs};
 use halyard_discover::{DiscoverInput, discover_repo};
 use halyard_forge::Forge as _;
+use halyard_forge_forgejo::{ForgejoEndpoint, ForgejoRestForge};
 use halyard_forge_github::{ForgeEndpoint, GitHubRestForge, UreqTransport};
 use halyard_forge_gitlab::{GitLabEndpoint, GitLabRestForge};
 use halyard_git::GitHistory;
@@ -1423,17 +1424,27 @@ enum ForgeEnv {
         endpoint: GitLabEndpoint,
         token: std::sync::Arc<str>,
     },
+    /// The M7 Forgejo/Gitea REST lane (ADR-0050): token auth only (the
+    /// adapter has no App-auth surface — research §1/§7).
+    Forgejo {
+        endpoint: ForgejoEndpoint,
+        token: std::sync::Arc<str>,
+    },
 }
 
 impl ForgeEnv {
     /// The repo coordinates the render surfaces carry: the GitHub
-    /// `owner/repo` slug, or the GitLab project path (the changelog's
-    /// compare-link grammar is GitHub-shaped, so a GitLab slug renders
-    /// the honest no-link form downstream).
+    /// `owner/repo` slug, the GitLab project path, or the Forgejo
+    /// `owner/repo` path (the changelog's compare-link grammar is
+    /// GitHub-shaped, so a GitLab/Forgejo slug renders the honest
+    /// no-link form downstream).
     fn repo(&self) -> String {
         match self {
             ForgeEnv::GitHub { endpoint, .. } => endpoint.slug(),
             ForgeEnv::GitLab { endpoint, .. } => endpoint.project_path().to_owned(),
+            ForgeEnv::Forgejo { endpoint, .. } => {
+                format!("{}/{}", endpoint.owner(), endpoint.repo())
+            }
         }
     }
 }
@@ -1543,6 +1554,36 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
             token: std::sync::Arc::from(token.as_str()),
         });
     }
+    // M7 step 2 (ADR-0050): the Forgejo/Gitea lane rides the adapter's
+    // own remote grammar (https / git@ / ssh over codeberg.org and
+    // gitea.com — one adapter, two names).
+    if let Some(endpoint) = remote_url
+        .as_deref()
+        .and_then(halyard_forge_forgejo::ForgejoEndpoint::from_remote)
+    {
+        if app.is_some() {
+            return Err(CliError::new(
+                "E-FORGE-AUTH",
+                "the HALYARD_APP_* env configures GitHub App auth, but the origin is a \
+                 Forgejo/Gitea remote: the Forgejo adapter rides an Authorization token \
+                 (export FORGEJO_TOKEN, GITEA_TOKEN, or HALYARD_FORGE_TOKEN) — unset the \
+                 App env or point remote.origin.url at a GitHub remote",
+            ));
+        }
+        let token = forgejo_token_from_env().ok_or_else(|| {
+            CliError::new(
+                "E-FORGE-AUTH",
+                "live forge mode needs credentials: export FORGEJO_TOKEN (a Forgejo/Gitea \
+                 token with repository scope) — or GITEA_TOKEN, or HALYARD_FORGE_TOKEN — \
+                 and re-run `halyard doctor` to verify it can reach the repository",
+            )
+        })?;
+        let endpoint = forgejo_endpoint_with_base_override(endpoint)?;
+        return Ok(ForgeEnv::Forgejo {
+            endpoint,
+            token: std::sync::Arc::from(token.as_str()),
+        });
+    }
     let credentials = if let Some(app) = app {
         halyard_forge_github::ForgeCredentials::App(Box::new(app))
     } else {
@@ -1570,9 +1611,10 @@ fn forge_credentials() -> Result<ForgeEnv, CliError> {
     let (owner, repo) = slug.ok_or_else(|| {
         CliError::new(
             "E-CLI-PR",
-            "live forge mode needs a GitHub or GitLab origin: set remote.origin.url to one \
-             (the adapters are the M4.1b GitHub REST and the M7 GitLab REST ones; the other \
-             forges are later Year-2 milestones)",
+            "live forge mode needs a GitHub, GitLab, or Forgejo/Gitea origin: set \
+             remote.origin.url to one (the adapters are the M4.1b GitHub REST, the M7 GitLab \
+             REST and the M7 Forgejo/Gitea REST ones; the other forges are later Year-2 \
+             milestones)",
         )
     })?;
     let api_base = std::env::var("GITHUB_API_URL")
@@ -1601,6 +1643,16 @@ fn gitlab_token_from_env() -> Option<String> {
         })
 }
 
+/// The Forgejo/Gitea token (`FORGEJO_TOKEN` first — the adapter's own
+/// env — then the Gitea-native `GITEA_TOKEN` name for gitea.com
+/// origins, then the nightly smoke job's `HALYARD_FORGE_TOKEN`
+/// contract), or `None` when none is set (ADR-0050).
+fn forgejo_token_from_env() -> Option<String> {
+    ["FORGEJO_TOKEN", "GITEA_TOKEN", "HALYARD_FORGE_TOKEN"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+}
+
 /// The GitLab API-base override (`GITLAB_API_URL` — self-hosted
 /// instances and the offline lane; the base carries the `/api/v4` root,
 /// which is never appended implicitly).
@@ -1610,6 +1662,21 @@ fn gitlab_endpoint_with_base_override(
     match std::env::var("GITLAB_API_URL") {
         Ok(base) if !base.is_empty() => GitLabEndpoint::with_base(endpoint.project_path(), &base)
             .map_err(|e| CliError::new(e.code(), e.to_string())),
+        _ => Ok(endpoint),
+    }
+}
+
+/// The Forgejo API-base override (`FORGEJO_API_URL` — self-hosted
+/// instances and the offline lane; the base carries the `/api/v1` root,
+/// which is never appended implicitly).
+fn forgejo_endpoint_with_base_override(
+    endpoint: ForgejoEndpoint,
+) -> Result<ForgejoEndpoint, CliError> {
+    match std::env::var("FORGEJO_API_URL") {
+        Ok(base) if !base.is_empty() => {
+            ForgejoEndpoint::with_base(&format!("{}/{}", endpoint.owner(), endpoint.repo()), &base)
+                .map_err(|e| CliError::new(e.code(), e.to_string()))
+        }
         _ => Ok(endpoint),
     }
 }
@@ -1633,6 +1700,11 @@ fn live_forge(env: ForgeEnv) -> Box<dyn halyard_forge::Forge> {
             endpoint,
             &token,
             halyard_forge_gitlab::UreqTransport::new(),
+        )),
+        ForgeEnv::Forgejo { endpoint, token } => Box::new(ForgejoRestForge::with_transport(
+            endpoint,
+            &token,
+            halyard_forge_forgejo::UreqTransport::new(),
         )),
     }
 }
@@ -2437,6 +2509,71 @@ fn run_auto_pass(
 /// — GET finds what landed). The plan and the reconciliation rows ride
 /// in from the shared pass — one plan, one reconciliation, no
 /// recomputation.
+/// The release forge half's lane resolution (ADR-0049/ADR-0050): the
+/// self-hosted lanes (GitLab, Forgejo/Gitea) resolve from the origin's
+/// shape through their adapters' own grammars; a missing credential is
+/// the honest skip carrying the lane's own token name; a foreign origin
+/// falls through to the GitHub lane's slug parse.
+enum ReleaseLane {
+    /// Neither self-hosted shape — the GitHub lane decides.
+    GitHub,
+    /// The lane's adapter over the resolved endpoint and coordinates.
+    Forge {
+        forge: Box<dyn halyard_forge::Forge>,
+        repo: String,
+    },
+    /// The lane matched but the credentials are absent — the honest
+    /// skip (never faked).
+    Skipped { reason: String },
+}
+
+/// Resolves the release forge half's lane from the origin URL.
+///
+/// # Errors
+///
+/// [`CliError`] when a resolved endpoint is unusable (the base-override
+/// grammar's fail-closed paths).
+fn release_lane(remote_url: Option<&str>) -> Result<ReleaseLane, CliError> {
+    if let Some(endpoint) = remote_url.and_then(halyard_forge_gitlab::GitLabEndpoint::from_remote) {
+        let endpoint = gitlab_endpoint_with_base_override(endpoint)?;
+        let Some(token) = gitlab_token_from_env() else {
+            return Ok(ReleaseLane::Skipped {
+                reason: "no forge credentials (export GITLAB_TOKEN to create forge \
+                         releases on a GitLab remote)"
+                    .to_owned(),
+            });
+        };
+        return Ok(ReleaseLane::Forge {
+            forge: Box::new(GitLabRestForge::with_transport(
+                endpoint.clone(),
+                &token,
+                halyard_forge_gitlab::UreqTransport::new(),
+            )),
+            repo: endpoint.project_path().to_owned(),
+        });
+    }
+    if let Some(endpoint) = remote_url.and_then(halyard_forge_forgejo::ForgejoEndpoint::from_remote)
+    {
+        let endpoint = forgejo_endpoint_with_base_override(endpoint)?;
+        let Some(token) = forgejo_token_from_env() else {
+            return Ok(ReleaseLane::Skipped {
+                reason: "no forge credentials (export FORGEJO_TOKEN to create forge \
+                         releases on a Forgejo/Gitea remote)"
+                    .to_owned(),
+            });
+        };
+        return Ok(ReleaseLane::Forge {
+            forge: Box::new(ForgejoRestForge::with_transport(
+                endpoint.clone(),
+                &token,
+                halyard_forge_forgejo::UreqTransport::new(),
+            )),
+            repo: format!("{}/{}", endpoint.owner(), endpoint.repo()),
+        });
+    }
+    Ok(ReleaseLane::GitHub)
+}
+
 fn forge_release_phase(
     context: &Context,
     profiler: &mut Profiler,
@@ -2445,74 +2582,62 @@ fn forge_release_phase(
     states: &[halyard_core::PackageTagState],
 ) -> Result<render::ForgeReleases, CliError> {
     let remote_url = remote_origin_url()?;
-    let (forge, repo): (Box<dyn halyard_forge::Forge>, String) = if let Some(endpoint) = remote_url
-        .as_deref()
-        .and_then(halyard_forge_gitlab::GitLabEndpoint::from_remote)
-    {
-        // The GitLab lane (ADR-0049): the adapter's own remote grammar,
-        // the `GITLAB_API_URL` base override, `PRIVATE-TOKEN` auth —
-        // missing credentials stay the honest skip (the git-side half
-        // already ran; the re-run completes the forge half).
-        let endpoint = gitlab_endpoint_with_base_override(endpoint)?;
-        let Some(token) = gitlab_token_from_env() else {
-            return Ok(render::ForgeReleases::Skipped {
-                reason: "no forge credentials (export GITLAB_TOKEN to create forge \
-                         releases on a GitLab remote)"
-                    .to_owned(),
-            });
-        };
-        (
-            Box::new(GitLabRestForge::with_transport(
-                endpoint.clone(),
-                &token,
-                halyard_forge_gitlab::UreqTransport::new(),
-            )),
-            endpoint.project_path().to_owned(),
-        )
-    } else {
-        let credentials = if let Some(app) = app_credentials_from_env()? {
-            halyard_forge_github::ForgeCredentials::App(Box::new(app))
-        } else {
-            let token = std::env::var("HALYARD_FORGE_TOKEN")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    std::env::var("GITHUB_TOKEN")
+    let (forge, repo): (Box<dyn halyard_forge::Forge>, String) =
+        match release_lane(remote_url.as_deref())? {
+            // The GitLab lane (ADR-0049) / the Forgejo/Gitea lane (ADR-0050):
+            // the adapter's own remote grammar, the `*_API_URL` base
+            // override, token auth — missing credentials stay the honest
+            // skip (the git-side half already ran; the re-run completes the
+            // forge half).
+            ReleaseLane::Skipped { reason } => {
+                return Ok(render::ForgeReleases::Skipped { reason });
+            }
+            ReleaseLane::Forge { forge, repo } => (forge, repo),
+            ReleaseLane::GitHub => {
+                let credentials = if let Some(app) = app_credentials_from_env()? {
+                    halyard_forge_github::ForgeCredentials::App(Box::new(app))
+                } else {
+                    let token = std::env::var("HALYARD_FORGE_TOKEN")
                         .ok()
                         .filter(|value| !value.is_empty())
-                });
-            let Some(token) = token else {
-                return Ok(render::ForgeReleases::Skipped {
-                    reason: "no forge credentials (configure the GitHub App env or export \
+                        .or_else(|| {
+                            std::env::var("GITHUB_TOKEN")
+                                .ok()
+                                .filter(|value| !value.is_empty())
+                        });
+                    let Some(token) = token else {
+                        return Ok(render::ForgeReleases::Skipped {
+                            reason: "no forge credentials (configure the GitHub App env or export \
                              GITHUB_TOKEN to create forge releases)"
-                        .to_owned(),
-                });
-            };
-            halyard_forge_github::ForgeCredentials::from_token(&token)
+                                .to_owned(),
+                        });
+                    };
+                    halyard_forge_github::ForgeCredentials::from_token(&token)
+                };
+                let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
+                let Some((owner, repo)) = slug else {
+                    return Ok(render::ForgeReleases::Skipped {
+                        reason: "origin is not a GitHub, GitLab, or Forgejo/Gitea remote — forge \
+                         releases are skipped, never faked"
+                            .to_owned(),
+                    });
+                };
+                let api_base = std::env::var("GITHUB_API_URL")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "https://api.github.com".to_owned());
+                let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
+                    .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+                (
+                    Box::new(GitHubRestForge::with_credentials(
+                        endpoint,
+                        credentials,
+                        UreqTransport::new(),
+                    )),
+                    format!("{owner}/{repo}"),
+                )
+            }
         };
-        let slug = remote_url.as_deref().and_then(halyard_changelog::repo_slug);
-        let Some((owner, repo)) = slug else {
-            return Ok(render::ForgeReleases::Skipped {
-                reason: "origin is not a GitHub or GitLab remote — forge releases are \
-                         skipped, never faked"
-                    .to_owned(),
-            });
-        };
-        let api_base = std::env::var("GITHUB_API_URL")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "https://api.github.com".to_owned());
-        let endpoint = ForgeEndpoint::with_base(&owner, &repo, &api_base)
-            .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-        (
-            Box::new(GitHubRestForge::with_credentials(
-                endpoint,
-                credentials,
-                UreqTransport::new(),
-            )),
-            format!("{owner}/{repo}"),
-        )
-    };
     // The notes payloads ride the same notes pipeline `pr --dry` uses;
     // the plan feeds the entry-preview fallback (no fabrication). The
     // plan and the reconciliation ride in from the shared pass.
