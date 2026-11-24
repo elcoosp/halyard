@@ -47,6 +47,7 @@ link would rot with the page paths).
 | `E-GIT-PUSH` | [E-GIT-PUSH.md](E-GIT-PUSH.md) | git engine tag-push effect (§11.1 step 2 / §11.2) |
 | `E-GIT-FETCH` | [E-GIT-FETCH.md](E-GIT-FETCH.md) | git engine smart-minimal-fetch effect (§8.8, M4.6 step 1) |
 | `E-GIT-CACHE` | [E-GIT-CACHE.md](E-GIT-CACHE.md) | git engine cache write-back durability (§8.7) |
+| `E-GIT-CONTENT` | [E-GIT-CONTENT.md](E-GIT-CONTENT.md) | git engine §11.1 step-3 content machinery (M4.2 remainder) |
 | `E-PLAN-CYCLE` | [E-PLAN-CYCLE.md](E-PLAN-CYCLE.md) | planner cycle (M1.9) |
 | `E-PLAN-RELEASE-AS` | [E-PLAN-RELEASE-AS.md](E-PLAN-RELEASE-AS.md) | planner Release-As footer (M1.9) |
 | `E-PLAN-UNREWRITABLE` | [E-PLAN-UNREWRITABLE.md](E-PLAN-UNREWRITABLE.md) | planner cascade rewriter (M1.9, A.2) |
