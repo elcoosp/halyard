@@ -106,21 +106,36 @@ pub fn edit_set_from_plan(plan: &Plan) -> Result<EditSet, EditError> {
     EditSet::from_plan_edits(&plan.edits)
 }
 
-/// Applies a computed plan to the working tree under `root` (M3.6b, the
-/// local `apply` flow): discovery → plan (the caller's pipeline) →
-/// [`EditSet`] → adapter patchers → atomic writes, plus the M3.2/M3.4
-/// lockfile stages (the workspace lockfiles patched from the plan's
-/// version moves through each adapter's `patch_lockfile` seam).
+/// The staged half of the apply flow (§11.1 step 3 "apply EditSet in
+/// memory"): every manifest and lockfile the plan edits, patched and
+/// read-back-verified through the adapters — **without any write**. The
+/// content-commit flow consumes [`StagedEdits::payloads`]; the local
+/// apply flow writes them ([`apply_plan`] is exactly stage + write, so
+/// the two flows can never disagree about what a plan edits).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StagedEdits {
+    /// Every staged file (manifests in plan order, then the patched
+    /// lockfiles), as `(repo-relative path, content)` pairs — the
+    /// content commit's payloads (§11.1 step 3).
+    pub payloads: Vec<(RelPath, Vec<u8>)>,
+    /// Per-manifest summary rows, plan order (the apply report's
+    /// `files`).
+    pub files: Vec<FileSummary>,
+    /// Per-lockfile summary rows, `LOCKFILE_TARGETS` order (the apply
+    /// report's `lockfiles`).
+    pub lockfiles: Vec<LockfileSummary>,
+}
+
+/// Stages a plan's edits in memory (the §11.1 step-3 content commit's
+/// input): each edited manifest routes through its ecosystem adapter's
+/// semantic patcher (`edit_versions`, M3.1/M3.3) and each staged
+/// lockfile through `patch_lockfile` (§9.2/§9.3) — every file patched
+/// and verified before the caller sees anything, nothing written.
 ///
 /// The adapter for each edited manifest resolves from the workspace's
 /// packages (the manifest owner's ecosystem); unclaimed files (workspace
-/// root manifests) fall back to the manifest file name. Every file is
-/// patched in memory and verified by its adapter before anything is
-/// written (§9.1: re-parse + semantic read-back, all or none). The
-/// lockfile stages run before any write as well: a hard lockfile failure
-/// (`E-LOCK-PARSE`) aborts the whole apply, while a decline
-/// ([`LockfileOutcome::NeedsNative`]) is reported in
-/// [`ApplyReport::lockfiles`] with the file untouched.
+/// root manifests) fall back to the manifest file name — the same rule
+/// [`apply_plan`] applies, because this is its first half.
 ///
 /// # Errors
 ///
@@ -131,17 +146,18 @@ pub fn edit_set_from_plan(plan: &Plan) -> Result<EditSet, EditError> {
 /// when an edited manifest fails the read-back re-parse,
 /// [`EditError::LockfileParse`] when a lockfile patch pass fails
 /// outright (`E-LOCK-PARSE`), and [`EditError::Io`] for filesystem
-/// failures.
-pub fn apply_plan(
+/// read failures.
+pub fn stage_plan_edits(
     root: &Path,
     plan: &Plan,
     workspace: &Workspace,
     adapters: &[&dyn EcosystemAdapter],
-) -> Result<ApplyReport, EditError> {
+) -> Result<StagedEdits, EditError> {
     // Validate the whole plan up front (paths, overlaps) — nothing is
-    // touched while this runs.
+    // staged while this runs.
     edit_set_from_plan(plan)?;
-    let mut staged: Vec<(RelPath, halyard_core::edit::EditOutcome)> = Vec::new();
+    let mut payloads: Vec<(RelPath, Vec<u8>)> = Vec::new();
+    let mut files = Vec::with_capacity(plan.edits.len());
     for edit in &plan.edits {
         let file = RelPath::new(&edit.file).ok_or(EditError::InvalidPatches {
             reason: format!(
@@ -161,32 +177,72 @@ pub fn apply_plan(
         let outcome = adapter
             .edit_versions(&file, &original, &edit.patches)
             .map_err(|failure| map_failure(failure, &file))?;
-        staged.push((file, outcome));
-    }
-    // M3.2/M3.4 lockfile stages (§9.2/§9.3): the plan's per-ecosystem
-    // version moves drive the workspace lockfile rewrites through each
-    // adapter's patch_lockfile seam. Runs before any write, so a hard
-    // failure aborts cleanly.
-    let staged_lockfiles = stage_lockfiles(root, plan, adapters)?;
-    // Every manifest patched and verified in memory — write them all.
-    let mut files = Vec::with_capacity(staged.len());
-    for (file, outcome) in &staged {
-        atomic_write(&root.join(file.to_path_buf()), &outcome.content)?;
+        payloads.push((file.clone(), outcome.content.clone()));
         files.push(FileSummary {
-            file: file.clone(),
+            file,
             applied: outcome.applied,
             skipped: outcome.skipped,
         });
     }
+    // M3.2/M3.4 lockfile stages (§9.2/§9.3): the plan's per-ecosystem
+    // version moves drive the workspace lockfile rewrites through each
+    // adapter's patch_lockfile seam. Runs as part of the staging, so a
+    // hard failure aborts before the caller sees any payload.
+    let staged_lockfiles = stage_lockfiles(root, plan, adapters)?;
     let mut lockfiles = staged_lockfiles.summaries;
     for (file, content, applied, skipped) in staged_lockfiles.written {
-        atomic_write(&root.join(file.to_path_buf()), &content)?;
+        payloads.push((file.clone(), content));
         if let Some(summary) = lockfiles.iter_mut().find(|summary| summary.file == file) {
             summary.applied = applied;
             summary.skipped = skipped;
         }
     }
-    Ok(ApplyReport { files, lockfiles })
+    Ok(StagedEdits {
+        payloads,
+        files,
+        lockfiles,
+    })
+}
+
+/// Applies a computed plan to the working tree under `root` (M3.6b, the
+/// local `apply` flow): discovery → plan (the caller's pipeline) →
+/// [`EditSet`] → adapter patchers → atomic writes, plus the M3.2/M3.4
+/// lockfile stages (the workspace lockfiles patched from the plan's
+/// version moves through each adapter's `patch_lockfile` seam).
+///
+/// The flow is exactly [`stage_plan_edits`] + write: every file is
+/// patched in memory and verified by its adapter before anything is
+/// written (§9.1: re-parse + semantic read-back, all or none), then the
+/// staged payloads land atomically. A decline
+/// ([`LockfileOutcome::NeedsNative`]) is reported in
+/// [`ApplyReport::lockfiles`] with the file untouched.
+///
+/// # Errors
+///
+/// [`EditError::InvalidPatches`] for stale patch spans
+/// (`E-EDIT-PATCHES`) or a manifest no adapter covers,
+/// [`EditError::Unrewritable`] for required-to-edit rows the rewriter
+/// cannot admit (`E-EDIT-UNREWRITABLE`), [`EditError::VerifyFailed`]
+/// when an edited manifest fails the read-back re-parse,
+/// [`EditError::LockfileParse`] when a lockfile patch pass fails
+/// outright (`E-LOCK-PARSE`), and [`EditError::Io`] for filesystem
+/// failures.
+pub fn apply_plan(
+    root: &Path,
+    plan: &Plan,
+    workspace: &Workspace,
+    adapters: &[&dyn EcosystemAdapter],
+) -> Result<ApplyReport, EditError> {
+    let staged = stage_plan_edits(root, plan, workspace, adapters)?;
+    // Every manifest patched and verified in memory — write them all,
+    // manifests first then the patched lockfiles (the payload order).
+    for (file, content) in &staged.payloads {
+        atomic_write(&root.join(file.to_path_buf()), content)?;
+    }
+    Ok(ApplyReport {
+        files: staged.files,
+        lockfiles: staged.lockfiles,
+    })
 }
 
 /// The lockfile stages' outcome: the summary rows plus the (path,
