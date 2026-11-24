@@ -1,0 +1,125 @@
+# The release pipeline (M5.4 own-artifact slice, ADR-0052): builds the
+# pinned static binaries, packages them under the distribution
+# grammar's asset names, attests the artifacts (actions/attest — the
+# M5.4 row's "`gh attestation verify` passes" producer), assembles the
+# SHA256SUMS manifest in the checksum grammar's canonical order and
+# uploads everything to the GitHub release. Every piece that must agree
+# with the composite action (`action/action.yml`) and with the shipped
+# binary is pinned by `halyard_action::distribution` and gated by
+# `cargo run -p xtask -- check-release`.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install the musl toolchain (the static Linux targets)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Resolve the asset name
+        id: asset
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "path=halyard-${{ matrix.target }}.zip" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=halyard-${{ matrix.target }}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the static binary
+        run: cargo build --release --target ${{ matrix.target }} --package halyard-cli
+
+      - name: Package the release asset (tar.gz)
+        if: runner.os != 'Windows'
+        run: |
+          tar -czf "halyard-${{ matrix.target }}.tar.gz" \
+            -C "target/${{ matrix.target }}/release" halyard
+
+      - name: Package the release asset (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/halyard.exe" \
+            -DestinationPath "halyard-${{ matrix.target }}.zip"
+
+      - name: Generate the build attestation (the M5.4 producer)
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.asset.outputs.path }}
+
+      - name: Upload the build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: halyard-${{ matrix.target }}
+          path: ${{ steps.asset.outputs.path }}
+          if-no-files-found: error
+
+  release:
+    name: assemble + upload
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: halyard-*
+          merge-multiple: true
+
+      - name: Assemble SHA256SUMS (the checksum grammar's canonical order)
+        run: |
+          cd dist
+          export LC_ALL=C
+          sha256sum -- \
+            halyard-aarch64-apple-darwin.tar.gz \
+            halyard-aarch64-unknown-linux-musl.tar.gz \
+            halyard-x86_64-apple-darwin.tar.gz \
+            halyard-x86_64-pc-windows-msvc.zip \
+            halyard-x86_64-unknown-linux-musl.tar.gz \
+            > SHA256SUMS
+
+      - name: Create the release and upload the assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo elcoosp/halyard \
+            --title "halyard ${GITHUB_REF_NAME}" \
+            --generate-notes
+          gh release upload "${GITHUB_REF_NAME}" \
+            --repo elcoosp/halyard \
+            --clobber \
+            dist/SHA256SUMS \
+            dist/halyard-*.tar.gz \
+            dist/halyard-*.zip
