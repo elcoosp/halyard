@@ -99,8 +99,9 @@ const RULES: &[LayerRule] = &[
         external: Some(&["blake3"]),
     },
     // M4.1b GitHub REST adapter (ADR-0013): depends on the seam crate
-    // (`halyard-forge`) + core; owns the only HTTP client in the runtime
-    // graph. `ureq` is the §19 default decision 4 (blocking, rustls, no
+    // (`halyard-forge`) + core; the forge adapters own the HTTP clients
+    // of the runtime graph (M7 step 1 adds the GitLab twin).
+    // `ureq` is the §19 default decision 4 (blocking, rustls, no
     // async runtime); `serde`/`serde_json` parse the REST bodies;
     // `base64` encodes the git-data blob payloads (mirroring
     // halyard-changelog's embedded-plan encoding). M4.1c (ADR-0014)
@@ -110,6 +111,17 @@ const RULES: &[LayerRule] = &[
         name: "halyard-forge-github",
         workspace: &["halyard-core", "halyard-forge"],
         external: Some(&["serde", "serde_json", "ureq", "base64", "ring"]),
+    },
+    // M7 step 1 GitLab REST adapter (ADR-0049): the MR-flow twin of the
+    // GitHub rule — seam crate + core, its own blocking `ureq` client
+    // (the forge adapters are the HTTP clients of the runtime graph),
+    // serde/serde_json for the REST bodies, base64 for the commits
+    // API's `encoding: "base64"` payloads. No App-auth surface (the
+    // adapter is token-only), so no `ring` edge.
+    LayerRule {
+        name: "halyard-forge-gitlab",
+        workspace: &["halyard-core", "halyard-forge"],
+        external: Some(&["serde", "serde_json", "ureq", "base64"]),
     },
     // M5.1 registry existence probes (§13): the `Registry` seam over the
     // forge's transport vocabulary — the client owns no HTTP client
@@ -347,6 +359,7 @@ mod tests {
             "halyard-eco-npm",
             "halyard-edit",
             "halyard-forge",
+            "halyard-forge-gitlab",
             "halyard-forge-github",
             "halyard-git",
             "halyard-publish",
