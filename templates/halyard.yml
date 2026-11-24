@@ -1,0 +1,72 @@
+# The GitLab CI/CD component for halyard (M7's "CI component" row,
+# ADR-0053): a reusable pipeline include that runs the `halyard action`
+# executor in a GitLab job, against the same release distribution the
+# GitHub composite action consumes — the pinned static binary from
+# elcoosp/halyard's GitHub Releases, verified against the same
+# SHA256SUMS manifest. Every piece that must agree with the shipped
+# binary is pinned by `halyard_action::distribution` and gated by
+# `cargo run -p xtask -- check-release`.
+#
+# Honest posture (§7.3): the attestation verify is the GitHub lane's
+# own surface (the `gh` CLI over GitHub-hosted attestations); this lane
+# verifies the checksum manifest and declines the attestation — it
+# never pretends to run it. Tokens ride the pipeline's own CI
+# variables: set `HALYARD_FORGE_TOKEN` (the cross-lane contract) or
+# `GITHUB_TOKEN` (the GitHub lane's native spelling) as a masked
+# variable; the job exports both spellings from whichever is present.
+spec:
+  inputs:
+    stage:
+      description: 'The pipeline stage the halyard job joins.'
+      default: release
+    mode:
+      description: 'The §12 behavior mode: auto | pr | release | plan | check.'
+      default: plan
+    dry-run:
+      description: 'Forecast only: preview adapters, no network, no effects (true | false).'
+      default: 'false'
+---
+halyard:
+  stage: $[[ inputs.stage ]]
+  image: alpine:3.20
+  variables:
+    GITHUB_REPO: elcoosp/halyard
+  script:
+    # Resolve the latest release tag (the composite action's default
+    # posture). Unauthenticated reads of a public repo's latest tag
+    # work within GitHub's rate limits; a pipeline that pins a
+    # specific version exports HALYARD_TAG instead.
+    - |
+      TAG="${HALYARD_TAG:-$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)}"
+      test -n "$TAG" || { echo "could not resolve the latest halyard release tag"; exit 1; }
+    # The download host is the grammar's release origin; the asset
+    # name follows the pinned target set (GitLab.com's shared runners
+    # are amd64 — the musl x64 binary runs on the alpine image).
+    - |
+      ASSET="halyard-x86_64-unknown-linux-musl.tar.gz"
+      mkdir -p halyard-bin
+      wget -qO "halyard-bin/${ASSET}" "https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${ASSET}"
+      wget -qO "halyard-bin/SHA256SUMS" "https://github.com/${GITHUB_REPO}/releases/download/${TAG}/SHA256SUMS"
+    # Verify the downloaded asset's checksum line (the same manifest
+    # grammar the composite action verifies).
+    - |
+      cd halyard-bin
+      grep -E "^[0-9a-f]{64}  ${ASSET}$" SHA256SUMS > halyard.check
+      test -s halyard.check || { echo "SHA256SUMS has no line for ${ASSET}"; exit 1; }
+      sha256sum -c halyard.check
+    - |
+      tar -xzf "${ASSET}" -C halyard-bin
+      chmod +x halyard-bin/halyard
+    # Export whichever token spelling the pipeline carries (the
+    # shell's own resolution reads GITHUB_TOKEN or the
+    # HALYARD_FORGE_TOKEN contract).
+    - |
+      if [ -n "${HALYARD_FORGE_TOKEN:-}" ]; then export GITHUB_TOKEN="${HALYARD_FORGE_TOKEN}"; fi
+    # §12 step 5: the exec surface — the mode and dry posture ride the
+    # component's inputs, the §12 outputs land in the job log.
+    - |
+      if [ "$[[ inputs.dry-run ]]" = "true" ]; then
+        ./halyard-bin/halyard action --mode "$[[ inputs.mode ]]" --dry
+      else
+        ./halyard-bin/halyard action --mode "$[[ inputs.mode ]]"
+      fi
