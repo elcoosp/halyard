@@ -25,6 +25,7 @@ manifest and enforces the dependency rules on every run.
 | `halyard-forge` | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth |
 | `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1 |
+| `halyard-forge-bitbucket` | Bitbucket Cloud REST adapter (M7 step 3) |
 | `halyard-forge-forgejo` | Forgejo/Gitea REST adapter (pull flow) — M7 step 2 |
 | `halyard-registry` | crates.io sparse index + npm packument probes |
 | `halyard-publish` | publish engine: plan validation, topological layers, resume, auth |
