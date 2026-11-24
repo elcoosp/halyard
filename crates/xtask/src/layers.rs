@@ -10,8 +10,10 @@
 //!   `serde_json`).
 //! * `halyard-conventional` — standalone parser (`winnow`, `bstr`).
 //! * `halyard-edit` — depends on `halyard-core` only.
-//! * `halyard-forge` — depends on `halyard-core` only (§11.4 seam; the
-//!   REST adapter in M4.1b inherits the rule).
+//! * `halyard-forge` — depends on `halyard-core` + `blake3` (the
+//!   preview adapter's deterministic content-commit forecast digest,
+//!   ADR-0047's §11.1 step-3 slice; the REST adapter in M4.1b inherits
+//!   the rule).
 //! * `halyard-registry` — depends on `halyard-forge` only (M5.1, §13:
 //!   the transport vocabulary is injected; no HTTP client, no core).
 //! * `halyard-test-support` — may depend on `halyard-core` and
@@ -87,10 +89,14 @@ const RULES: &[LayerRule] = &[
     // (plain data + the scripted `MemoryTransport`, no HTTP client).
     // The rule is unchanged by M4.1b: the REST adapter moved OUT to its
     // own crate (ADR-0013) instead of widening this allow-list.
+    // §11.4 seam (ADR-0011): core only, plus `blake3` — the
+    // PreviewForge's forecasted content-commit oid is a deterministic
+    // digest of the payloads (never a guessed shape), the one runtime
+    // edge the content-commit slice added.
     LayerRule {
         name: "halyard-forge",
         workspace: &["halyard-core"],
-        external: Some(&[]),
+        external: Some(&["blake3"]),
     },
     // M4.1b GitHub REST adapter (ADR-0013): depends on the seam crate
     // (`halyard-forge`) + core; owns the only HTTP client in the runtime
