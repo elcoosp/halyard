@@ -1,0 +1,33 @@
+[package]
+name = "halyard-forge-forgejo"
+description = "The Forgejo/Gitea REST adapter (M7 step 2, §17 more-forges): a full `Forge` implementation over REST v1 (the PR flow, releases, issue comments) riding the shared forge conformance suite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# §7.2 as widened by ADR-0050: `halyard-forge-forgejo → core + forge`, with
+# the HTTP client the adapter needs (the same `ureq` + rustls choice the
+# GitHub and GitLab adapters made — §19 default decision 4). No `base64`
+# edge: the surface has no atomic multi-file commit, so `commit_via_api`
+# rides the trait's documented honest decline and no payload encoder ships.
+halyard-core = { workspace = true }
+halyard-forge = { workspace = true }
+ureq = { version = "2.9", default-features = false, features = ["tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The scripted-contract tests parse Forgejo-shaped bodies and the
+# conformance suite runs the shared matrix over the adapter.
+criterion = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "forge_calls"
+harness = false
+
+[lints]
+workspace = true
