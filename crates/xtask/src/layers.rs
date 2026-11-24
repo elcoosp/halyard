@@ -46,11 +46,13 @@ const RULES: &[LayerRule] = &[
     // outputs vocabulary rendered from the plan wire contract over the
     // GITHUB_OUTPUT/GITHUB_STEP_SUMMARY env files. Depends on core
     // (the plan types) + serde_json (the `releases_json` rows); the
-    // env-file grammar is the crate's own surface.
+    // env-file grammar is the crate's own surface. ADR-0052 adds
+    // `sha2` — the distribution grammar's SHA256SUMS half hashes the
+    // release assets with the checksum checkers' own digest.
     LayerRule {
         name: "halyard-action",
         workspace: &["halyard-core"],
-        external: Some(&["serde_json"]),
+        external: Some(&["serde_json", "sha2"]),
     },
     LayerRule {
         name: "halyard-core",
