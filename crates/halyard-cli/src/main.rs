@@ -1130,14 +1130,15 @@ fn resolved_commit_mode(context: &Context) -> Result<ResolvedCommitMode, CliErro
     let app_present = app_credentials_from_env()?.is_some();
     Ok(match context.config.forge_commit_mode {
         halyard_config::CommitMode::Api => ResolvedCommitMode::Api,
-        halyard_config::CommitMode::Git => ResolvedCommitMode::Git,
         halyard_config::CommitMode::Auto if app_present => ResolvedCommitMode::Api,
-        halyard_config::CommitMode::Auto => ResolvedCommitMode::Git,
+        halyard_config::CommitMode::Git | halyard_config::CommitMode::Auto => {
+            ResolvedCommitMode::Git
+        }
     })
 }
 
 /// Assembles the prepare phase's content commit, offline half (§11.1
-/// step 3, the M4.2 remainder): the plan's EditSet staged in memory
+/// step 3, the M4.2 remainder): the plan's `EditSet` staged in memory
 /// ([`halyard_edit::stage_plan_edits`]) and the content tree hashed over
 /// HEAD ([`halyard_git::content_tree_oid`]). Both postures share this
 /// half; the live probe ([`live_content_commit`]) supplies the remote
@@ -1205,22 +1206,22 @@ fn content_commit_for_plan(
 /// tree the branch now carries.
 fn live_content_commit(
     context: &Context,
-    content: Option<halyard_forge::ContentCommit>,
+    spec: Option<halyard_forge::ContentCommit>,
     branch: &halyard_forge::BranchName,
 ) -> Result<Option<halyard_forge::ContentCommit>, CliError> {
-    let Some(mut content) = content else {
+    let Some(mut spec) = spec else {
         return Ok(None);
     };
     match resolved_commit_mode(context)? {
         ResolvedCommitMode::Api => {
-            content.remote_tree_oid = halyard_git::remote_release_tip(
+            spec.remote_tree_oid = halyard_git::remote_release_tip(
                 std::path::Path::new("."),
                 "origin",
                 branch.as_str(),
             )
             .map_err(|e| CliError::new(e.code(), e.to_string()))?
             .map(|tip| tip.tree);
-            Ok(Some(content))
+            Ok(Some(spec))
         }
         ResolvedCommitMode::Git => {
             // §11.1 step 3, git side (§11.2): skip when the branch already
@@ -1231,18 +1232,15 @@ fn live_content_commit(
             let root = std::path::Path::new(".");
             let probed = halyard_git::remote_release_tip(root, "origin", branch.as_str())
                 .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-            if probed
-                .as_ref()
-                .is_some_and(|tip| tip.tree == content.tree_oid)
-            {
-                content.remote_tree_oid = probed.map(|tip| tip.tree);
-                return Ok(Some(content));
+            if probed.as_ref().is_some_and(|tip| tip.tree == spec.tree_oid) {
+                spec.remote_tree_oid = probed.map(|tip| tip.tree);
+                return Ok(Some(spec));
             }
             let identity = tagger_identity()?;
             let commit = halyard_git::stage_release_commit(
                 root,
-                &content.message,
-                &content
+                &spec.message,
+                &spec
                     .files
                     .iter()
                     .map(|file| (file.path.clone(), file.content.clone()))
@@ -1268,8 +1266,8 @@ fn live_content_commit(
                     ),
                 ));
             }
-            content.remote_tree_oid = Some(content.tree_oid.clone());
-            Ok(Some(content))
+            spec.remote_tree_oid = Some(spec.tree_oid.clone());
+            Ok(Some(spec))
         }
     }
 }
