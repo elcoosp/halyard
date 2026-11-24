@@ -2296,7 +2296,7 @@ pub fn init_report(report: &halyard_config::InitReport) -> String {
     );
     for file in &report.files {
         let note = if file.path == halyard_config::INIT_WORKFLOW_TARGET {
-            "the §16.1 release workflow (the `halyard/action` glue lands with its milestone)"
+            "the §16.1 release workflow (the `halyard/action` composite, ADR-0052)"
         } else {
             "every key optional; the defaults ride as comments"
         };
