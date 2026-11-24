@@ -59,6 +59,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | Bitbucket parallel-steps adapter (ADR-0041) + the `halyard bench` measurement command (ADR-0042) | done | (tree left dirty; no commits) | M1: `BitbucketSelector` (`affected --ci bitbucket`) — one paste-ready `parallel:` block over the affected closure, name-sorted, one `export HALYARD_PKG=<name>` script line per affected package (support.atlassian.com VERIFIED 2026-11-17: "Parallel steps allow you to group pipeline steps that can run at the same time"; the required `steps:` property "contains the lists of `step`s in a `stage` or a `parallel`. At least 1 `step` is required within the steps list"; the docs' own example varies the steps **in the script** (`--batch 1` / `--batch 2`); no per-step `env` exists — `variables` is a `pipe`-only option — so the assignment rides the script line the consumer's tool invocation reads; the relative indentation follows the documented example exactly; the "100-step limit on pipelines includes each step in a parallel group" cap is the consumer's policy, the render never the guard), lookup + trait/module docs + CLI value enum + flag doc + the `affected_ci` example + bench `ci_selector_bitbucket_40chain` all moved one row over; the refused-unknown pin moved `bitbucket` → `drone` (an unrecorded system — the recorded CI surface ADR-0034→0041 is complete). M2 (M1 green end-to-end first): the §16.2 declared-absent `bench` command landed — the §14 model pipeline (`discover` → `config` → `history` → `plan`) timed per pass over the current repo's real shape, one untimed warmup before the timed passes (the §14.1 no-op-warm model; `--no-cache` = the cold measurement, the posture reported either way), the stage names riding the `--profile` trace's span vocabulary through the new read-only `Profiler::recorded_spans()` accessor, the nearest-rank percentiles the §14.1 budget table speaks; the aggregation is pure data on the lib target (`halyard_cli::bench` — the man renderer's rationale: bench harness and bin share one implementation) + `bench_report` criterion bench (8/200 passes); a measurement never a gate — the §14.1 budgets stay shape-bound to the xtask fixtures and the render says so; `E-CLI-BENCH` (zero-iteration refusal) + page + index row; 5 CLI gates + 5 module tests; the man bench's mirror tree repaired to the real 20-command count (it had drifted by one, missing `action`) | The M5.4 provenance/SLSA (live-CI lane), the corpus-wide pnpm differential (no pnpm in the sandbox), the M2.6 dhat re-audit, the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
 | Drone environment adapter (ADR-0045) + the §12 `release` mode (ADR-0046) | done | (tree left dirty; no commits) | M1: `DroneSelector` (`affected --ci drone`) — one step-scoped `environment:` fragment per affected package (docs.drone.io VERIFIED 2026-11-17: "Drone provides the ability to define environment variables scoped to individual build steps", the documented per-step mapping; "the environment section cannot expand environment variables or evaluate shell expressions" — the bare-word `HALYARD_PKG` value rides verbatim; steps are "executed sequentially by default" and the `depends_on` DAG — "you must configure dependencies for all pipeline steps" — is the consumer's policy), lookup entry + CLI value-enum variant + flag doc, the refused-unknown pin moved `drone` → `travis` (the contract-test loop names twelve systems), `affected_ci` example row + `ci_selector_drone_40chain` bench (≈82 ns, the 40-package chain) + research-note section + ADR-0045 + README/CLI-README/arch rows. M2 (M1 green end-to-end first): the §12 `release` mode (ADR-0046) — `cmd_release` extracted into the shared `run_release_pass` (one plan + one reconciliation feeding the tag phase, the §11.2 push, the forge half; the forge half's internal re-plan/re-reconcile deleted), `ReleasePass`/`ForgePosture` plain-data view (the created tags in the tag phase's name-sorted order I3, the minted URLs by tag, the skip's reason verbatim, `released` honest — a dry forecast stays false, I5), `release_outputs`/`release_summary` renderers (the plan vocabulary minus the PR keys — the release mode opens no Release PR), `ActionMode::Release` + `cmd_action_release` wired (`--dry` forecasts over the preview writer/pusher), `release` reports byte-identical (the `cli_release` suite pins them); 3 action contract tests + 3 CLI gates (red→green on record: E0432 on the missing API + `invalid value 'release'`; the red phase corrected two test fixtures, not the design — the fully-tagged shape forecasts zero creations honestly, the ahead-of-tags shape names the would-create tag), bench `release_outputs`/`release_summary_40_releases` (≈45 µs outputs), example `release_forecast`; `--dry` flag doc now names both modes. Micro-debt cleaned (additive, not milestone substitutes): the bench aggregation's `unreachable!` panic surface replaced with the fail-closed `E-CLI-BENCH` taxonomy error (the guarantee lives in the error, not a panic) and `commit_typo_message`'s `unreachable!` guard deleted — the typo parts ride in from the caller's own map-first match (no re-match, no panic surface) | The §12 `auto` mode (the trigger-policy composition, its own ADR), M5.4 provenance/SLSA (VERIFY first), the M2.6 dhat re-audit, the corpus-wide pnpm differential (no pnpm in the sandbox), the two p50 perf-budget misses — all unchanged | 2026-11-17; see the session log below |
+| The §12 `auto` mode — the composition policy over the two executors (ADR-0047) | done | (tree left dirty; no commits) | M1: `ActionMode::Auto` + `cmd_action_auto`/`run_auto_pass` — the §11.1 stateless reconciliation as one §12 mode, the composition policy over the two shipped executors (§11.1's own order: one context → plan → manifest-vs-tags reconciliation; the release executor's git-side tag effects first — the tag phase over the posture-selected writer, the §11.2 push, an empty pending an honest no-op; then the §11.1 machine pass with BOTH halves' inputs (`pending_releases` + the Release-PR spec), so the half selection is the machine's own PROPAGATE rule and never a caller guess — pending releases gate the prepare phase (§11.1 step 2), nothing pending upserts or closes the Release PR (§11.1 step 3)); one plan, one reconciliation, one machine pass (the ADR-0046 lesson carried across the composition — the auto pass never re-plans between the halves and never runs the release executor's separate forge half, whose machine input carries no Release-PR spec); `halyard-action`: the plain `AutoPass` view + `auto_outputs`/`auto_summary` (the pr/release superset — the PR keys ride only when the pass has a Release-PR effect, `released` is the git-side tag phase's honest execution value, the minted URLs by tag, the forge posture, the forecast marker; the crate stays git-free and forge-free); `--dry` forecasts the whole pass offline (I5 — preview writer, pusher, forge); live fails-closed on credentials like the `pr` executor, the §11.5 governor governs the machine's calls; 4 CLI gates (`cli_action.rs`, red→green on record: E0004 non-exhaustive `ActionMode` before any implementation) + bench groups `auto_outputs_40_releases`/`auto_summary_40_releases` (≈38.6 µs, microsecond-scale) + example `auto_forecast` (the PROPAGATE vocabulary); ADR-0047 + arch §12 as-built (the stale ADR-0037 note's `auto\|release\|check`-absent sentence amended — release and check had landed) + README example row + CLI README rows. M2 deferred: the remaining candidates cannot ship fully green here (see the PR body) | The §11.1 step-3 content commit (M4.2 remainder: the plan's EditSet → tree-OID compare → the CAS branch push; `commit_via_api` still has no caller), M5.4 provenance/SLSA (VERIFY first), the M2.6 dhat re-audit, the corpus-wide pnpm differential (no pnpm in the sandbox), the M0.3 measured runs (needs forge API + token) — all unchanged | 2026-11-24; see the session log below |
 
 
 ### 2026-11-16 — §16.1 zero-config on-ramp: the `halyard init` scaffold (ADR-0029) (tree left dirty, no commits)
@@ -2834,3 +2835,87 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   composition policy over the two shipped executors), (2) M5.4:
   provenance/SLSA for halyard's own release artifacts (VERIFY first),
   (3) the M2.6 dhat re-audit with the cache warm.
+
+### 2026-11-24 — The §12 `auto` mode (ADR-0047, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `c286ed1` (the
+  Windows path-separator fixes): fresh stable toolchain 1.100.0, the
+  workspace test compile green with debuginfo off (the sandbox's disk
+  pressure — the same adaptation the bench-profile note records). The
+  reconciliation survey ran plan ↔ code ↔ history first: the §12
+  `auto` mode is the plan's own next start point (PROGRESS's previous
+  row, item 1) and the only declared-absent §12 input (`ActionMode`
+  carried `plan|pr|check|release`; ADR-0046 kept `auto` absent for its
+  trigger-policy ADR); the M4.2 remainder (the §11.1 step-3 content
+  commit: `commit_via_api` has no caller — the adapter's chain exists,
+  `MachineInput` carries no content), M5.4's own-artifact slice, M4.8's
+  docs site, the M0.3 measured runs and the M2.6 dhat re-audit stay
+  open (all reported, none silently re-scoped). Docs drift found: the
+  arch §12 ADR-0037 as-built note still listed `auto|release|check` as
+  absent — release (ADR-0046) and check (ADR-0044) had landed. Feature
+  surface unchanged: `miri`/`loom` machine-enforced exclusive
+  (`ci-bundle` the conflict-free gate spelling), no bench requires
+  nightly, zero `#[allow]` anywhere. Micro-debt candidate found: the
+  `affected` command's adapter lookup rode a production
+  `unreachable!` (the string-keyed registry lookup behind a
+  compile-time-closed value enum) — the class the M4.7 and drone
+  sessions converted.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing mode itself (E0004 non-exhaustive `ActionMode` match +
+  the 4 new CLI gates refusing on the unknown `--mode auto` value,
+  captured before any implementation). The green landed ADR-0047: the
+  composition policy is §11.1's own rule, not a new one — one context
+  → plan → manifest-vs-tags reconciliation; the release executor's
+  git-side tag effects first (an empty pending an honest no-op); then
+  the §11.1 machine pass with both halves' inputs, so the machine's
+  own PROPAGATE rule selects the half (§11.1 step 2: pending releases
+  gate the prepare phase; §11.1 step 3: nothing pending upserts or
+  closes the Release PR). One plan, one reconciliation, one machine
+  pass (the ADR-0046 lesson carried across the composition — the auto
+  pass never re-plans between the halves and never runs the release
+  executor's separate forge half, whose machine input carries no
+  Release-PR spec). §11.1's `halyard release --auto` phrasing resolves
+  to the §12 mode (the surface a workflow step execs); no second
+  `--auto` flag forks the release command. One test-side correction
+  during green: none needed — the composition landed first try; the
+  green-phase refactor trimmed the lean §12 outcome to the fields the
+  renderers observe (the full git-side reports are consumed on the way
+  in — the dead-code deny is the discipline that caught it).
+- **Tests/bench/example totals.** 4 CLI gates (`cli_action.rs`: the
+  PROPAGATE forecast naming the would-create tag + the mints, the
+  prepare forecast carrying the PR keys, the JSON document's
+  byte-stability, the in-step env-file delivery) + the whole
+  `cli_action`/`cli_affected` suites green; bench groups
+  `auto_outputs_40_releases` (≈38.6 µs) + `auto_summary_40_releases`
+  (same scale) — the microsecond budget every mode renderer rides;
+  example `auto_forecast` (the PROPAGATE vocabulary over the preview
+  writer).
+- **Docs.** ADR-0047; arch §12: the ADR-0047 as-built note + the stale
+  ADR-0037 note amended (the modes-absent sentence now names what
+  landed); the `ActionMode`/`Command::Action` doc comments; root
+  README example row; CLI README (the modes paragraph's stale
+  `auto|release`-absent sentence and the command row's argv + status);
+  PROGRESS.md row. No new error code — the auto mode rides the
+  existing taxonomy (`E-GIT-HEAD`, `E-GIT-TAG*`, `E-GIT-PUSH`,
+  `E-FORGE-*`, `E-ACTION-*`); the fail-closed refusals are the `pr`
+  executor's own.
+- **Micro-debt converted (additive, not a milestone substitute):** the
+  `affected` adapter lookup's production `unreachable!` deleted —
+  `CiSelector::adapter()` is the closed core registry as a total
+  caller's match (the exhaustive match over the value enum cannot
+  miss; the string-keyed `ci_selector_adapter` stays the registry's
+  documented lookup). `cli_affected` green (19 gates).
+- **Honest state at cut-off.** The §12 input list is complete
+  (`auto|pr|release|plan|check`); the composite distribution (the
+  binary download + checksum + attestation action) stays with M5.4's
+  own-artifact slice; the §11.1 step-3 content commit stays the M4.2
+  remainder it already is (unchanged by the mode — the composed pass
+  rides the forge lifecycle the `Forge` seam carries today). Bench
+  numbers are the sandbox's; the budgets stay shape-bound to the xtask
+  fixtures. Tree left dirty (no commits made).
+- **Next session start point.** (1) the M4.2 remainder: the §11.1
+  step-3 content commit (the plan's EditSet → tree-OID compare against
+  the release-branch tip → the CAS branch push; VERIFY the compare's
+  git-side shape first), (2) M5.4: provenance/SLSA for halyard's own
+  release artifacts (VERIFY first), (3) the M2.6 dhat re-audit with
+  the cache warm.
