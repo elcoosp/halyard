@@ -44,6 +44,19 @@ struct StoredPr {
     open: bool,
 }
 
+/// One API commit the reference forge minted ([`Forge::commit_via_api`]):
+/// the spec it received plus the synthetic object id it returned — the
+/// test-facing view behind the content-commit assertions (the §11.1
+/// step-3 machine surfaces the oid through
+/// [`MachineEffect::ContentCommitted`](crate::MachineEffect::ContentCommitted)).
+#[derive(Clone, Debug)]
+pub struct RecordedCommit {
+    /// The commit spec the caller handed over (branch, message, files).
+    pub spec: ApiCommit,
+    /// The synthetic oid the forge minted for the commit.
+    pub oid: Oid,
+}
+
 /// One stored PR comment (the §11.6 check comment the marker upsert
 /// manages; comments ride the PR they belong to, open or closed — real
 /// forges accept comments on closed PRs too). The marker lives in the
@@ -65,6 +78,7 @@ struct Inner {
     next_pr_number: u64,
     releases: Vec<Release>,
     comments: Vec<StoredComment>,
+    commits: Vec<RecordedCommit>,
     next_commit: u64,
     calls: Vec<CallRecord>,
 }
@@ -113,6 +127,13 @@ impl MemoryForge {
     /// Snapshot of the releases the forge currently holds.
     pub fn releases(&self) -> Vec<Release> {
         self.state().releases.clone()
+    }
+
+    /// Snapshot of the API commits the forge minted
+    /// ([`Forge::commit_via_api`]), oldest first — the test-facing view
+    /// behind the §11.1 step-3 content-commit assertions.
+    pub fn commits(&self) -> Vec<RecordedCommit> {
+        self.state().commits.clone()
     }
 
     /// The comment bodies stored under `pr_number`, oldest first — the
@@ -261,6 +282,10 @@ impl Forge for MemoryForge {
         let hex = format!("fe{:038x}", state.next_commit);
         let oid = Oid::from_hex(hex.as_bytes())
             .unwrap_or_else(|| unreachable!("counter-formatted oid is 40 hex digits"));
+        state.commits.push(RecordedCommit {
+            spec: spec.clone(),
+            oid: oid.clone(),
+        });
         Ok(oid)
     }
 
