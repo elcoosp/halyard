@@ -101,7 +101,7 @@ pub struct ApiFile {
     pub content: Vec<u8>,
 }
 
-/// The caller-applied EditSet, ready for the prepare phase's content
+/// The caller-applied `EditSet`, ready for the prepare phase's content
 /// commit (§11.1 step 3): the caller applied the plan's edits **in
 /// memory**, built the content tree and probed the remote release branch
 /// (`ls-remote`, git-side — 0 REST). The machine owns the rest of the
@@ -111,14 +111,14 @@ pub struct ApiFile {
 /// carries the content).
 ///
 /// The machine never edits: the payloads are the full file contents the
-/// applied EditSet produced, and the tree id is the git tree hash the
+/// applied `EditSet` produced, and the tree id is the git tree hash the
 /// caller computed over them (deterministic — the idempotence key).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentCommit {
     /// Commit message (Conventional-Commit style; we dogfood it, §0.7).
     pub message: String,
-    /// The edited files' full contents (the applied EditSet, §11.1 "apply
-    /// EditSet in memory").
+    /// The edited files' full contents (the applied `EditSet`, §11.1
+    /// "apply `EditSet` in memory").
     pub files: Vec<ApiFile>,
     /// The git tree OID of the applied content (the caller hashed the
     /// built tree; §11.1 "build tree"). The compare key against
