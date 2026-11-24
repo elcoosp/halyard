@@ -63,7 +63,7 @@ cargo build --release
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
-- **GitLab supported**: the Release PR flow runs on GitLab too (M7 step 1) — MRs instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
+- **GitHub and GitLab and Forgejo/Gitea supported**: the Release PR flow runs on GitHub, GitLab (M7 step 1), and Forgejo/Gitea — codeberg.org and gitea.com, self-hosted via `FORGEJO_API_URL` (M7 step 2) — MRs/pulls instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
 
 ## How it works
 
@@ -90,6 +90,7 @@ The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE
 | `halyard-forge`        | `Forge` seam + `MemoryForge` + `PreviewForge` + release state machine |
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth                                    |
 | `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1                             |
+| `halyard-forge-forgejo` | Forgejo/Gitea REST adapter (pull flow) — M7 step 2                   |
 | `halyard-registry`     | crates.io sparse index + npm packument probes                         |
 | `halyard-publish`      | publish engine: plan validation, topological layers, resume, auth     |
 | `halyard-action`       | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`     |
