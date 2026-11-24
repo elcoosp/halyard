@@ -123,6 +123,17 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core", "halyard-forge"],
         external: Some(&["serde", "serde_json", "ureq", "base64"]),
     },
+    // M7 step 2 Forgejo/Gitea REST adapter (ADR-0050): the pull-flow
+    // twin of the GitLab rule — seam crate + core, its own blocking
+    // `ureq` client (the forge adapters are the HTTP clients of the
+    // runtime graph), serde/serde_json for the REST bodies. No `base64`
+    // edge (no commits API — the capability is the documented honest
+    // decline) and no `ring` edge (token-only, no App-JWT surface).
+    LayerRule {
+        name: "halyard-forge-forgejo",
+        workspace: &["halyard-core", "halyard-forge"],
+        external: Some(&["serde", "serde_json", "ureq"]),
+    },
     // M5.1 registry existence probes (§13): the `Registry` seam over the
     // forge's transport vocabulary — the client owns no HTTP client
     // (transports are injected; the blocking one lives in
@@ -359,6 +370,7 @@ mod tests {
             "halyard-eco-npm",
             "halyard-edit",
             "halyard-forge",
+            "halyard-forge-forgejo",
             "halyard-forge-gitlab",
             "halyard-forge-github",
             "halyard-git",
