@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 title: "chore: release v0.5.0".to_owned(),
                 body: "## 🚀 Release plan".to_owned(),
             }),
+            content_commit: None,
         },
     )?;
     println!("pass 1 (prepare): {:?}", report.effects);
@@ -76,6 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 title: "chore: release v0.5.0".to_owned(),
                 body: "## 🚀 Release plan".to_owned(),
             }),
+            content_commit: None,
         },
     )?;
     println!(
@@ -104,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 notes: "## Features\n\n- the painter walk".to_owned(),
             }],
             release_pr: None,
+            content_commit: None,
         },
     )?;
     println!("pass 3 (tag phase): {:?}", report.effects);
