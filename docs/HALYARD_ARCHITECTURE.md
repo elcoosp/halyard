@@ -641,9 +641,10 @@ honest counts, the walk's own work counters standing in for the timing
 breakdown — wall-clock would break I3). The degraded-mode annotation
 wires to the walk's own `HistoryStats::degraded` marker (`::warning::`,
 never a guess). The composite distribution (binary download, checksum +
-attestation) stays with M5.4's own-artifact slice, and the remaining
-§12 modes (`auto|release|check`) land with their executors — absent
-rather than stubbed; VERIFIED quotes in
+attestation) stays with M5.4's own-artifact slice, and the §12 modes
+landed with their executors — `check` (ADR-0044), `release` (ADR-0046),
+`auto` (ADR-0047); the input list is complete, no mode stubbed;
+VERIFIED quotes in
 `docs/research/github-actions-outputs.md`.*
 
 *(As-built note, 2026-11 (ADR-0043): the §12 `pr` mode ships — the
@@ -687,8 +688,38 @@ pass (`run_release_pass` — one plan, one reconciliation, the §11.1
 step-2 tag phase, the §11.2 push, the forge half) extracted from
 `cmd_release` renders as the §12 vocabulary through the same seam
 (`released` honest, the minted URLs by tag, the `ForgePosture` skip
-reason verbatim, no PR keys); the §12 `auto` mode stays absent rather
-than stubbed.)**
+reason verbatim, no PR keys); the §12 `auto` mode stayed absent rather
+than stubbed until its own ADR landed.)*
+
+*(As-built note, 2026-11-24 (ADR-0047): the §12 `auto` mode ships — the
+§11.1 stateless reconciliation as one mode, the composition policy over
+the two shipped executors, `halyard action [--mode auto] [--dry]
+[--plan-out PATH]`. The composed `run_auto_pass` runs §11.1's own
+order: one context → plan → manifest-vs-tags reconciliation; the
+release executor's git-side tag effects first (the tag phase over the
+posture-selected writer, the §11.2 push — an empty pending is an honest
+no-op); then the §11.1 machine pass with both halves' inputs
+(`pending_releases` and the Release-PR spec), so the half selection is
+the machine's own PROPAGATE rule and never a caller guess — pending
+releases gate the prepare phase (§11.1 step 2, the Release PR lands on
+the next pass), nothing pending upserts or closes the Release PR
+(§11.1 step 3). One plan, one reconciliation, one machine pass (the
+ADR-0046 lesson carried across the composition: the auto pass never
+re-plans between the halves and never runs the release executor's
+separate forge half, whose machine input carries no Release-PR spec).
+The §12 view is the plain `AutoPass` (`halyard-action` stays git-free
+and forge-free): the git-side `created_tags`, the machine's
+`propagated`, the `pr_effect` when the prepare phase ran, the minted
+URLs by tag, the forge posture and the honest `released`; the outputs
+are the pr/release superset — the PR keys ride only when the pass has a
+Release-PR effect. `--dry` forecasts the whole pass offline (I5 —
+preview writer, pusher, forge); live runs fail-closed on credentials
+like the `pr` executor and the §11.5 governor governs the machine's
+calls. §11.1's `halyard release --auto` phrasing resolves here — the
+mode is the same command a push workflow runs. The §11.1 step-3
+content-commit remainder (the plan's EditSet → tree-OID compare → the
+CAS branch push; `commit_via_api` still has no caller) stays the M4.2
+remainder, unchanged by this mode.)*
 
 ---
 
