@@ -197,6 +197,39 @@ HALYARD
 1 planned, 1 skipped · zero API calls (offline forecast, I5)
 ```
 
+## The composite action (ADR-0052)
+
+The `halyard action` command a workflow runs is distributed as the
+composite action at `action/action.yml` (uses:
+`elcoosp/halyard/action@v1`): it resolves the runner platform to a
+pinned static release binary, verifies the `SHA256SUMS` manifest line
+and the build attestation (`gh attestation verify -R elcoosp/halyard`),
+caches by version, then execs the binary with the §12 inputs — `mode`
+→ `--mode`, `config` → `--config`, `dry-run` → `--dry`,
+`working-directory` → the exec steps' key, `token`/`app-id`/
+`app-private-key` → the env pairs the shell reads, `publish` → the
+`halyard publish` executor. The template and the release pipeline
+(`.github/workflows/release.yml`) are pinned to the grammar
+(`halyard_action::distribution`) by the drift gate:
+
+```bash
+cargo run -p xtask -- check-release
+```
+
+## The GitLab CI component (ADR-0053)
+
+GitLab pipelines include the same release step as a CI component
+(`templates/halyard.yml`, include-able as
+`component: gitlab.com/elcoosp/halyard/halyard@<ref>`): the inputs are
+`stage` (the job's stage), `mode` (the same §12 five-mode vocabulary)
+and `dry-run`; the job downloads the pinned static binary from the
+same GitHub Releases set and verifies its `SHA256SUMS` line before
+executing `halyard action --mode $[[ inputs.mode ]]`. The attestation
+verify is the GitHub lane's own surface — the component verifies the
+checksum and honestly declines the attestation. Tokens ride the
+pipeline's own `HALYARD_FORGE_TOKEN` (or `GITHUB_TOKEN`) masked
+variable.
+
 Inside a workflow step (`GITHUB_OUTPUT` / `GITHUB_STEP_SUMMARY` set)
 the same calls land in the env files verbatim and the run reports the
 sinks; a walk without a commit-graph emits the §12 `::warning::`
