@@ -19,6 +19,10 @@ use std::path::PathBuf;
 use halyard_action::distribution::{
     CHECKSUMS_FILE, RELEASE_REPO, RELEASE_TARGETS, parse_action_template_inputs,
 };
+use halyard_action::signing::{
+    COSIGN_BUNDLE_SUFFIX, COSIGN_IDENTITY_REGEXP, COSIGN_INSTALL_ACTION, COSIGN_OIDC_ISSUER,
+    CYCLONEDX_INSTALL, SBOM_FILE, bundle_name, sbom_command, sign_command, signed_blobs,
+};
 
 /// Locates the repository root from the crate's own position (the
 /// `schema-check` convention — no dependence on the caller's cwd).
@@ -41,9 +45,11 @@ pub fn check_release() -> Result<(), String> {
     check_action_template(&action_text)?;
     check_release_workflow(&release_text)?;
     check_gitlab_component(&component_text)?;
+    check_signing(&action_text, &release_text)?;
     println!(
-        "check-release: action/action.yml + .github/workflows/release.yml + templates/halyard.yml pinned to the distribution grammar ({} targets)",
-        RELEASE_TARGETS.len()
+        "check-release: action/action.yml + .github/workflows/release.yml + templates/halyard.yml pinned to the distribution grammar ({} targets, {} signed blobs, SBOM {SBOM_FILE})",
+        RELEASE_TARGETS.len(),
+        signed_blobs().len()
     );
     Ok(())
 }
@@ -510,6 +516,87 @@ fn check_gitlab_component(text: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// The signing + SBOM contract (M5.4's cosign/SBOM rows, ADR-0054)
+// ---------------------------------------------------------------------------
+
+/// The M5.4 cosign + SBOM contract (ADR-0054): the release pipeline
+/// produces the keyless signatures (one `sign-blob` line per pinned
+/// blob — the five target assets plus the SBOM) and the `CycloneDX` SBOM
+/// over the shipped binary's crate; the composite action downloads the
+/// bundle beside the asset and verifies the signature against this
+/// repository's own workflow identity. Every line is the grammar's own
+/// (`halyard_action::signing`), never a hand-maintained copy.
+fn check_signing(action_text: &str, release_text: &str) -> Result<(), String> {
+    // The producer's cosign half: the pinned installer, then one
+    // keyless sign line per grammar blob.
+    if !release_text.contains(COSIGN_INSTALL_ACTION) {
+        return Err(format!(
+            ".github/workflows/release.yml: cosign must be installed by the pinned installer `{COSIGN_INSTALL_ACTION}`"
+        ));
+    }
+    for blob in signed_blobs() {
+        let line = sign_command(&blob);
+        if !release_text.contains(&line) {
+            return Err(format!(
+                ".github/workflows/release.yml: the M5.4 cosign producer must run the pinned sign line `{line}`"
+            ));
+        }
+        let bundle = bundle_name(&blob);
+        if !release_text.contains(&bundle) {
+            return Err(format!(
+                ".github/workflows/release.yml: the cosign bundle `{bundle}` must be written beside the blob"
+            ));
+        }
+    }
+
+    // The producer's SBOM half: the pinned plugin install and the
+    // pinned generation argv, the artifact landed under the pinned
+    // release-asset name and uploaded with the release.
+    if !release_text.contains(CYCLONEDX_INSTALL) {
+        return Err(format!(
+            ".github/workflows/release.yml: the SBOM generator must be installed with the pinned line `{CYCLONEDX_INSTALL}`"
+        ));
+    }
+    let sbom = sbom_command();
+    if !release_text.contains(&sbom) {
+        return Err(format!(
+            ".github/workflows/release.yml: the M5.4 SBOM producer must run the pinned CycloneDX line `{sbom}`"
+        ));
+    }
+    if !release_text.contains(&format!("dist/{SBOM_FILE}")) {
+        return Err(format!(
+            ".github/workflows/release.yml: the SBOM artifact must be uploaded as `dist/{SBOM_FILE}`"
+        ));
+    }
+
+    // The consumer's half: the composite action verifies the signature
+    // against the pinned identity/issuer grammar, over the bundle it
+    // downloaded beside the asset.
+    if !action_text.contains(COSIGN_INSTALL_ACTION) {
+        return Err(format!(
+            "action/action.yml: cosign must be installed by the pinned installer `{COSIGN_INSTALL_ACTION}`"
+        ));
+    }
+    if !action_text.contains("cosign verify-blob --bundle") {
+        return Err(
+            "action/action.yml: the composite action must verify the asset signature (`cosign verify-blob --bundle`)".to_owned(),
+        );
+    }
+    for token in [
+        COSIGN_IDENTITY_REGEXP,
+        COSIGN_OIDC_ISSUER,
+        COSIGN_BUNDLE_SUFFIX,
+    ] {
+        if !action_text.contains(token) {
+            return Err(format!(
+                "action/action.yml: the cosign verify line must carry the grammar token `{token}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -543,5 +630,41 @@ mod tests {
         );
         // The §12 input table stays the pinned eight.
         assert_eq!(halyard_action::distribution::ACTION_INPUTS.len(), 8);
+    }
+
+    #[test]
+    fn the_signing_gate_refuses_a_dropped_sign_line() {
+        // The producer: drop one pinned blob's sign line and the gate
+        // names it — a release that ships one unsigned blob is never
+        // silently partial.
+        let root = workspace_root().expect("the workspace root resolves");
+        let action_text =
+            std::fs::read_to_string(root.join("action/action.yml")).expect("the action reads");
+        let mut release_text = std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+            .expect("the pipeline reads");
+        let dropped = sign_command(SBOM_FILE);
+        release_text = release_text.replace(&dropped, "# dropped for the gate test");
+        let error = check_signing(&action_text, &release_text)
+            .expect_err("the dropped sign line must refuse");
+        assert!(error.contains(&dropped), "{error}");
+    }
+
+    #[test]
+    fn the_signing_gate_refuses_an_unverified_consumer() {
+        // The consumer: drop the verify line's issuer token and the
+        // gate refuses — a verify that pins no issuer trusts any
+        // keyless identity.
+        let root = workspace_root().expect("the workspace root resolves");
+        let release_text = std::fs::read_to_string(root.join(".github/workflows/release.yml"))
+            .expect("the pipeline reads");
+        let action_text = std::fs::read_to_string(root.join("action/action.yml"))
+            .expect("the action reads")
+            .replace(
+                format!("--certificate-oidc-issuer {COSIGN_OIDC_ISSUER}").as_str(),
+                "# dropped for the gate test",
+            );
+        let error = check_signing(&action_text, &release_text)
+            .expect_err("the missing issuer token must refuse");
+        assert!(error.contains(COSIGN_OIDC_ISSUER), "{error}");
     }
 }
