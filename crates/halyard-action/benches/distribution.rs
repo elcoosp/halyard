@@ -1,12 +1,16 @@
 //! The §12 distribution grammar's cost (ADR-0052): the checksum
 //! manifest's build/parse/verify cycle over a full 5-target release
 //! must stay free — the composite action's checksum step is the
-//! download's epilogue, never its cost driver.
+//! download's epilogue, never its cost driver. The signing + SBOM
+//! grammar's sign/verify line rendering (ADR-0054) rides the same
+//! cycle: pure string building, rendered by the gate on every
+//! `check-release` run.
 
 use std::hint::black_box;
 
 use criterion::Criterion;
 use halyard_action::distribution::{ChecksumsManifest, RELEASE_TARGETS};
+use halyard_action::signing::{sign_command, signed_blobs, verify_command};
 
 /// A deterministic pseudo-asset: one megabyte of seeded bytes per
 /// target (the payload shape the pipeline packages).
@@ -72,6 +76,21 @@ fn bench(group: &mut Criterion) {
     group.bench_function("manifest_verify_one_asset_mib", |b| {
         b.iter(|| {
             let _ = black_box(manifest.verify(black_box(first_name), black_box(first_bytes)));
+        });
+    });
+
+    // The M5.4 signing + SBOM grammar's render cycle (ADR-0054): one
+    // sign + one verify line per release blob — the five pinned target
+    // assets plus the SBOM — the lines the producer/consumer templates
+    // pin and the gate re-renders on every run.
+    group.bench_function("signing_lines_5_targets_plus_sbom", |b| {
+        b.iter(|| {
+            let mut lines = Vec::with_capacity(signed_blobs().len() * 2);
+            for blob in signed_blobs() {
+                lines.push(black_box(sign_command(&blob)));
+                lines.push(black_box(verify_command(&blob)));
+            }
+            black_box(lines)
         });
     });
 }
