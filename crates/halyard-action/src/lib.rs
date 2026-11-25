@@ -83,6 +83,12 @@ use halyard_core::Plan;
 
 pub mod distribution;
 
+/// The M5.4 signing + SBOM grammar (ADR-0054): the keyless cosign
+/// signature and the CycloneDX SBOM artifact the release pipeline
+/// produces and the composite action consumes, single-sourced beside
+/// [`distribution`] so the templates cannot drift from the contract.
+pub mod signing;
+
 /// The heredoc delimiter of the multi-line env-file form (VERIFIED
 /// 2026-11-17: the docs' `{name}<<{delimiter}` multiline-string shape
 /// with the caution that the delimiter "won't occur on a line of its
