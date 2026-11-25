@@ -1,12 +1,15 @@
-# The release pipeline (M5.4 own-artifact slice, ADR-0052): builds the
-# pinned static binaries, packages them under the distribution
-# grammar's asset names, attests the artifacts (actions/attest — the
-# M5.4 row's "`gh attestation verify` passes" producer), assembles the
-# SHA256SUMS manifest in the checksum grammar's canonical order and
-# uploads everything to the GitHub release. Every piece that must agree
-# with the composite action (`action/action.yml`) and with the shipped
-# binary is pinned by `halyard_action::distribution` and gated by
-# `cargo run -p xtask -- check-release`.
+# The release pipeline (M5.4 own-artifact slice, ADR-0052; the signing
+# + SBOM rows, ADR-0054): builds the pinned static binaries, packages
+# them under the distribution grammar's asset names, attests the
+# artifacts (actions/attest — the M5.4 row's "`gh attestation verify`
+# passes" producer), generates the CycloneDX SBOM of the shipped
+# binary's crate, signs every release blob keylessly with cosign (the
+# bundle written beside the blob), assembles the SHA256SUMS manifest in
+# the checksum grammar's canonical order and uploads everything to the
+# GitHub release. Every piece that must agree with the composite action
+# (`action/action.yml`) and with the shipped binary is pinned by
+# `halyard_action::distribution` + `halyard_action::signing` and gated
+# by `cargo run -p xtask -- check-release`.
 name: release
 
 on:
@@ -86,9 +89,12 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: assemble + upload
+    name: assemble + sign + sbom + upload
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - name: Download the build artifacts
         uses: actions/download-artifact@v4
@@ -96,6 +102,43 @@ jobs:
           path: dist
           pattern: halyard-*
           merge-multiple: true
+
+      # The M5.4 SBOM row (ADR-0054): the CycloneDX SBOM of the shipped
+      # binary's own crate, generated from the checked-out manifest and
+      # lockfile, landed under the pinned release-asset name. The argv
+      # is pinned by `halyard_action::signing::sbom_command`; the
+      # produced file is the release artifact `halyard-cyclonedx.json`.
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the CycloneDX SBOM generator (the pinned plugin)
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate the CycloneDX SBOM (the M5.4 SBOM row)
+        run: |
+          cargo cyclonedx --manifest-path crates/halyard-cli/Cargo.toml -f json --all-features --override-filename halyard-cyclonedx.json
+          mv crates/halyard-cli/halyard-cyclonedx.json dist/halyard-cyclonedx.json
+
+      # The M5.4 cosign row (ADR-0054): the keyless signatures. The
+      # installer is the pinned sigstore action; every release blob —
+      # the five pinned target assets in the manifest's canonical order
+      # plus the SBOM — is signed with the grammar's own sign line
+      # (`halyard_action::signing::sign_command`), the bundle written
+      # beside the blob under the `.sigstore.json` naming. Keyless
+      # signing rides the job's `id-token: write` permission.
+      - name: Install cosign (the pinned installer)
+        uses: sigstore/cosign-installer@v4.1.4
+
+      - name: Sign the release blobs (the pinned keyless grammar)
+        working-directory: dist
+        run: |
+          cosign sign-blob --yes --bundle halyard-aarch64-apple-darwin.tar.gz.sigstore.json halyard-aarch64-apple-darwin.tar.gz
+          cosign sign-blob --yes --bundle halyard-aarch64-unknown-linux-musl.tar.gz.sigstore.json halyard-aarch64-unknown-linux-musl.tar.gz
+          cosign sign-blob --yes --bundle halyard-cyclonedx.json.sigstore.json halyard-cyclonedx.json
+          cosign sign-blob --yes --bundle halyard-x86_64-apple-darwin.tar.gz.sigstore.json halyard-x86_64-apple-darwin.tar.gz
+          cosign sign-blob --yes --bundle halyard-x86_64-pc-windows-msvc.zip.sigstore.json halyard-x86_64-pc-windows-msvc.zip
+          cosign sign-blob --yes --bundle halyard-x86_64-unknown-linux-musl.tar.gz.sigstore.json halyard-x86_64-unknown-linux-musl.tar.gz
 
       - name: Assemble SHA256SUMS (the checksum grammar's canonical order)
         run: |
@@ -121,5 +164,7 @@ jobs:
             --repo elcoosp/halyard \
             --clobber \
             dist/SHA256SUMS \
+            dist/halyard-cyclonedx.json \
+            dist/*.sigstore.json \
             dist/halyard-*.tar.gz \
             dist/halyard-*.zip
