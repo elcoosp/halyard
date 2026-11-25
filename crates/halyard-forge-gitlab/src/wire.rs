@@ -205,14 +205,6 @@ pub struct RestNote {
     pub web_url: Option<String>,
 }
 
-/// A parsed created-commit body (the commits API's 201 response; the
-/// `id` is the created sha, research §6).
-#[derive(Debug, Deserialize)]
-pub struct RestCommit {
-    /// The created commit's sha.
-    pub id: Option<String>,
-}
-
 /// Parses a PR list (the MR find probe's body) — an unparseable body is
 /// a transport failure, never a guessed empty list.
 ///
@@ -263,16 +255,6 @@ pub fn parse_note_list(body: &str) -> Result<Vec<RestNote>, ForgeError> {
 pub fn parse_note(body: &str) -> Result<RestNote, ForgeError> {
     serde_json::from_str(body)
         .map_err(|error| ForgeError::transport(format!("the note body did not parse: {error}")))
-}
-
-/// Parses a created-commit body.
-///
-/// # Errors
-///
-/// [`ForgeError::Transport`] when the body is not a commit object.
-pub fn parse_commit(body: &str) -> Result<RestCommit, ForgeError> {
-    serde_json::from_str(body)
-        .map_err(|error| ForgeError::transport(format!("the commit body did not parse: {error}")))
 }
 
 /// The server's own diagnosis: GitLab shapes errors as
