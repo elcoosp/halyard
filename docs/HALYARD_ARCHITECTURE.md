@@ -768,8 +768,23 @@ targets with the `RUNNER_OS`/`RUNNER_ARCH` mapping, the
 over the templates, wired into CI); the runner checkers branch
 (`sha256sum`/`shasum -a 256`/`Get-FileHash` — VERIFIED in
 `docs/research/own-artifact-attestation.md`); `sha2` joins the
-halyard-action layer consciously. M5.4's cosign/SBOM rows and the live
-attested-release run stay open, recorded.)*
+halyard-action layer consciously. *(As-built note, 2026-11-25
+(ADR-0054): M5.4's cosign and SBOM rows ship — the keyless cosign
+signatures over every release blob and the CycloneDX SBOM artifact:
+`halyard_action::signing` (the sign/verify/sbom line builders, the
+pinned installer, the repo-scoped identity regexp and the GitHub
+Actions OIDC issuer — VERIFIED in
+`docs/research/cosign-sbom-grammar.md`) is the single source the
+release pipeline (the `sign-blob` producer over `signed_blobs()` —
+the five pinned assets plus the SBOM) and the composite action (the
+`verify-blob` consumer over the bundle downloaded beside the asset)
+both pin; the `check-release` gate's `check_signing` refuses a
+dropped sign line or a missing verify token. The SBOM is a signed
+release artifact (`halyard-cyclonedx.json`, the shipped binary's
+crate graph) — the documented `gh` SBOM predicate is SPDX-only, so it
+is not a `gh` SBOM attestation. The GitLab component's cosign verify
+joins the attestation verify as the recorded GitHub-lane decline.)*
+The live attested-release run stays open, recorded.)*
 
 ---
 
@@ -1062,6 +1077,18 @@ Resolution layers (low→high): built-in defaults < `halyard.toml` < `package.me
 | M6.5 | Publish public benchmark site (reproducible, `xtask bench-public`) | third parties can rerun and match ±10 % |
 | M6.6 | Dogfood: halyard releases itself for ≥ 3 months | no manual interventions |
 
+*(As-built note, 2026-11-25 (ADR-0055): M6.4 ships — `docs/stability.md`
+(the four-area contract: exit codes 0/1/2, the `human|json|gha` CLI
+JSON vocabulary + the `{"error":{"code","message"}}` envelope, the
+frozen `halyard-plan/v1` identity + its generated schema, the
+`halyard.toml` v1 fail-closed config semver policy) and the
+schema-compat tests (`crates/halyard-cli/tests/cli_stability.rs`: six
+gates driving the built binary — exit codes, the JSON error envelope,
+the format vocabulary, the plan-schema identity, the config
+unknown-key refusal). The M6 row's corpus/hardware/time-bound siblings
+(M6.1's replay corpus, M6.2's budget rerun, M6.3's external audit,
+M6.5's public site, M6.6's dogfood) stay recorded-open.)*
+
 ### YEAR 2 — Breadth & ecosystem
 
 | Milestone | Scope | Gate |
@@ -1085,8 +1112,14 @@ attestation verify, version-keyed cache, exec), the
 single-sourced grammar (`halyard_action::distribution`: §12
 inputs/outputs, pinned targets, asset names, the SHA256SUMS manifest)
 and the `check-release` drift gate. The npm-provenance half of M5.4
-landed with ADR-0033. The row's cosign-signing and SBOM artifacts and
-the live attested-release run (a real `v*` tag push) stay open —
+landed with ADR-0033. *(As-built note, 2026-11-25 (ADR-0054): the
+row's cosign-signing and SBOM artifacts ship — the keyless cosign
+signatures over every release blob (the producer in the release
+pipeline, the consumer in the composite action, both pinned to
+`halyard_action::signing`, the identity regexp scoped to
+`elcoosp/halyard`) and the signed CycloneDX SBOM artifact
+(`halyard-cyclonedx.json`, the shipped binary's crate graph). The
+live attested-release run (a real `v*` tag push) stays open —
 recorded, not silently re-scoped.)*
 
 ### YEAR 3 — Moat & platform
