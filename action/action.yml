@@ -1,18 +1,21 @@
-# The §12 composite distribution (M5.4 own-artifact slice, ADR-0052):
-# the tiny JS-free composite action — (1) resolves OS/arch, (2)
-# downloads the pre-built static binary from GitHub Releases, (3)
-# verifies checksum **and** GitHub artifact attestation, (4) caches by
-# version, (5) execs `halyard action`. Every piece that must agree
-# with the shipped binary (the §12 inputs/modes, the asset names, the
-# runner-platform table, the checksum manifest grammar) is pinned by
-# `halyard_action::distribution` and gated by
+# The §12 composite distribution (M5.4 own-artifact slice, ADR-0052;
+# the signature consumer, ADR-0054): the tiny JS-free composite action
+# — (1) resolves OS/arch, (2) downloads the pre-built static binary
+# from GitHub Releases, (3) verifies checksum, GitHub artifact
+# attestation **and** the cosign signature, (4) caches by version, (5)
+# execs `halyard action`. Every piece that must agree with the shipped
+# binary (the §12 inputs/modes, the asset names, the runner-platform
+# table, the checksum manifest grammar, the cosign identity/issuer
+# grammar) is pinned by `halyard_action::distribution` +
+# `halyard_action::signing` and gated by
 # `cargo run -p xtask -- check-release`.
 name: 'halyard action'
 description: >
   Runs the halyard release engine in one workflow step: resolves the
   runner platform to a pinned static release binary, verifies the
-  checksum manifest and the build attestation, caches by version, then
-  execs `halyard action` and re-exposes the §12 outputs.
+  checksum manifest, the build attestation and the cosign signature,
+  caches by version, then execs `halyard action` and re-exposes the §12
+  outputs.
 
 inputs:
   mode:
@@ -116,17 +119,20 @@ runs:
         path: halyard-bin
         key: halyard-${{ steps.version.outputs.tag }}-${{ steps.resolve.outputs.target }}
 
-    # §12 step 2: download the release asset and the checksum manifest
-    # (skipped on a cache hit — the cached directory holds the
-    # extracted binary).
+    # §12 step 2: download the release asset, its cosign signature
+    # bundle and the checksum manifest (skipped on a cache hit — the
+    # cached directory holds the extracted binary, and the cache key is
+    # the version + target pair the previous run verified).
     - id: download
-      name: Download the release asset and checksum manifest
+      name: Download the release asset, signature bundle and checksum manifest
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         mkdir -p halyard-dl halyard-bin
         curl -fsSL --retry 3 -o "halyard-dl/${{ steps.resolve.outputs.asset }}" \
           "https://github.com/elcoosp/halyard/releases/download/${{ steps.version.outputs.tag }}/${{ steps.resolve.outputs.asset }}"
+        curl -fsSL --retry 3 -o "halyard-dl/${{ steps.resolve.outputs.asset }}.sigstore.json" \
+          "https://github.com/elcoosp/halyard/releases/download/${{ steps.version.outputs.tag }}/${{ steps.resolve.outputs.asset }}.sigstore.json"
         curl -fsSL --retry 3 -o "halyard-dl/SHA256SUMS" \
           "https://github.com/elcoosp/halyard/releases/download/${{ steps.version.outputs.tag }}/SHA256SUMS"
 
@@ -169,11 +175,32 @@ runs:
     # documented consumer grammar over the same repository.
     - id: verify-attestation
       name: Verify the build attestation
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token || github.token }}
       run: |
         gh attestation verify "halyard-dl/${{ steps.resolve.outputs.asset }}" -R elcoosp/halyard
+
+    # §12 step 3c: verify the cosign signature (the M5.4 row's "cosign
+    # signing", ADR-0054). The pipeline's sign step (cosign sign-blob,
+    # keyless) is the producer; the bundle downloaded beside the asset
+    # carries the signature, the certificate and the transparency-log
+    # proof, and the verify pins this repository's own workflow
+    # identity under the GitHub Actions OIDC issuer — a tampered or
+    # unsigned asset is refused, never tolerated. The cosign binary is
+    # the pinned installer's.
+    - id: install-cosign
+      name: Install cosign (the pinned installer)
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: sigstore/cosign-installer@v4.1.4
+
+    - id: verify-cosign
+      name: Verify the cosign signature
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        cosign verify-blob --bundle "halyard-dl/${{ steps.resolve.outputs.asset }}.sigstore.json" --certificate-identity-regexp '^https://github.com/elcoosp/halyard/' --certificate-oidc-issuer https://token.actions.githubusercontent.com "halyard-dl/${{ steps.resolve.outputs.asset }}"
 
     # Unpack into the cached directory (only when a download ran).
     - id: install
