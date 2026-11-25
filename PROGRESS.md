@@ -2923,6 +2923,8 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M7 step 2 Forgejo/Gitea adapter slice (ADR-0050) | partial | (tree left dirty; no commits) | M1: the `halyard-forge-forgejo` crate — the §11.4 `Forge` over the shared Forgejo/Gitea REST v1 surface (research note §1–§8 VERIFIED live against codeberg.org's swagger.v1.json this session; the close shape `EditPullRequestOption.state = "closed"` verified and recorded as research §8): the pull flow (find by `state=open&head=`, confirmed client-side on `head.ref`; create/rewrite; the verified close with the documented `409`→`E-FORGE-CONFLICT` mapping; the vanished-pull race as success), the releases GET-by-tag-first, the issue-comments marker scan (a PR is an issue; no pagination parameters — one walk), `Authorization: token` auth (empty token fail-closed `E-FORGE-AUTH`), `commit_via_api` kept as the documented honest decline (`E-FORGE-UNSUPPORTED` naming `ForgejoRestForge` — the contents API has no atomic multi-file commit; the lane rides `commit_mode = "git"`), the honest-zero `RateInfo` + `429`→`retry-after`, the call log; red→green on record (E0432 on the missing adapter API; then 12 contract tests + the 9-scenario shared conformance matrix green with exactly one `Declined` verdict asserted + the doctest); bench `forge_calls` + example `forge_exchange`; CLI wire-up `ForgeEnv::Forgejo` (origin grammar codeberg.org/gitea.com https/git@/ssh, `FORGEJO_API_URL` base override, `FORGEJO_TOKEN`→`GITEA_TOKEN`→`HALYARD_FORGE_TOKEN` env grammar, App-env mismatch fail-closed, the release forge half via the `ReleaseLane` resolver, doctor's token check names the lane, the foreign-origin decline names three lanes) + the `pr` loopback e2e over a codeberg.org-shaped origin (green: auth header, base derivation, the git-side content half, 3 calls) + xtask layer rule + member guard (21 crates ✓) + ADR-0050 + README/CLI-README/docs-site rows + research §8. Gates at session end: fmt ✓, clippy `--workspace --all-targets --features ci-bundle -D warnings` ✓ (zero warnings), forgejo crate tests 14/14 ✓ + doctest ✓, cli_forge green except one PRE-EXISTING hang confirmed at base by stash (`pr_live_opens_the_release_mr_over_gitlab_loopback` idles on a futex in this sandbox — documented, not silently weakened); the full-workspace test battery could not re-run to completion — the sandbox's 9.9 G disk filled twice mid-link (ld Bus error; `cargo clean` + the repo's own debuginfo-off adaptation recorded in PROGRESS did not leave room for the 20-crate debug build). M2 deferred with inventory: the remaining M7 rows (GitLab CI component, Bitbucket, corpus-lane e2e) cannot ship fully green in this sandbox (no forge tokens, no pnpm, disk ceiling); everything recorded, nothing silently re-scoped | The Bitbucket adapter (M7, VERIFY-first), the GitLab CI component, the corpus-lane e2e, M5.4 (live-CI lane), the M2.6 dhat re-audit, the corpus-wide pnpm differential, M0.3 measured runs — all unchanged; the full test/bench gate battery must re-run on a machine with disk | 2026-11-24; session log below |
 
+| M5.4 cosign/SBOM rows (ADR-0054) + M6.4 stability promises (ADR-0055) | done | (tree left dirty; no commits) | M1: the M5.4 remainder the previous session recorded as its next start point — the keyless cosign signatures over every release blob (the producer in `.github/workflows/release.yml`, the consumer in `action/action.yml`, both pinned to the new `halyard_action::signing` grammar: the sign/verify/sbom line builders, `signed_blobs()` over `distribution::RELEASE_TARGETS` + the SBOM, the repo-scoped `COSIGN_IDENTITY_REGEXP`, the `COSIGN_OIDC_ISSUER` verbatim from the cosign CLI reference, the pinned `sigstore/cosign-installer@v4.1.4`, the `.sigstore.json` bundle naming) and the signed CycloneDX SBOM release artifact (`halyard-cyclonedx.json`, the shipped binary's `halyard-cli` crate graph over the verified `cargo cyclonedx` argv — the documented `gh` SBOM predicate is SPDX-only, so the artifact rides its own cosign bundle, not a `gh` SBOM attestation); the `check-release` gate gains `check_signing` (a dropped sign line or a missing verify token refuses); the GitLab component's cosign verify joins the attestation verify as the recorded GitHub-lane decline; red→green on record (E0432 on `halyard_action::signing` before any implementation; the plan line the first test pins is §17 M5.4's "cosign signing, SBOM", quoted in the test doc). M2: M6.4 whole — `docs/stability.md` (the four-area contract: exit codes 0/1/2, the `human|json|gha` CLI JSON vocabulary + the `{"error":{"code","message"}}` envelope, the frozen `halyard-plan/v1` identity + its generated schema, the `halyard.toml` v1 fail-closed unknown-key policy) + the schema-compat tests `crates/halyard-cli/tests/cli_stability.rs` (six gates driving the built binary; red = the missing `docs/stability.md` itself, the five machine pins green against the real binary at red). Docs drift fixed additively: the composite action's `verify-attestation` step read `halyard-dl/` without the cache-hit guard the download/unpack steps carry — the fixed guard lands with the signing consumer that lives beside it (ADR-0054 consequence). Micro-debt converted: the zero-caller `halyard_forge_gitlab::wire::{parse_commit, RestCommit}` deleted (the scan's only real hits; the adapter parses the created sha via `parse_created_sha`). `download_url` and `SmallBitset::INLINE_CAPACITY` scanned as zero-caller but kept — the first is ADR-0052's recorded version-pinning grammar, the second the bitset's documented capacity. Tests/bench/example totals: 7 signing unit tests, 2 xtask refusal gates (`the_signing_gate_refuses_a_dropped_sign_line`, `the_signing_gate_refuses_an_unverified_consumer`), 1 CLI contract gate (`release_pipeline_pins_the_signing_grammar`), 6 stability gates, bench group `signing_lines_5_targets_plus_sbom`, example `release_signing`. Gates at session end: fmt ✓, clippy `--workspace --all-targets --features ci-bundle -D warnings` ✓ (zero warnings), workspace tests `--features ci-bundle` ✓, benches ✓, allow-scan empty ✓, `check-release`/`check-layers`/`check-docs-site`/`schema-check` ✓. Honest state at cut-off: the live keyless half (a real `v*` push: the Fulcio SAN the regexp must match; the `--override-filename` produced-name row) stays recorded, fail-closed at the runners; the M6 row's corpus/hardware/time-bound siblings (M6.1, M6.2, M6.3, M6.5, M6.6) stay open — recorded, not silently re-scoped. Tree left dirty (no commits made). Next session start point: (1) the M7 corpus-lane e2e and the live attested+signed release run both stay token-bound/off-sandbox, (2) the M2.6 dhat re-audit with the cache warm, (3) the M0.3 measured runs on a networked machine | 2026-11-25; session log below |
+
 ### 2026-11-24 — The §12 composite distribution (ADR-0052) + the GitLab CI component (ADR-0053) (tree left dirty, no commits)
 
 - **Inventory at session start.** Main was green at `addcd21` (the
@@ -3014,3 +3016,102 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   signing + the SBOM artifact for the release pipeline (VERIFY the
   cosign keyless grammar first), (2) the M2.6 dhat re-audit with the
   cache warm, (3) the M0.3 measured runs on a networked machine.
+
+### 2026-11-25 — The M5.4 cosign/SBOM rows (ADR-0054) + M6.4 stability promises (ADR-0055) (tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `6107e4e` (the
+  composite-distribution session row): fresh stable toolchain 1.100.0,
+  the sandbox's disk pressure managed with debuginfo off. The
+  reconciliation survey ran plan ↔ code ↔ history first: HEAD is
+  exactly the last PROGRESS row commit, so no code landed after the
+  log this time. The reconciliation verdicts — M5.4's cosign/SBOM rows
+  **missing in code** (zero cosign/SBOM/sigstore hits outside the
+  recorded-open mentions in ADR-0052/§15.6/§17; PROGRESS's recorded
+  next-start item 1), M0.3 measured runs **partial** (network-bound,
+  not a seam), M2.6 dhat re-audit **partial** (not a seam), the M7
+  corpus-lane e2e and M5.4's live run **token/off-sandbox-bound**,
+  M6.4 **missing** (`find docs -name 'stability*'` empty, no
+  schema-compat test file — the only in-tree-completable M6 row), the
+  Year-2+ rows unstarted per plan order. Both milestones picked from
+  the table, not invented; the remote `feat/*` branches are merged-ADR
+  leftovers (no unmerged in-flight work; `git branch -a --no-merged
+  main` shows only those).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_action::signing`,
+  captured before any implementation; the plan line the first test
+  pins is §17 M5.4's "npm provenance, SLSA for our binaries, cosign
+  signing, SBOM — `gh attestation verify` passes", quoted in the test
+  doc). The green landed ADR-0054: the keyless cosign signatures over
+  every release blob (the release pipeline's `sign-blob` producer over
+  `signed_blobs()` — the five pinned target assets in the manifest's
+  canonical order plus the SBOM; `id-token: write` on the release job)
+  and the composite action's `verify-blob` consumer (the bundle
+  downloaded beside the asset, the identity regexp scoped to
+  `elcoosp/halyard`, the GitHub Actions OIDC issuer verbatim from the
+  cosign CLI reference) + the CycloneDX SBOM release artifact
+  (`halyard-cyclonedx.json`, the shipped binary's crate graph, signed
+  like every other blob — the documented `gh` SBOM predicate is
+  SPDX-only, recorded). The research note
+  (`docs/research/cosign-sbom-grammar.md`) carries the VERIFIED quotes
+  (sign-blob/verify-blob flags, the issuer, the installer's own
+  version pin, the cargo-cyclonedx options) and two honest rows (the
+  Fulcio SAN form; the override's extension behavior) — both
+  fail-closed at the live run, never silent.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the plan-named deliverable's absence
+  (`the_stability_contract_document_exists_and_names_the_four_areas`
+  failed on the missing `docs/stability.md`; the five machine pins
+  were green against the real binary at red — the contract facts were
+  verified before the document claimed them). The green landed
+  ADR-0055: the four-area stability contract (exit codes 0/1/2 —
+  including the honest clap-owned 2; the `human|json|gha` vocabulary +
+  the one-JSON-document rule + the error envelope; the frozen
+  `halyard-plan/v1` identity over its generated, drift-gated schema;
+  the `halyard.toml` v1 fail-closed unknown-key policy) and the
+  schema-compat gates (`crates/halyard-cli/tests/cli_stability.rs`, six
+  tests driving the built binary through the temp-dir error paths,
+  offline).
+- **Tests/bench/example totals.** 7 signing unit tests (bundle naming,
+  sign/verify line shapes, the identity scoping, the SBOM line, the
+  signed-blob list's coverage + canonical order); 2 xtask refusal
+  gates (the dropped sign line, the missing issuer token); 1 CLI
+  contract gate (`release_pipeline_pins_the_signing_grammar`); 6
+  stability gates; bench group `signing_lines_5_targets_plus_sbom`
+  (the sign/verify render cycle the gate re-renders per run); example
+  `release_signing` (the producer → SBOM → consumer contract, offline).
+- **Docs.** ADR-0054 + ADR-0055; research note `cosign-sbom-grammar.md`;
+  arch §12/§17 as-built amendments (the cosign/SBOM rows recorded
+  shipped, the M6.4 row recorded shipped with its siblings'
+  open state named); README feature bullet + the Learn-more row;
+  PROGRESS row + this section. No new error code (the grammar is pure
+  data; the gate refuses with its own message; the runners' refusals
+  are step failures), no new crate, no layer change.
+- **Docs drift fixed (additive, not a milestone substitute):** the
+  composite action's `verify-attestation` step read `halyard-dl/`
+  without the `cache-hit != 'true'` guard the download/unpack steps
+  carry — a cache hit would have failed the action on the missing
+  file; the guard lands with the signing consumer that lives beside it
+  (ADR-0054 consequence; the cache key binds the cached bytes to the
+  version they were verified at).
+- **Micro-debt converted (additive, not a milestone substitute):** the
+  workspace-wide zero-caller scan (scripted, doc-mentions excluded)
+  flagged three — `halyard_forge_gitlab::wire::{parse_commit,
+  RestCommit}` deleted (dead scaffolding: the adapter's
+  `commit_via_api` parses the created sha via `parse_created_sha`); the
+  other two kept with reasons — `ReleaseTarget::download_url` is
+  ADR-0052's recorded version-pinning grammar, `SmallBitset::
+  INLINE_CAPACITY` is the bitset's documented capacity surface.
+- **Honest state at cut-off.** The live keyless half — a real `v*`
+  tag push producing signed bundles + the SBOM, a consumer running
+  `cosign verify-blob` — is the recorded off-sandbox half (the M5.3
+  live-CI lane discipline); everything in-tree ships green. The M6
+  row's corpus/hardware/time-bound siblings (M6.1 replay corpus,
+  M6.2 budget rerun, M6.3 external audit, M6.5 public benchmark site,
+  M6.6 dogfood) stay open — recorded, not silently re-scoped. The M7
+  corpus-lane e2e stays forge-token-bound. Bench numbers are the
+  sandbox's; the budgets stay shape-bound to the xtask fixtures. Tree
+  left dirty (no commits made).
+- **Next session start point.** (1) the M7 corpus-lane e2e and the
+  live attested+signed release run — both need credentials/live CI,
+  (2) the M2.6 dhat re-audit with the cache warm, (3) the M0.3
+  measured runs on a networked machine.
