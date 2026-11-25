@@ -63,7 +63,7 @@ cargo build --release
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
-- **Ship a release step, not a setup script**: the composite GitHub Action (`action/action.yml`) resolves the runner platform, downloads the pinned static release binary, verifies the checksum manifest **and** the build attestation (`gh attestation verify`), caches by version, and execs `halyard action` — every piece pinned to one grammar by `cargo run -p xtask -- check-release`. GitLab pipelines include the same release step as a CI component (`templates/halyard.yml`), checksum-verified from the same release set.
+- **Ship a release step, not a setup script**: the composite GitHub Action (`action/action.yml`) resolves the runner platform, downloads the pinned static release binary, verifies the checksum manifest **and** the build attestation **and** the cosign signature (`gh attestation verify` + `cosign verify-blob`, keyless, pinned to halyard's own workflow identity), caches by version, and execs `halyard action` — every piece pinned to one grammar by `cargo run -p xtask -- check-release`. The release pipeline (`/.github/workflows/release.yml`) signs every release asset keylessly and ships a signed CycloneDX SBOM of the shipped binary's dependency graph. GitLab pipelines include the same release step as a CI component (`templates/halyard.yml`), checksum-verified from the same release set.
 - **GitHub and GitLab and Forgejo/Gitea and Bitbucket supported**: the Release PR flow runs on GitHub, GitLab (M7 step 1), and Forgejo/Gitea — codeberg.org and gitea.com, self-hosted via `FORGEJO_API_URL` (M7 step 2) — MRs/pulls instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
 
 ## How it works
@@ -158,5 +158,6 @@ Supported platforms follow the CI matrix: Linux, macOS, and Windows.
 
 - [Architecture and master plan](docs/HALYARD_ARCHITECTURE.md)
 - [Milestone progress](PROGRESS.md)
+- [Stability contract](docs/stability.md) — what a consumer may hold halyard to across releases (M6.4)
 - [Docs site](docs/site/src/SUMMARY.md) — quickstart, concepts, and reference as a book (`mdbook build docs/site`; link-gated by `cargo run -p xtask -- check-docs-site`)
 - [Runnable examples](crates/) — each crate has an `examples/` directory
