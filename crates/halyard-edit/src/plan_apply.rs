@@ -357,6 +357,7 @@ fn adapter_for<'a>(
             match file.file_name() {
                 "Cargo.toml" => Some("cargo"),
                 "package.json" => Some("npm"),
+                "pyproject.toml" => Some("pypi"),
                 _ => None,
             }
             .map(str::to_owned)
