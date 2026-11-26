@@ -29,6 +29,7 @@ halyard-eco-cargo = { workspace = true }
 # calls the pnpm verifier from the adapter crate that owns the grammar.
 halyard-eco-npm = { workspace = true }
 halyard-eco-gomod = { workspace = true }
+halyard-eco-maven = { workspace = true }
 halyard-eco-pypi = { workspace = true }
 halyard-git = { workspace = true }
 # M2.6 close-out (§8.7): the planning pipeline opens the persistent
