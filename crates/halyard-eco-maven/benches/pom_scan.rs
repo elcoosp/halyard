@@ -92,9 +92,16 @@ fn ctx() -> DiscoverCtx {
 
 fn scan() {
     let ctx = ctx();
-    let rows = MavenAdapter::new()
-        .discover(&ctx)
-        .expect("bench fixture discovers");
+    // The fixture is a constant that must parse; a parse failure exits
+    // the bench loudly (bench fns are not `#[test]`, so the test-lint
+    // allowance does not reach them — the sibling pypi bench posture).
+    let rows = match MavenAdapter::new().discover(&ctx) {
+        Ok(rows) => rows,
+        Err(error) => {
+            eprintln!("the bench fixture must parse: {error}");
+            std::process::exit(101);
+        }
+    };
     assert_eq!(rows.len(), 4);
 }
 
