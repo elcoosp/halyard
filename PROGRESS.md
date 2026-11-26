@@ -2925,6 +2925,8 @@ Status values: `not started` / `partial` / `done` / `blocked`.
 
 | M5.4 cosign/SBOM rows (ADR-0054) + M6.4 stability promises (ADR-0055) | done | (tree left dirty; no commits) | M1: the M5.4 remainder the previous session recorded as its next start point — the keyless cosign signatures over every release blob (the producer in `.github/workflows/release.yml`, the consumer in `action/action.yml`, both pinned to the new `halyard_action::signing` grammar: the sign/verify/sbom line builders, `signed_blobs()` over `distribution::RELEASE_TARGETS` + the SBOM, the repo-scoped `COSIGN_IDENTITY_REGEXP`, the `COSIGN_OIDC_ISSUER` verbatim from the cosign CLI reference, the pinned `sigstore/cosign-installer@v4.1.4`, the `.sigstore.json` bundle naming) and the signed CycloneDX SBOM release artifact (`halyard-cyclonedx.json`, the shipped binary's `halyard-cli` crate graph over the verified `cargo cyclonedx` argv — the documented `gh` SBOM predicate is SPDX-only, so the artifact rides its own cosign bundle, not a `gh` SBOM attestation); the `check-release` gate gains `check_signing` (a dropped sign line or a missing verify token refuses); the GitLab component's cosign verify joins the attestation verify as the recorded GitHub-lane decline; red→green on record (E0432 on `halyard_action::signing` before any implementation; the plan line the first test pins is §17 M5.4's "cosign signing, SBOM", quoted in the test doc). M2: M6.4 whole — `docs/stability.md` (the four-area contract: exit codes 0/1/2, the `human|json|gha` CLI JSON vocabulary + the `{"error":{"code","message"}}` envelope, the frozen `halyard-plan/v1` identity + its generated schema, the `halyard.toml` v1 fail-closed unknown-key policy) + the schema-compat tests `crates/halyard-cli/tests/cli_stability.rs` (six gates driving the built binary; red = the missing `docs/stability.md` itself, the five machine pins green against the real binary at red). Docs drift fixed additively: the composite action's `verify-attestation` step read `halyard-dl/` without the cache-hit guard the download/unpack steps carry — the fixed guard lands with the signing consumer that lives beside it (ADR-0054 consequence). Micro-debt converted: the zero-caller `halyard_forge_gitlab::wire::{parse_commit, RestCommit}` deleted (the scan's only real hits; the adapter parses the created sha via `parse_created_sha`). `download_url` and `SmallBitset::INLINE_CAPACITY` scanned as zero-caller but kept — the first is ADR-0052's recorded version-pinning grammar, the second the bitset's documented capacity. Tests/bench/example totals: 7 signing unit tests, 2 xtask refusal gates (`the_signing_gate_refuses_a_dropped_sign_line`, `the_signing_gate_refuses_an_unverified_consumer`), 1 CLI contract gate (`release_pipeline_pins_the_signing_grammar`), 6 stability gates, bench group `signing_lines_5_targets_plus_sbom`, example `release_signing`. Gates at session end: fmt ✓, clippy `--workspace --all-targets --features ci-bundle -D warnings` ✓ (zero warnings), workspace tests `--features ci-bundle` ✓, benches ✓, allow-scan empty ✓, `check-release`/`check-layers`/`check-docs-site`/`schema-check` ✓. Honest state at cut-off: the live keyless half (a real `v*` push: the Fulcio SAN the regexp must match; the `--override-filename` produced-name row) stays recorded, fail-closed at the runners; the M6 row's corpus/hardware/time-bound siblings (M6.1, M6.2, M6.3, M6.5, M6.6) stay open — recorded, not silently re-scoped. Tree left dirty (no commits made). Next session start point: (1) the M7 corpus-lane e2e and the live attested+signed release run both stay token-bound/off-sandbox, (2) the M2.6 dhat re-audit with the cache warm, (3) the M0.3 measured runs on a networked machine | 2026-11-25; session log below |
 | M8 step 1+2 PyPI cell slice (ADR-0056) | done (row partial: corpus replay + uv.lock recorded-open) | (tree left dirty; no commits) | M1: the `halyard-eco-pypi` crate — the §7.3 discovery + manifest-edit subset at the PEP 621 grammar (uv workspaces: `[tool.uv.workspace]` members/exclude globs, the root is a member, `[tool.uv.sources]` `workspace = true` internal classification with the root's definitions shadowed per member name; PEP 735 `[dependency-groups]` dev rows; `[tool.uv] package = false` unpublishable), the M8-named PEP 440 strategy (canonical `X.Y.Z[abrc]N` ⇄ semver pairings, lossless both directions; epoch/post/dev/local/implicit spellings fail closed — warned, unpublishable, never rewritten), the byte-preserving `pyproject.toml` patcher (inner-span convention, semver targets render through the PEP 440 strategy — the hyphen form never reaches the manifest; idempotent, drift-fail-closed `E-EDIT-PATCHES`), `Ecosystem::PyPi` (non_exhaustive extension per its own doc), the planner's pypi publish routing (`registry = "pypi"`, no npm options), the orchestrator dispatch + tree walk (`pyproject.toml` joins `Cargo.toml`/`package.json`), the apply shell's manifest map + the tag-target probe's `pypi` arm, `halyard init`'s refusal message names pyproject.toml. M2: the VERIFIED `uv publish` argv grammar (bare live, `--dry-run` forecast; no invented flags — uv's own trusted-publishing posture governs), `halyard_registry::PyPi` (the JSON-API probe: `releases` map, 404 ⇒ not published, fail-closed `E-REG-*`; registered under the plan contract's `pypi` registry name in the publish router), the auth seam's `UV_PUBLISH_TOKEN` arm (the documented `--token` env; username/password pair recorded-open), the doctor's publish-auth `pypi` row, the publish-effect's `pypi` spawn arm ("uv"). Research note VERIFIED live (uv workspaces docs, `uv publish --help` from the installed 0.13.9, PEP 440, PEP 508, PyPA name normalization, the PyPI JSON API against pypi.org); ADR-0056; arch as-built (crate table + M8 row); README rows; `halyard init` drift fix | deferred: the corpus-lane replay on 2 real repos (network-bound, the M7 lane discipline), the uv.lock lockfile half (the trait's documented `NeedsNative`/`Unsupported` declines stand), the custom-index/trusted-publishing config surface (the plan schema is frozen, ADR-0055), M9-M12+ per plan order | 2026-11-26; session log below |
+| M8 Go-modules cell (ADR-0057) | done (row partial: corpus replay + GOPROXY probe recorded-open) | (tree left dirty; no commits) | M1: the `halyard-eco-gomod` crate — the §7.3 discovery subset at the VERIFIED go.mod/go.work grammar (hand-rolled offset-preserving lexer: comments blanked in place so spans point into the original bytes; directives module/go/require/replace recognized, exclude/retract/toolchain/tool/ignore consumed unmodeled; block + single-line forms; quoted paths), the discovery shapes (`go.work` `use` workspaces — members normalized (`.`→root, `./api`→api), the root claimed only by `use .`, every named member a requirement (missing go.mod = `E-DISC-GLOB`), the single-module posture without go.work, nested unclaimed go.mods skipped), workspace-proven internal edges (a require naming a use member; a require named by a local-path replace — go.work's or the module's own; everything else registry-resolved, the cargo differential discipline), `ReqSpec::Other` verbatim requirements (ADR-0006), tag-only rows (`RawVersionSource::Tag`/`VersionSource::Tag` new variants, no version site, unpublishable), `Ecosystem::Go` + `is_tag_only()`, the planner's tag-only materialization (`effective_from`: the release base tag's version through the package's own template per §8.2, zero for initial — shared by the target algebra and the release row so `from → to` stays consistent; `skip_reason` no longer reports `no_version` for tag-only rows), the `major_version_suffix` rule in core backing the planner guard (a /vN module path refusing a below-major target as a recorded `major_version_suffix` skip), the per-package subdir tag templates (`v{version}` / `{dir}/v{version}` through the shared appendix-A.3 grammar), the orchestrator dispatch + tree walk (`go.mod`/`go.work` join the manifest walk), the xtask layer rule + member guard (24 crates ✓). M2: the release half — Go release rows carry `publish: None` (the plan contract's no-registry-decision shape; doc widened; the publish engine's `no_publish_contract` skip keeps the row out of every forecast), the tag-target probe's explicit `go` arm (`manifest_version` = None by the grammar — the documented HEAD fallback now the adapter's own contract), the apply shell's manifest map (`go.mod` → the fail-closed tag-only edit seam), the CLI e2e (`publish --dry` over a go workspace: zero targets, the member recorded as `no_publish_contract`, no spawn). Red→green on record twice: M1's red = E0432/E0599 on the missing seams (`halyard_eco_gomod::GoModAdapter`, `Ecosystem::Go`, `RawVersionSource::Tag`; the plan line the first test pins is §17 M8's *"Go modules (tag-only, `go.work`, subdir tags)"*, quoted in the test module docs), M2's red = the planner change stashed (`a_tag_only_release_row_carries_no_publish_decision` + the CLI e2e fail at red — `publish_disabled`/`Some`, green at `no_publish_contract`/`None`). Docs drift fixed additively: `E-DISC-NO-PACKAGE`'s display + its docs page + `halyard init`'s no-manifests refusal name all four manifest families now (pyproject.toml was already missing from the discovery message — pre-existing drift the PyPI session's init fix did not cover); `ManifestVersionProbe`'s trait docs name the go contract. Micro-debt scanned: todo!/unimplemented! zero, allow/expect zero, zero-caller scan clean (the prior sessions' conversions hold) — nothing new to convert. Tests/bench/example totals: 24 adapter tests (13 grammar + 7 discovery contract + 4 edit contract) + 8 planner tag-only gates + 1 CLI publish e2e, benches `gomod_scan` + `tag_shapes`, examples `scan_gomod` + `plan_tags`. Gates at session end: see the session log | deferred: the corpus-lane replay on 2 real repos (network-bound, the M7 lane discipline), the GOPROXY existence-probe arm (a tag-only ecosystem has no publish step to resume — unstarted, recorded), Maven/Gradle/NuGet/Dart/RubyGems/generic/Docker cells + M9-M12+ per plan order | 2026-11-26; session log below |
+
 
 ### 2026-11-24 — The §12 composite distribution (ADR-0052) + the GitLab CI component (ADR-0053) (tree left dirty, no commits)
 
@@ -3202,3 +3204,108 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   networked lane is available, (2) the M7 corpus-lane e2e and the live
   attested+signed release run (credentials/live CI), (3) the M2.6
   dhat re-audit with the cache warm.
+
+### 2026-11-26 — The M8 Go-modules cell (ADR-0057, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `42fbdeb` (the
+  M8 PyPI session row). The reconciliation survey ran plan ↔ code ↔
+  history first: the recorded next-start items from the PyPI session
+  were (1) the M8 Go-modules cell or the PyPI corpus replay, (2) the M7
+  corpus-lane e2e and the live attested+signed release run (both
+  credential/network-bound), (3) the M2.6 dhat re-audit with the cache
+  warm. The in-tree, unclaimed seam is the M8 row's next cell — *Go
+  modules (tag-only, `go.work`, subdir tags)* — and its
+  **missing-in-code** evidence: `grep -rn "go\.mod\|go\.work\|gomod\|Gomod\|GoMod\|golang"
+  crates/ --include="*.rs"` returns zero hits; no `halyard-eco-gomod`;
+  `git log --oneline -50` carries no Go work; `git branch -a` shows only
+  stale merged feature branches (cargo-lockfile-patcher,
+  check-pr-comment-mode, custom-registry-routing, forge-call-governor,
+  publish-auth-plumbing — every one an already-shipped ADR). M1 = the
+  cell's discover/plan slice; M2 = the same cell's release half — both
+  from the table, not invented, following the PyPI cell's own split.
+- **Grammar verification first.** `docs/research/go-module-grammars.md`
+  VERIFIED live against `go.dev/ref/mod` and
+  `go.dev/doc/modules/publishing` (the directive set, the
+  exactly-one-module-directive rule, the tag-only fact — go.mod carries
+  no version for the module itself, versions are the repository's
+  semantic version tags — the /vN suffix rules including the
+  no-leading-zero/no-dots/not-v1 lexical constraints, the `use`
+  semantics ("its argument is a relative path to the directory
+  containing the module's go.mod file"), the no-go.work single-module
+  posture, the `git tag v0.1.0` publish flow; the subdir tag shape
+  derived from the module-path↔subdirectory mapping + the root tag
+  shape, never a Go-specific template syntax).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_eco_gomod` +
+  E0599 on `Ecosystem::Go`/`RawVersionSource::Tag`; the plan line the
+  first test pins is §17 M8's *"Go modules (tag-only, `go.work`, subdir
+  tags)"*, quoted in the contract tests' module docs). The green landed
+  ADR-0057: the hand-rolled lexer (comments blanked in place — same
+  byte offsets; block + single-line forms; quoted paths with escape
+  handling; unknown directives fail closed), discovery at the documented
+  shapes, workspace-proven internal edges, the tag-only version seam
+  (`RawVersionSource::Tag`/`VersionSource::Tag`, `Ecosystem::is_tag_only`),
+  the planner's `effective_from` (release base tag's version through the
+  package's own template — shared by the target algebra and the release
+  row, a consistency bug the fixtures caught mid-cycle: the row's `from`
+  initially drifted from the algebra's), the `/vN` guard with recorded
+  skips, the subdir tag templates, and the wire-up: orchestrator dispatch
+  + tree walk, the ecosystem mapping, the xtask layer rule + member
+  guard (24 crates ✓). Fixture honesty: the first expectations ignored
+  two documented defaults — single-package workspaces render `v{version}`
+  (§6.1) and the cargo-compatible pre-major policy bumps a 0.y.z feat to
+  the patch — the tests now pin the real semantics with a control package.
+- **M2 implemented (M1 green first), one full red→green cycle.** The red
+  was the planner change stashed
+  (`git stash push -- crates/halyard-core/src/planner.rs`):
+  `a_tag_only_release_row_carries_no_publish_decision` and the CLI e2e
+  fail at red (`publish_disabled`/`Some(PlanPublish)`), green at
+  `no_publish_contract`/`None`. The green: Go release rows carry
+  `publish: None` (plan.rs's doc widened for the tag-only case), the
+  tag-target probe's explicit `go` arm, the apply shell's manifest map,
+  and the CLI e2e (`publish --dry` over a go workspace: zero targets,
+  the member skip reason `no_publish_contract`, no shim — there is no go
+  publish step to spawn).
+- **Tests/bench/example totals.** M1: 24 adapter tests (13 grammar unit
+  + 7 discovery contract + 4 edit contract) + 7 planner gates (the
+  tag-only materialization, the initial zero-version release, the /vN
+  refuse and honor pair, the cargo control pair) + bench `gomod_scan` +
+  example `scan_gomod`; M2: 2 planner publish gates + the CLI e2e +
+  bench `tag_shapes` + example `plan_tags`. Workspace battery green at
+  the gates (session log records the commands).
+- **Docs.** ADR-0057; research note `docs/research/go-module-grammars.md`
+  (VERIFIED quotes: go.dev/ref/mod's directive set + module-directive
+  rule + major-version-suffix rules, the go-work `use` semantics, the
+  publishing page's tag flow); arch as-built (crate tree row + the M8
+  row note); README (feature bullet, workspace table, examples list);
+  PROGRESS row + this section. No new error code (discovery/edit reuse
+  the `E-DISC-*`/`E-EDIT-*` pages; `ManifestFormat` gains the `Gomod`
+  variant its reports name).
+- **Docs drift fixed (additive, not a milestone substitute):**
+  `E-DISC-NO-PACKAGE`'s Display and its `docs/errors/` page named only
+  `Cargo.toml`/`package.json` — `pyproject.toml` was already plannable
+  and missing from the text (pre-existing drift the PyPI session's
+  `halyard init` fix did not cover), and `go.mod`/`go.work` join now
+  that a go-only repository is plannable; `halyard init`'s
+  no-manifests refusal names all four families; the
+  `ManifestVersionProbe` trait docs carry the go contract.
+- **Micro-debt scanned (nothing to convert):** `todo!()`/
+  `unimplemented!()` zero; `#[allow]`/`#[expect]` zero; the zero-caller
+  scan over the sample set (`extract_version`, `plan_fetch`,
+  `fetch_attempts`, `signed_blobs`, `notes_for`, `changed_from_digest`,
+  `render_static`) found callers for every symbol — the prior sessions'
+  conversions hold; the `let _ = writeln!` pattern in `halyard-action`
+  writes to a `String` (infallible `fmt::Write`) and is correct, not
+  debt.
+- **Honest state at cut-off.** The corpus-lane replay on 2 real Go
+  repos (the M8 cell's acceptance row half) stays network-bound; the
+  GOPROXY existence-probe arm stays unstarted (a tag-only ecosystem has
+  no publish step to resume — recorded, not silently re-scoped); the
+  vendored-module tree walk reads `vendor/**/go.mod` into the
+  discovery context (semantically harmless — nothing claims them — and
+  the §14 budgets arm at M2.6). Tree left dirty (no commits made).
+- **Next session start point.** (1) the next M8 cell per plan order
+  (Maven/Gradle) or the PyPI/Go corpus replay when a networked lane is
+  available, (2) the M7 corpus-lane e2e and the live attested+signed
+  release run (credentials/live CI), (3) the M2.6 dhat re-audit with
+  the cache warm.
