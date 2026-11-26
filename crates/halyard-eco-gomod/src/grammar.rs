@@ -167,7 +167,7 @@ fn tokens(line: &str, line_start: usize, file: &str) -> Result<Vec<Token>, Disco
                         i += 2;
                         continue;
                     }
-                    if bytes[i] == quote {
+                    if bytes.get(i) == Some(&quote) {
                         closed = true;
                         i += 1;
                         break;
@@ -189,7 +189,9 @@ fn tokens(line: &str, line_start: usize, file: &str) -> Result<Vec<Token>, Disco
             }
             _ => {
                 let start = i;
-                while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'\r') {
+                while i < bytes.len()
+                    && !matches!(bytes.get(i).copied(), Some(b' ' | b'\t' | b'\r'))
+                {
                     i += 1;
                 }
                 let text = line.get(start..i).unwrap_or_default();
@@ -211,13 +213,14 @@ fn unescape_interpreted(text: &str) -> String {
                 Some('n') => out.push('\n'),
                 Some('t') => out.push('\t'),
                 Some('r') => out.push('\r'),
-                Some('\\') => out.push('\\'),
                 Some('"') => out.push('"'),
+                // `\` escapes itself; a trailing lone `\` rides verbatim
+                // (the same one-backslash output).
+                Some('\\') | None => out.push('\\'),
                 Some(other) => {
                     out.push('\\');
                     out.push(other);
                 }
-                None => out.push('\\'),
             }
         } else {
             out.push(c);
@@ -265,7 +268,10 @@ fn directives(blanked: &str, file: &str) -> Result<Vec<Directive>, DiscoverError
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < lines.len() {
-        let (line_start, raw) = lines[i];
+        let Some((line_start, raw)) = lines.get(i) else {
+            break;
+        };
+        let (line_start, raw) = (*line_start, *raw);
         i += 1;
         let line = raw.strip_suffix('\n').unwrap_or(raw);
         let trimmed_start = line.trim_start();
@@ -278,7 +284,9 @@ fn directives(blanked: &str, file: &str) -> Result<Vec<Directive>, DiscoverError
         if toks.is_empty() {
             continue;
         }
-        let (keyword, keyword_span) = toks[0].clone();
+        let Some((keyword, keyword_span)) = toks.first().cloned() else {
+            continue;
+        };
         // A trailing `(` opens a block: fold the following lines into
         // this directive until the matching `)`. (The tokenizer yields
         // the paren as its own token; the grammar puts it directly after
@@ -296,7 +304,10 @@ fn directives(blanked: &str, file: &str) -> Result<Vec<Directive>, DiscoverError
             let mut rows = Vec::new();
             let mut closed = false;
             while i < lines.len() {
-                let (block_start, block_raw) = lines[i];
+                let Some((block_start, block_raw)) = lines.get(i) else {
+                    break;
+                };
+                let (block_start, block_raw) = (*block_start, *block_raw);
                 i += 1;
                 let block_line = block_raw.strip_suffix('\n').unwrap_or(block_raw);
                 let bt = block_line.trim();
@@ -329,7 +340,7 @@ fn directives(blanked: &str, file: &str) -> Result<Vec<Directive>, DiscoverError
         out.push(Directive {
             keyword,
             keyword_span,
-            rows: vec![toks[1..].to_vec()],
+            rows: vec![toks.get(1..).unwrap_or_default().to_vec()],
         });
     }
     Ok(out)
@@ -346,10 +357,28 @@ fn require_row(row: &[Token], file: &str, keyword_span: Span) -> Result<RequireR
             span: Some(keyword_span),
         });
     }
+    // The shape check above guards the token reads; `get` keeps them
+    // panic-free.
+    let Some(path) = row.first() else {
+        return Err(DiscoverError::Manifest {
+            file: file.to_owned(),
+            format: ManifestFormat::Gomod,
+            message: "a require row is `ModulePath Version`".to_owned(),
+            span: Some(keyword_span),
+        });
+    };
+    let Some(version) = row.get(1) else {
+        return Err(DiscoverError::Manifest {
+            file: file.to_owned(),
+            format: ManifestFormat::Gomod,
+            message: "a require row is `ModulePath Version`".to_owned(),
+            span: Some(keyword_span),
+        });
+    };
     Ok(RequireRow {
-        path: row[0].0.clone(),
-        version: row[1].0.clone(),
-        version_span: row[1].1,
+        path: path.0.clone(),
+        version: version.0.clone(),
+        version_span: version.1,
     })
 }
 
@@ -366,7 +395,7 @@ fn replace_row(row: &[Token], file: &str, keyword_span: Span) -> Result<ReplaceR
         });
     };
     let (lhs, rhs) = row.split_at(arrow);
-    let rhs = &rhs[1..];
+    let rhs = rhs.get(1..).unwrap_or_default();
     if lhs.is_empty() || rhs.is_empty() {
         return Err(DiscoverError::Manifest {
             file: file.to_owned(),
@@ -375,9 +404,29 @@ fn replace_row(row: &[Token], file: &str, keyword_span: Span) -> Result<ReplaceR
             span: Some(keyword_span),
         });
     }
+    // The length match guards the token reads; `get`/`first` keep them
+    // panic-free.
+    let Some(lhs_path) = lhs.first() else {
+        return Err(DiscoverError::Manifest {
+            file: file.to_owned(),
+            format: ManifestFormat::Gomod,
+            message: "the replace target is `ModulePath [Version]`".to_owned(),
+            span: Some(keyword_span),
+        });
+    };
     let (old, old_version) = match lhs.len() {
-        1 => (lhs[0].0.clone(), None),
-        2 => (lhs[0].0.clone(), Some(lhs[1].0.clone())),
+        1 => (lhs_path.0.clone(), None),
+        2 => {
+            let Some(version) = lhs.get(1) else {
+                return Err(DiscoverError::Manifest {
+                    file: file.to_owned(),
+                    format: ManifestFormat::Gomod,
+                    message: "the replace target is `ModulePath [Version]`".to_owned(),
+                    span: Some(keyword_span),
+                });
+            };
+            (lhs_path.0.clone(), Some(version.0.clone()))
+        }
         _ => {
             return Err(DiscoverError::Manifest {
                 file: file.to_owned(),
@@ -387,12 +436,30 @@ fn replace_row(row: &[Token], file: &str, keyword_span: Span) -> Result<ReplaceR
             });
         }
     };
+    let Some(rhs_path) = rhs.first() else {
+        return Err(DiscoverError::Manifest {
+            file: file.to_owned(),
+            format: ManifestFormat::Gomod,
+            message: "the replacement is `ModulePath Version` or a `FilePath`".to_owned(),
+            span: Some(keyword_span),
+        });
+    };
     let target = match rhs.len() {
-        1 => ReplaceTarget::Path(rhs[0].0.clone()),
-        2 => ReplaceTarget::Module {
-            path: rhs[0].0.clone(),
-            version: rhs[1].0.clone(),
-        },
+        1 => ReplaceTarget::Path(rhs_path.0.clone()),
+        2 => {
+            let Some(version) = rhs.get(1) else {
+                return Err(DiscoverError::Manifest {
+                    file: file.to_owned(),
+                    format: ManifestFormat::Gomod,
+                    message: "the replacement is `ModulePath Version` or a `FilePath`".to_owned(),
+                    span: Some(keyword_span),
+                });
+            };
+            ReplaceTarget::Module {
+                path: rhs_path.0.clone(),
+                version: version.0.clone(),
+            }
+        }
         _ => {
             return Err(DiscoverError::Manifest {
                 file: file.to_owned(),
@@ -442,7 +509,15 @@ pub fn parse_gomod(text: &str, file: &str) -> Result<GoMod, DiscoverError> {
                         span: Some(directive.keyword_span),
                     });
                 }
-                parsed.module = paths[0].0.clone();
+                let Some(path) = paths.first() else {
+                    return Err(DiscoverError::Manifest {
+                        file: file.to_owned(),
+                        format: ManifestFormat::Gomod,
+                        message: "the module directive carries exactly one path".to_owned(),
+                        span: Some(directive.keyword_span),
+                    });
+                };
+                parsed.module.clone_from(&path.0);
             }
             "go" => parsed.go = Some(directive_value(&directive, file, "the go directive")?),
             "toolchain" | "tool" | "ignore" | "exclude" | "retract" => {
@@ -501,7 +576,15 @@ pub fn parse_gowork(text: &str, file: &str) -> Result<GoWork, DiscoverError> {
                             span: Some(directive.keyword_span),
                         });
                     }
-                    parsed.uses.push(row[0].0.clone());
+                    let Some(directory) = row.first() else {
+                        return Err(DiscoverError::Manifest {
+                            file: file.to_owned(),
+                            format: ManifestFormat::Gomod,
+                            message: "a use row carries exactly one directory".to_owned(),
+                            span: Some(directive.keyword_span),
+                        });
+                    };
+                    parsed.uses.push(directory.0.clone());
                 }
             }
             "replace" => {
@@ -543,7 +626,15 @@ fn directive_value(directive: &Directive, file: &str, what: &str) -> Result<Stri
             span: Some(directive.keyword_span),
         });
     }
-    Ok(row[0].0.clone())
+    let Some(value) = row.first() else {
+        return Err(DiscoverError::Manifest {
+            file: file.to_owned(),
+            format: ManifestFormat::Gomod,
+            message: format!("{what} carries exactly one value"),
+            span: Some(directive.keyword_span),
+        });
+    };
+    Ok(value.0.clone())
 }
 
 #[cfg(test)]
