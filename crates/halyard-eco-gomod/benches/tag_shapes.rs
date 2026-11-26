@@ -11,7 +11,16 @@ use halyard_eco_gomod::tag;
 
 /// One release row's tag cycle: template → render → base parse.
 fn tag_cycle(template: &TagTemplate, name: &str, version: &str, tag_text: &str) {
-    let version = version.parse().expect("bench fixture version");
+    // The fixture strings are constants that must parse; a parse
+    // failure exits the bench loudly (bench fns are not `#[test]`, so
+    // the test-lint allowance does not reach them).
+    let version = match version.parse() {
+        Ok(version) => version,
+        Err(error) => {
+            eprintln!("the bench fixture version must parse: {error}");
+            std::process::exit(101);
+        }
+    };
     let rendered = template.render(name, &version, "go");
     assert_eq!(rendered, tag_text);
     assert_eq!(
