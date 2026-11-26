@@ -14,6 +14,7 @@ members = [
     "crates/halyard-eco-cargo",
     "crates/halyard-eco-npm",
     "crates/halyard-eco-gomod",
+    "crates/halyard-eco-maven",
     "crates/halyard-eco-pypi",
     "crates/halyard-edit",
     "crates/halyard-forge",
@@ -86,6 +87,7 @@ halyard-discover = { path = "crates/halyard-discover" }
 halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
 halyard-eco-npm = { path = "crates/halyard-eco-npm" }
 halyard-eco-gomod = { path = "crates/halyard-eco-gomod" }
+halyard-eco-maven = { path = "crates/halyard-eco-maven" }
 halyard-eco-pypi = { path = "crates/halyard-eco-pypi" }
 halyard-edit = { path = "crates/halyard-edit" }
 halyard-forge = { path = "crates/halyard-forge" }
