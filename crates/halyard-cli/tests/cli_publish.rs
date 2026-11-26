@@ -1192,3 +1192,89 @@ fn npm_trusted_publishing_decides_when_options_are_unset() -> Result<(), BoxErro
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 step 2 (ADR-0056): the pypi lane — a uv workspace publishes through
+// the shimmed `uv`; the argv is the contract (bare live, `--dry-run`
+// forecast); the PyPI probe joins the router under the plan contract's
+// `pypi` registry name.
+// ---------------------------------------------------------------------------
+
+/// A uv workspace: the root project depends on one globed member; a
+/// feat commit drives the plan's releases.
+fn build_pypi_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "pyproject.toml".to_owned(),
+                "[project]\nname = \"py-ws\"\nversion = \"0.1.0\"\ndependencies = [\"p1>=0.1\"]\n\n[tool.uv.sources]\np1 = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"pkgs/*\"]\n".to_owned(),
+            ),
+            (
+                "pkgs/p1/pyproject.toml".to_owned(),
+                "[project]\nname = \"p1\"\nversion = \"0.1.0\"\ndependencies = []\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold uv workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("pkgs/p1/README.md".to_owned(), "member change\n".to_owned())],
+        "feat: the member changes",
+    ))?;
+    Ok(fx)
+}
+
+/// A `uv` stand-in that records its argv and exits 0 (the packaged tool
+/// never runs; the argv is the assertion).
+fn write_uv_shim(label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let dir = fixture_dir(label)?;
+    let script = dir.join("uv");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$HALYARD_SHIM_LOG\"\nexit 0\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms)?;
+    }
+    Ok(dir)
+}
+
+/// The dry forecast for a uv workspace: pypi targets ride the plan
+/// contract's `pypi` registry (no npm options), and the shimmed `uv`
+/// records the documented `--dry-run` argv — the forecast is offline
+/// (dry never probes, I5).
+#[test]
+fn publish_dry_forecasts_a_pypi_uv_workspace() -> Result<(), BoxError> {
+    let mut fx = build_pypi_workspace("pypi-dry")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let shim = write_uv_shim("shim-pypi-dry")?;
+    let log = fixture_dir("shim-log-pypi-dry")?.join("argv.log");
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        Some(&shim),
+        Some(&log),
+    )?;
+    assert!(out.status.success(), "the pypi forecast proceeded: {text}");
+    assert!(text.contains("\"forecast\""), "rows say forecast: {text}");
+    // The default group is independent policy (§5.4): the feat commit
+    // touched the member only, so `p1` is the release target.
+    assert!(text.contains("p1"), "pypi targets named: {text}");
+    let recorded = std::fs::read_to_string(&log)?;
+    assert!(
+        recorded.contains("publish") && recorded.contains("--dry-run"),
+        "the uv argv is recorded: {recorded}"
+    );
+    Ok(())
+}
