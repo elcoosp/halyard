@@ -2171,7 +2171,9 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// without an adapter (custom) carry no parsable version, so their
 /// targets keep the documented HEAD fallback — as does the tag-only
 /// `go` ecosystem, by its adapter's own contract (M8 ADR-0057: a go.mod
-/// never carries a version, so there is nothing to pinpoint).
+/// never carries a version, so there is nothing to pinpoint). The
+/// `maven` arm pairs the semver-canonical spellings (M8 ADR-0058: a
+/// Maven spelling the plan contract cannot parse keeps the fallback).
 struct ShellProbe;
 
 impl ManifestVersionProbe for ShellProbe {
@@ -2181,6 +2183,7 @@ impl ManifestVersionProbe for ShellProbe {
             "npm" => halyard_eco_npm::manifest_version(manifest),
             "pypi" => halyard_eco_pypi::manifest_version(manifest),
             "go" => halyard_eco_gomod::manifest_version(manifest),
+            "maven" => halyard_eco_maven::manifest_version(manifest),
             _ => None,
         }
     }
