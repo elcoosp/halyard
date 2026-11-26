@@ -283,6 +283,7 @@ halyard/
 │  ├─ halyard-eco-npm/     EcosystemAdapter for npm/pnpm (JSON spans, pnpm-lock handling)
 │  ├─ halyard-eco-pypi/    EcosystemAdapter for PyPI/uv (toml_edit spans, PEP 440 strategy, M8 step 1+2)
 │  ├─ halyard-eco-gomod/   EcosystemAdapter for Go modules (hand-rolled go.mod/go.work lexer, tag-only planning, subdir tags, M8)
+│  ├─ halyard-eco-maven/   EcosystemAdapter for Maven (hand-rolled pom.xml scanner, parent inheritance, semver-canonical versions, M8)
 │  ├─ halyard-git/         gix integration: refs, painter walk, trie tree-diff, fetch planner
 │  ├─ halyard-cache/       persistent mmap per-commit cache (only crate permitted `unsafe`)
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
@@ -329,6 +330,28 @@ per-package subdir tag templates (`v{version}` at the root,
 Go-specific syntax). A Go release row carries `publish: None` — the
 plan contract's no-registry-decision shape; there is no `go` registry
 name, publish-effect arm or auth arm to invent.)*
+
+*(As-built note, 2026-11-26 (ADR-0058): the workspace's 25th member is
+the M8 **Maven** half of the Maven/Gradle cell — the `halyard-eco-maven`
+adapter (the hand-rolled pom.xml scanner, the VERIFIED grammar in
+`docs/research/maven-pom-grammars.md`), recursive aggregator discovery
+(`<modules>`, the documented parent-coordinates match refusing
+mismatches), parent inheritance through the existing
+workspace-inheritance machinery (one edit site, on the aggregator pom),
+the semver-canonical version strategy (ADR-0056's fail-closed
+discipline — Maven qualifier forms that parse as semver stay canonical,
+two-component and property-reference spellings are warned and never
+rewritten), the coordinate-proven internal edges (a `<dependency>`
+whose (groupId, artifactId) names a member), the byte-preserving edit
+seam (read-back verified), the `pom.xml` routing in the apply manifest
+map, the tag-target probe's explicit `maven` arm, and the publish
+posture: rows carry `publishable = false` until a `mvn` argv grammar
+exists — the planner's registry arm names `maven-central`, the engine
+records the `publish_disabled` skip, no tool is spawned. The **Gradle**
+half of the cell stays the recorded-open remainder (a
+`build.gradle(.kts)` version is arbitrary Groovy/Kotlin build code —
+extracting one without an evaluated, VERIFIED grammar would guess),
+with the corpus-lane replay and the `mvn deploy` argv arm.)*
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
@@ -1178,6 +1201,23 @@ fail-closed tag-only edit seam. The cell's recorded-open remainders:
 the corpus-lane replay on 2 real repos (token/network-bound, the M7
 lane discipline), and the GOPROXY existence-probe arm (a tag-only
 ecosystem has no publish step to resume — unstarted, recorded).)*
+
+*(As-built note, 2026-11-26 (ADR-0058): the M8 row's **Maven** half
+ships — the `halyard-eco-maven` adapter (the §7.3 discovery subset at
+the VERIFIED pom.xml grammar: recursive `<modules>` aggregation, the
+parent-coordinates match refusing mismatches, parent inheritance
+through the workspace-inheritance machinery, the semver-canonical
+version strategy per ADR-0056's discipline, the coordinate-proven
+internal edges), the byte-preserving edit seam (read-back verified,
+the apply shell's manifest map routes `pom.xml`), the tag-target
+probe's explicit `maven` arm, and the publish posture — rows carry
+`publishable = false` until a `mvn` argv grammar exists; the
+planner's registry arm names `maven-central` and the engine records
+the `publish_disabled` skip. The cell's recorded-open remainders: the
+**Gradle** half (a `build.gradle(.kts)` version is arbitrary
+Groovy/Kotlin build code — an evaluated, VERIFIED grammar gates it),
+the corpus-lane replay on 2 real repos (token/network-bound, the M7
+lane discipline), and the `mvn deploy` publish argv arm.)*
 
 ### YEAR 3 — Moat & platform
 
