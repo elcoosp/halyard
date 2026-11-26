@@ -206,6 +206,13 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&["semver", "toml_edit"]),
     },
+    // M8 (ADR-0057): the go adapter owns the go.mod/go.work line
+    // grammars over a hand-rolled lexer; no workspace deps beyond core.
+    LayerRule {
+        name: "halyard-eco-gomod",
+        workspace: &["halyard-core"],
+        external: Some(&["semver"]),
+    },
     // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
     // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
     // parallel parse uses scoped std threads until budgets demand more.
@@ -216,6 +223,7 @@ const RULES: &[LayerRule] = &[
             "halyard-eco-cargo",
             "halyard-eco-npm",
             "halyard-eco-pypi",
+            "halyard-eco-gomod",
         ],
         external: Some(&["ignore"]),
     },
@@ -396,6 +404,7 @@ mod tests {
             "halyard-eco-cargo",
             "halyard-eco-npm",
             "halyard-eco-pypi",
+            "halyard-eco-gomod",
             "halyard-edit",
             "halyard-forge",
             "halyard-forge-bitbucket",
