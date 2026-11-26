@@ -83,3 +83,87 @@ fn apply_rewrites_versions_in_the_working_tree() -> Result<(), BoxError> {
     assert!(p2.contains("p1 = \"0.1\""), "{p2}");
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0058): the maven lane — the semantic in-place pom edit. The
+// plan's own-version patch lands on the `<project>`-owned `<version>`
+// element's value span; the surrounding markup never moves (I4).
+// ---------------------------------------------------------------------------
+
+/// A maven multi-module workspace: a root aggregator plus one member with
+/// its own version, a feat commit driving the member's plan row (minor:
+/// 1.0.0 → 1.1.0).
+fn build_maven_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    let scaffold = vec![
+        (
+            "pom.xml".to_owned(),
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n",
+                "  <modelVersion>4.0.0</modelVersion>\n",
+                "  <groupId>com.example</groupId>\n",
+                "  <artifactId>halyard-mvn</artifactId>\n",
+                "  <version>1.0.0</version>\n",
+                "  <packaging>pom</packaging>\n",
+                "  <modules>\n    <module>api</module>\n  </modules>\n",
+                "</project>\n",
+            )
+            .to_owned(),
+        ),
+        (
+            "api/pom.xml".to_owned(),
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n",
+                "  <modelVersion>4.0.0</modelVersion>\n",
+                "  <parent>\n",
+                "    <groupId>com.example</groupId>\n",
+                "    <artifactId>halyard-mvn</artifactId>\n",
+                "    <version>1.0.0</version>\n",
+                "  </parent>\n",
+                "  <artifactId>halyard-mvn-api</artifactId>\n",
+                "  <version>1.0.0</version>\n",
+                "</project>\n",
+            )
+            .to_owned(),
+        ),
+    ];
+    fx.commit_with(&CommitSpec::files(
+        scaffold,
+        "chore: scaffold maven workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("api/README.md".to_owned(), "member change\n".to_owned())],
+        "feat: the member changes",
+    ))?;
+    Ok(fx)
+}
+
+/// `halyard apply` rewrites the member pom's own version in place: the
+/// value swaps 1.0.0 → 1.1.0 and every other byte of the pom is
+/// identical (I4).
+#[test]
+fn apply_rewrites_the_pom_version_of_a_maven_workspace() -> Result<(), BoxError> {
+    let fx = build_maven_workspace("maven-apply")?;
+    let (ok, out) = halyard(fx.root(), &["apply"])?;
+    assert!(ok, "apply failed: {out}");
+    let api = std::fs::read_to_string(fx.root().join("api/pom.xml"))?;
+    assert!(
+        api.contains("<version>1.1.0</version>"),
+        "the member's own version moved: {api}"
+    );
+    assert!(
+        api.contains("    <version>1.0.0</version>\n  </parent>"),
+        "the parent block's version row never moves: {api}"
+    );
+    // The untouched aggregator: its own version stays 1.0.0 (no commits
+    // touched the root's paths — the plan skipped it).
+    let root = std::fs::read_to_string(fx.root().join("pom.xml"))?;
+    assert!(
+        root.contains("<version>1.0.0</version>"),
+        "the untouched aggregator keeps its version: {root}"
+    );
+    Ok(())
+}
