@@ -71,6 +71,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::Npm,
             adapter: Box::new(halyard_eco_npm::NpmAdapter::new()),
         },
+        // M8 step 1 (ADR-0056): the pypi adapter joins the fixed
+        // dispatch order after npm (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::PyPi,
+            adapter: Box::new(halyard_eco_pypi::PyPiAdapter::new()),
+        },
     ]
 }
 
@@ -82,7 +88,8 @@ fn adapters() -> Vec<AdapterEntry> {
 pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static CARGO: halyard_eco_cargo::CargoAdapter = halyard_eco_cargo::CargoAdapter;
     static NPM: halyard_eco_npm::NpmAdapter = halyard_eco_npm::NpmAdapter;
-    vec![&CARGO, &NPM]
+    static PYPI: halyard_eco_pypi::PyPiAdapter = halyard_eco_pypi::PyPiAdapter;
+    vec![&CARGO, &NPM, &PYPI]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -310,8 +317,10 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
         let is_manifest = rel == "Cargo.toml"
             || rel == "package.json"
             || rel == "pnpm-workspace.yaml"
+            || rel == "pyproject.toml"
             || rel.ends_with("/Cargo.toml")
-            || rel.ends_with("/package.json");
+            || rel.ends_with("/package.json")
+            || rel.ends_with("/pyproject.toml");
         if !is_manifest {
             continue;
         }
