@@ -535,9 +535,13 @@ fn release_row(
     // The npm publish options ride the npm contract only (ADR-0033): a
     // cargo release never carries them, and an unset npm option stays
     // `None` (the spawned tool's own posture governs — no flag is
-    // invented).
+    // invented). PyPI releases ride the default index (uv's own
+    // posture; M8 step 1, ADR-0056) and never carry the npm options —
+    // custom-index routing is the recorded-open config-surface
+    // remainder of the M8 row.
     let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
         Ecosystem::Cargo => (cfg.publish_cargo_registry.clone(), None, None),
+        Ecosystem::PyPi => ("pypi".to_owned(), None, None),
         _ => (
             cfg.publish_npm_registry.clone(),
             cfg.publish_npm_access.clone(),
