@@ -5,7 +5,7 @@ discovery orchestrator / graph module
 
 ## What it means
 
-The repository contains neither a workspace nor a package: no root `[package]`/`[workspace]` in `Cargo.toml`, no root `package.json`, no root `pyproject.toml` and no root `go.mod`/`go.work`.
+The repository contains neither a workspace nor a package: no root `[package]`/`[workspace]` in `Cargo.toml`, no root `package.json`, no root `pyproject.toml`, no root `go.mod`/`go.work` and no root `pom.xml`.
 
 ## Cause
 
@@ -18,6 +18,6 @@ Run in the repository root, or add a root manifest. `halyard plan` needs at leas
 ## Command
 
 ```bash
-ls Cargo.toml package.json pyproject.toml go.mod go.work
+ls Cargo.toml package.json pyproject.toml go.mod go.work pom.xml
 pwd
 ```
