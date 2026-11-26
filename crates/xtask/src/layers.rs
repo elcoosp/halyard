@@ -213,6 +213,13 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&["semver"]),
     },
+    // M8 (ADR-0058): the maven adapter owns the pom.xml subset grammar
+    // over a hand-rolled scanner; no workspace deps beyond core.
+    LayerRule {
+        name: "halyard-eco-maven",
+        workspace: &["halyard-core"],
+        external: Some(&["semver"]),
+    },
     // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
     // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
     // parallel parse uses scoped std threads until budgets demand more.
@@ -224,6 +231,7 @@ const RULES: &[LayerRule] = &[
             "halyard-eco-npm",
             "halyard-eco-pypi",
             "halyard-eco-gomod",
+            "halyard-eco-maven",
         ],
         external: Some(&["ignore"]),
     },
@@ -405,6 +413,7 @@ mod tests {
             "halyard-eco-npm",
             "halyard-eco-pypi",
             "halyard-eco-gomod",
+            "halyard-eco-maven",
             "halyard-edit",
             "halyard-forge",
             "halyard-forge-bitbucket",
