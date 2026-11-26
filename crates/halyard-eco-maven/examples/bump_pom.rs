@@ -32,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // carries the edit site the plan's patch aims at.
     let mut ctx = DiscoverCtx::new();
     ctx.insert_file("pom.xml", POM.as_bytes().to_vec());
-    let row = &MavenAdapter::new().discover(&ctx)?[0];
+    let rows = MavenAdapter::new().discover(&ctx)?;
+    let row = rows.first().ok_or("the fixture discovers one row")?;
     let site = row
         .version_site
         .as_ref()
@@ -40,24 +41,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "discovered {} @ {:?} — edit site {} spans {:?}",
         row.name,
-        row.version.as_ref().map(|v| v.to_string()),
+        row.version.as_ref().map(std::string::ToString::to_string),
         site.file,
         site.spans
     );
 
     // The plan's own-version patch: swap 1.2.3 → 1.3.0 (a feat bump).
     let file = RelPath::new("pom.xml").ok_or("fixture path")?;
-    let span = site.spans[0];
+    let Some(span) = site.spans.first().copied() else {
+        return Err("the version site carries a span".into());
+    };
     let patches = [PlanPatch {
         start: span.start,
         end: span.end,
         text: "1.3.0".to_owned(),
     }];
     let outcome = MavenAdapter::new().edit_versions(&file, POM.as_bytes(), &patches)?;
-    println!(
-        "\nthe patch applied: {} value swapped, {} already carried",
-        outcome.applied, outcome.skipped
-    );
+    let (applied, skipped) = (outcome.applied, outcome.skipped);
+    println!("\nthe patch applied: {applied} value swapped, {skipped} already carried");
     let bumped = String::from_utf8(outcome.content)?;
     println!("\n--- the bumped pom (only the value changed) ---\n{bumped}");
 
@@ -69,10 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         text: "1.3.1".to_owned(),
     }];
     match MavenAdapter::new().edit_versions(&file, POM.as_bytes(), &off_row) {
-        Err(failure) => println!(
-            "\nthe off-row patch fails closed as expected: {} (E-EDIT-PATCHES)",
-            failure
-        ),
+        Err(failure) => {
+            println!("\nthe off-row patch fails closed as expected: {failure} (E-EDIT-PATCHES)")
+        }
         Ok(_) => println!("\nunreachable: an off-row span cannot match"),
     }
     Ok(())
