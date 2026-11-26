@@ -343,7 +343,8 @@ fn map_lockfile_failure(failure: LockfileFailure) -> EditError {
 /// decides the ecosystem; unclaimed manifests (workspace roots) fall back
 /// to the file-name convention (`Cargo.toml` → `cargo`, `package.json` →
 /// `npm`, `pyproject.toml` → `pypi`, `go.mod` → `go` — the tag-only
-/// adapter, whose edit seam fails closed, M8 ADR-0057).
+/// adapter, whose edit seam fails closed, M8 ADR-0057, `pom.xml` →
+/// `maven` — the semantic version patch, M8 ADR-0058).
 fn adapter_for<'a>(
     workspace: &Workspace,
     file: &RelPath,
@@ -360,6 +361,7 @@ fn adapter_for<'a>(
                 "package.json" => Some("npm"),
                 "pyproject.toml" => Some("pypi"),
                 "go.mod" => Some("go"),
+                "pom.xml" => Some("maven"),
                 _ => None,
             }
             .map(str::to_owned)
