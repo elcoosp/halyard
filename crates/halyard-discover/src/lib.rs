@@ -4,7 +4,8 @@
 //!
 //! 1. [`discover_repo`] walks the repository (respecting `.gitignore`,
 //!    pruning `target/` / `node_modules/` / `.git/`), reads every manifest
-//!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`) into a
+//!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`,
+//!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`) into a
 //!    [`DiscoverCtx`]; no subprocess is ever spawned (invariant I6).
 //! 2. [`discover_from_ctx`] (pure) dispatches to the registered
 //!    [`EcosystemAdapter`]s in fixed order, merges the [`RawPackage`]
@@ -83,6 +84,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::Go,
             adapter: Box::new(halyard_eco_gomod::GoModAdapter::new()),
         },
+        // M8 (ADR-0058): the maven adapter joins the fixed dispatch
+        // order after go (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::Maven,
+            adapter: Box::new(halyard_eco_maven::MavenAdapter::new()),
+        },
     ]
 }
 
@@ -96,7 +103,8 @@ pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static NPM: halyard_eco_npm::NpmAdapter = halyard_eco_npm::NpmAdapter;
     static PYPI: halyard_eco_pypi::PyPiAdapter = halyard_eco_pypi::PyPiAdapter;
     static GO: halyard_eco_gomod::GoModAdapter = halyard_eco_gomod::GoModAdapter;
-    vec![&CARGO, &NPM, &PYPI, &GO]
+    static MAVEN: halyard_eco_maven::MavenAdapter = halyard_eco_maven::MavenAdapter;
+    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -328,10 +336,12 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
             || rel == "pyproject.toml"
             || rel == "go.mod"
             || rel == "go.work"
+            || rel == "pom.xml"
             || rel.ends_with("/Cargo.toml")
             || rel.ends_with("/package.json")
             || rel.ends_with("/pyproject.toml")
-            || rel.ends_with("/go.mod");
+            || rel.ends_with("/go.mod")
+            || rel.ends_with("/pom.xml");
         if !is_manifest {
             continue;
         }
