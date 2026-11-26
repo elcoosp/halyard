@@ -17,6 +17,10 @@
 //!   "conditional GET"): a JSON object whose `versions` maps version
 //!   strings to objects (verified live, including unencoded scoped
 //!   names like `@angular/common`).
+//! * [`PyPi`] — the `PyPI` JSON API (`pypi.org/pypi/<name>/json`, M8
+//!   step 2, ADR-0056): a JSON object whose `releases` maps version
+//!   strings to upload rows (verified live against pypi.org; the
+//!   per-version endpoint answers 404 for an unpublished version).
 //!
 //! Status semantics, fail-closed (§15.4 "errors teach"): a `404` means
 //! *not published* (both registries 404 a missing package — verified
@@ -291,6 +295,106 @@ impl Registry for Npm {
                 message: "the packument carries no versions map".to_owned(),
             })?;
         Ok(versions.get(version).is_some())
+    }
+}
+
+/// The `PyPI` JSON-API client (M8 step 2, §13, ADR-0056): one GET per
+/// probe over `pypi.org/pypi/<name>/json` — the JSON document's
+/// `releases` object maps version strings to upload rows (verified live
+/// against pypi.org; `docs/research/pypi-uv-grammars.md` §7). The
+/// contract mirrors [`Npm`]: `404` ⇒ not published, a matching release
+/// row ⇒ published, everything else fail-closed (`E-REG-*`).
+pub struct PyPi {
+    transport: Arc<dyn HttpTransport>,
+    registry_base: String,
+}
+
+impl PyPi {
+    /// A client over `transport` probing the real `PyPI` JSON API.
+    #[must_use]
+    pub fn new(transport: Arc<dyn HttpTransport>) -> Self {
+        Self::with_registry_base(transport, "https://pypi.org")
+    }
+
+    /// A client probing a different JSON-API base (contract tests,
+    /// private mirrors).
+    #[must_use]
+    pub fn with_registry_base(transport: Arc<dyn HttpTransport>, registry_base: &str) -> Self {
+        Self {
+            transport,
+            registry_base: registry_base.trim_end_matches('/').to_owned(),
+        }
+    }
+
+    /// The JSON-API URL of `name` (the normalized `PyPA` identity — the
+    /// caller passes the discovery-normalized name; the URL rides it
+    /// verbatim, the same unencoded convention the npm probe records).
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError::Name`] when `name` is not a valid `PyPI` project
+    /// name (empty, whitespace, or a character outside the
+    /// name-normalization grammar) — the probe never sends an invalid
+    /// name.
+    pub fn probe_url(&self, name: &str) -> Result<String, RegistryError> {
+        validate_pypi_name(name)?;
+        let base = self.registry_base.as_str();
+        Ok(format!("{base}/pypi/{name}/json"))
+    }
+}
+
+impl Registry for PyPi {
+    fn published(&self, name: &str, version: &str) -> Result<bool, RegistryError> {
+        let url = self.probe_url(name)?;
+        let response = self.transport.execute(HttpRequest {
+            method: "GET",
+            url,
+            headers: Vec::new(),
+            body: None,
+        })?;
+        if response.status == 404 {
+            return Ok(false);
+        }
+        if response.status != 200 {
+            return Err(RegistryError::Protocol {
+                message: format!(
+                    "the registry answered {} for {name} (expected 200 or 404)",
+                    response.status
+                ),
+            });
+        }
+        let document: serde_json::Value =
+            serde_json::from_str(&response.body).map_err(|e| RegistryError::Protocol {
+                message: format!("the JSON API document is not JSON: {e}"),
+            })?;
+        let releases = document
+            .get("releases")
+            .ok_or_else(|| RegistryError::Protocol {
+                message: "the JSON API document carries no releases map".to_owned(),
+            })?;
+        Ok(releases.get(version).is_some())
+    }
+}
+
+/// `PyPI` project-name validation (the name-normalization grammar, M8
+/// step 2): ASCII letters/digits plus `.`, `_`, `-`, starting and ending
+/// with a letter or number — the identity both uv and `PyPI` match on.
+fn validate_pypi_name(name: &str) -> Result<(), RegistryError> {
+    let valid = !name.is_empty()
+        && !name.chars().any(char::is_whitespace)
+        && name.chars().next().is_some_and(char::is_alphanumeric)
+        && name.chars().last().is_some_and(char::is_alphanumeric)
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(RegistryError::Name {
+            message: format!(
+                "{name:?} is not a valid `PyPI` project name (ASCII letters, digits, '.', '_'                  and '-', starting and ending with a letter or digit) — the probe never sends                  an invalid name"
+            ),
+        })
     }
 }
 
