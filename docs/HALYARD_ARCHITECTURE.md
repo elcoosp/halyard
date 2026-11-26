@@ -281,6 +281,7 @@ halyard/
 │  ├─ halyard-discover/    topology + manifests → Workspace
 │  ├─ halyard-eco-cargo/   EcosystemAdapter for Cargo (toml_edit spans, Cargo.lock patcher)
 │  ├─ halyard-eco-npm/     EcosystemAdapter for npm/pnpm (JSON spans, pnpm-lock handling)
+│  ├─ halyard-eco-pypi/    EcosystemAdapter for PyPI/uv (toml_edit spans, PEP 440 strategy, M8 step 1+2)
 │  ├─ halyard-git/         gix integration: refs, painter walk, trie tree-diff, fetch planner
 │  ├─ halyard-cache/       persistent mmap per-commit cache (only crate permitted `unsafe`)
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
@@ -288,7 +289,7 @@ halyard/
 │  ├─ halyard-forge/       trait Forge + MemoryForge/PreviewForge + the §11.1 machine + transport vocabulary
 │  ├─ halyard-forge-github/ GitHub REST adapter (M4.1b) + App-JWT auth (M4.1c) + ureq transport
 │  ├─ halyard-forge-gitlab/ GitLab REST adapter (M7 step 1, ADR-0049) + ureq transport
-│  ├─ halyard-registry/    crates.io + npm clients (sparse index polling, existence checks)
+│  ├─ halyard-registry/    crates.io + npm + PyPI clients (sparse index polling, existence checks)
 │  ├─ halyard-publish/     topological publisher (layers, resume, visibility wait, auth + OIDC trusted publishing)
 │  ├─ halyard-config/      halyard.toml + JSON Schema, layered resolution, env overrides
 │  ├─ halyard-cli/         clap, miette, output formats (human/json/github-actions)
@@ -297,9 +298,13 @@ halyard/
 ├─ bench/  corpus/  fuzz/  docs/{adr,research,errors}/
 ```
 
-*(As-built note, 2026-11: the 20-member workspace is exactly this list
-minus the one remaining planned-but-unbuilt slot — `halyard-plugin-host`
-(Year 2) lands with its milestone and is absent rather than stubbed;
+*(As-built note, 2026-11-26 (ADR-0056): the 23-member workspace is
+this list plus the M8 step 1+2 adapter `halyard-eco-pypi` (PyPI/uv
+discovery + edit + publish argv, the registry's `PyPi` JSON-API probe
+joining the routing map); `halyard-forge-forgejo`/`-bitbucket` (ADR-0050/0051)
+and `halyard-forge-gitlab`'s M7 slices landed in their sessions. The
+one remaining planned-but-unbuilt slot — `halyard-plugin-host`
+(Year 2) — lands with its milestone and is absent rather than stubbed;
 `halyard-action` (the §12 action-output seam, ADR-0037) joined in its
 session; `docs/` carries `adr/`,
 `research/` and `errors/` — no `spec/` — and the `action/` directory
@@ -1121,6 +1126,21 @@ pipeline, the consumer in the composite action, both pinned to
 (`halyard-cyclonedx.json`, the shipped binary's crate graph). The
 live attested-release run (a real `v*` tag push) stays open —
 recorded, not silently re-scoped.)*
+
+*(As-built note, 2026-11-26 (ADR-0056): the M8 row's **PyPI** cell
+ships — step 1 the `halyard-eco-pypi` adapter (PEP 621 discovery over
+the uv workspace grammar, the PEP 440 strategy pairing canonical
+spellings with the semver-typed plan contract, byte-preserving
+`pyproject.toml` edits) and step 2 the publish half (the VERIFIED
+`uv publish` argv grammar, the `halyard_registry::PyPi` JSON-API probe
+registered under the plan contract's `pypi` registry name, the
+`UV_PUBLISH_TOKEN` auth arm, the `pypi` row in the doctor's
+publish-auth table). The cell's recorded-open remainders: the
+corpus-lane replay on 2 real repos (token/network-bound, the M7 lane
+discipline), the uv.lock lockfile half (the trait's documented
+`NeedsNative`/`Unsupported` declines stand), and the custom-index/
+trusted-publishing config surface (the plan schema is frozen, ADR-0055;
+the argv stays bare — uv's own posture governs).)*
 
 ### YEAR 3 — Moat & platform
 
