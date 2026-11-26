@@ -1,0 +1,28 @@
+[package]
+name = "halyard-eco-nuget"
+description = "EcosystemAdapter for NuGet: SDK-style .csproj discovery, PackageVersion/Version rows, semver-canonical versions (M8)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+halyard-core = { workspace = true }
+# Version parsing (the same crate core uses; §7.2 adapters carry no
+# workspace deps beyond core).
+semver = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "csproj_scan"
+harness = false
+
+[[bench]]
+name = "csproj_edit"
+harness = false
+
+[lints]
+workspace = true
