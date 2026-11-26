@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         println!(
             "    version: {:?} (source {:?})",
-            row.version.as_ref().map(|v| v.to_string()),
+            row.version.as_ref().map(std::string::ToString::to_string),
             row.version_source
         );
         if let Some(site) = &row.version_site {
