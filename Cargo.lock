@@ -1490,6 +1490,7 @@ dependencies = [
  "halyard-eco-gomod",
  "halyard-eco-maven",
  "halyard-eco-npm",
+ "halyard-eco-nuget",
  "halyard-eco-pypi",
  "halyard-edit",
  "halyard-forge",
@@ -1561,6 +1562,7 @@ dependencies = [
  "halyard-eco-gomod",
  "halyard-eco-maven",
  "halyard-eco-npm",
+ "halyard-eco-nuget",
  "halyard-eco-pypi",
  "halyard-test-support",
  "ignore",
@@ -1612,6 +1614,15 @@ dependencies = [
  "proptest",
  "semver",
  "tempfile",
+]
+
+[[package]]
+name = "halyard-eco-nuget"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "semver",
 ]
 
 [[package]]
