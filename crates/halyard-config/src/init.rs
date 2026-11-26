@@ -217,9 +217,9 @@ pub fn plan_init(survey: &InitSurvey, github: bool) -> Result<InitPlan, ConfigEr
         return Err(ConfigError::Init {
             path: ".".to_owned(),
             message: "discovery found no package manifests (looked for Cargo.toml, \
-                      package.json, pnpm-workspace.yaml, pyproject.toml and go.mod/go.work) — \
-                      halyard plans Cargo, npm/pnpm, PyPI/uv and Go repositories; run \
-                      `halyard init` from the repository root"
+                      package.json, pnpm-workspace.yaml, pyproject.toml, go.mod/go.work and \
+                      pom.xml) — halyard plans Cargo, npm/pnpm, PyPI/uv, Go and Maven \
+                      repositories; run `halyard init` from the repository root"
                 .to_owned(),
         });
     }
