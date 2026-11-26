@@ -282,6 +282,7 @@ halyard/
 │  ├─ halyard-eco-cargo/   EcosystemAdapter for Cargo (toml_edit spans, Cargo.lock patcher)
 │  ├─ halyard-eco-npm/     EcosystemAdapter for npm/pnpm (JSON spans, pnpm-lock handling)
 │  ├─ halyard-eco-pypi/    EcosystemAdapter for PyPI/uv (toml_edit spans, PEP 440 strategy, M8 step 1+2)
+│  ├─ halyard-eco-gomod/   EcosystemAdapter for Go modules (hand-rolled go.mod/go.work lexer, tag-only planning, subdir tags, M8)
 │  ├─ halyard-git/         gix integration: refs, painter walk, trie tree-diff, fetch planner
 │  ├─ halyard-cache/       persistent mmap per-commit cache (only crate permitted `unsafe`)
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
@@ -313,6 +314,21 @@ ADR-0052: `action/action.yml` + `.github/workflows/release.yml`,
 pinned to `halyard_action::distribution` by `cargo run -p xtask --
 check-release`).)*
 ```
+
+*(As-built note, 2026-11-26 (ADR-0057): the workspace's 24th member is
+the M8 **Go modules** adapter `halyard-eco-gomod` — the hand-rolled
+`go.mod`/`go.work` lexer (offset-preserving comment blanking, the
+VERIFIED grammar in `docs/research/go-module-grammars.md`), tag-only
+rows (`RawVersionSource::Tag`/`VersionSource::Tag`, no version site,
+`publishable = false`), the planner's tag-only materialization (the
+release base tag carries `from` per §8.2; `Ecosystem::is_tag_only()`
+gates the path, and `halyard_core::package::major_version_suffix`
+backs the `/vN` release guard the adapter re-exports), and the
+per-package subdir tag templates (`v{version}` at the root,
+`{dir}/v{version}` elsewhere — the shared appendix-A.3 grammar, no
+Go-specific syntax). A Go release row carries `publish: None` — the
+plan contract's no-registry-decision shape; there is no `go` registry
+name, publish-effect arm or auth arm to invent.)*
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
@@ -1141,6 +1157,27 @@ discipline), the uv.lock lockfile half (the trait's documented
 `NeedsNative`/`Unsupported` declines stand), and the custom-index/
 trusted-publishing config surface (the plan schema is frozen, ADR-0055;
 the argv stays bare — uv's own posture governs).)*
+
+*(As-built note, 2026-11-26 (ADR-0057): the M8 row's **Go modules**
+cell ships — the `halyard-eco-gomod` adapter (the §7.3 discovery
+subset at the VERIFIED go.mod/go.work grammar: `use`-directive
+workspaces with the root claimed only by `use .`, the single-module
+posture without a go.work, workspace-proven internal edges — a use
+member require or a local-path replace — and `ReqSpec::Other`
+verbatim requirements per ADR-0006), **tag-only planning** (the
+`Tag` version sources, the planner's tag-only materialization from
+the §8.2 release base tag, the zero-version initial release, the
+`major_version_suffix` release guard refusing below-major targets as
+recorded skips), and the **subdir tag shapes** (`v{version}` /
+`{dir}/v{version}` through the shared appendix-A.3 template grammar).
+The release half: Go rows carry `publish: None` (no registry decision
+exists — the publish engine's skip is pinned), the tag-target probe's
+explicit `go` arm (the documented HEAD fallback, now the adapter's own
+contract), and the apply shell's manifest map routes `go.mod` → the
+fail-closed tag-only edit seam. The cell's recorded-open remainders:
+the corpus-lane replay on 2 real repos (token/network-bound, the M7
+lane discipline), and the GOPROXY existence-probe arm (a tag-only
+ecosystem has no publish step to resume — unstarted, recorded).)*
 
 ### YEAR 3 — Moat & platform
 
