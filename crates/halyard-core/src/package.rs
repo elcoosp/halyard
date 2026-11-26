@@ -27,6 +27,14 @@ pub enum Ecosystem {
     /// for the module itself, versions are the repository's semantic
     /// version tags, and there is no registry publish step.
     Go,
+    /// Maven (`pom.xml` manifests, M8 — ADR-0058): the Maven/Gradle
+    /// cell's shipped half. Versions are manifest rows under Maven's own
+    /// `ComparableVersion` grammar — the adapter plans only the
+    /// semver-parseable spellings (ADR-0056's fail-closed discipline;
+    /// Maven qualifier forms like `1.2.3-SNAPSHOT` parse as semver), and
+    /// Maven Central publishing carries no argv grammar yet (the row
+    /// publishes as the engine's disabled shape).
+    Maven,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -34,14 +42,15 @@ pub enum Ecosystem {
 
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
-    /// `npm`, `pypi`, `go`, or the interner-resolved custom name
-    /// (`custom` for a foreign symbol).
+    /// `npm`, `pypi`, `go`, `maven`, or the interner-resolved custom
+    /// name (`custom` for a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
             Self::Npm => "npm",
             Self::PyPi => "pypi",
             Self::Go => "go",
+            Self::Maven => "maven",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
