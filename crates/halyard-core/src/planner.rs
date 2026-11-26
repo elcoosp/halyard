@@ -557,6 +557,11 @@ fn release_row(
             // at discovery keeps `enabled` false — the registry name is
             // truthful the day the argv arm flips it.
             Ecosystem::Maven => ("maven-central".to_owned(), None, None),
+            // NuGet rows ride the engine's disabled shape until the
+            // `dotnet` argv arm lands (ADR-0059): `publishable = false`
+            // at discovery keeps `enabled` false — the registry name is
+            // truthful the day the argv arm flips it.
+            Ecosystem::Nuget => ("nuget.org".to_owned(), None, None),
             _ => (
                 cfg.publish_npm_registry.clone(),
                 cfg.publish_npm_access.clone(),
