@@ -77,6 +77,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::PyPi,
             adapter: Box::new(halyard_eco_pypi::PyPiAdapter::new()),
         },
+        // M8 (ADR-0057): the go adapter joins the fixed dispatch order
+        // after pypi (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::Go,
+            adapter: Box::new(halyard_eco_gomod::GoModAdapter::new()),
+        },
     ]
 }
 
@@ -89,7 +95,8 @@ pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static CARGO: halyard_eco_cargo::CargoAdapter = halyard_eco_cargo::CargoAdapter;
     static NPM: halyard_eco_npm::NpmAdapter = halyard_eco_npm::NpmAdapter;
     static PYPI: halyard_eco_pypi::PyPiAdapter = halyard_eco_pypi::PyPiAdapter;
-    vec![&CARGO, &NPM, &PYPI]
+    static GO: halyard_eco_gomod::GoModAdapter = halyard_eco_gomod::GoModAdapter;
+    vec![&CARGO, &NPM, &PYPI, &GO]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -224,6 +231,7 @@ fn register_package(
             }
         }
         RawVersionSource::Dynamic => VersionSource::Dynamic,
+        RawVersionSource::Tag => VersionSource::Tag,
     };
     let name_sym = workspace.intern(&row.name);
     let pkg = Package {
@@ -318,9 +326,12 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
             || rel == "package.json"
             || rel == "pnpm-workspace.yaml"
             || rel == "pyproject.toml"
+            || rel == "go.mod"
+            || rel == "go.work"
             || rel.ends_with("/Cargo.toml")
             || rel.ends_with("/package.json")
-            || rel.ends_with("/pyproject.toml");
+            || rel.ends_with("/pyproject.toml")
+            || rel.ends_with("/go.mod");
         if !is_manifest {
             continue;
         }
