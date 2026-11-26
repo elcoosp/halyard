@@ -167,3 +167,63 @@ fn apply_rewrites_the_pom_version_of_a_maven_workspace() -> Result<(), BoxError>
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0059): the nuget lane — the semantic in-place csproj edit. The
+// plan's own-version patch lands on the element pack consumes
+// (`PackageVersion` when present, else `Version`); the surrounding
+// markup never moves (I4).
+// ---------------------------------------------------------------------------
+
+/// A nuget SDK-style workspace: one project with a `PackageVersion` row,
+/// a feat commit driving the plan row (minor: 1.0.0 → 1.1.0).
+fn build_nuget_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    let scaffold = vec![(
+        "src/app/App.csproj".to_owned(),
+        concat!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n",
+            "  <PropertyGroup>\n",
+            "    <TargetFramework>net10.0</TargetFramework>\n",
+            "    <PackageId>Contoso.App</PackageId>\n",
+            "    <PackageVersion>1.0.0</PackageVersion>\n",
+            "  </PropertyGroup>\n",
+            "</Project>\n",
+        )
+        .to_owned(),
+    )];
+    fx.commit_with(&CommitSpec::files(
+        scaffold,
+        "chore: scaffold nuget workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// `halyard apply` rewrites the csproj's pack version in place: the
+/// value swaps 1.0.0 → 1.1.0 and every other byte of the project file
+/// is identical (I4).
+#[test]
+fn apply_rewrites_the_csproj_version_of_a_nuget_workspace() -> Result<(), BoxError> {
+    let fx = build_nuget_workspace("nuget-apply")?;
+    let (ok, out) = halyard(fx.root(), &["apply"])?;
+    assert!(ok, "apply failed: {out}");
+    let app = std::fs::read_to_string(fx.root().join("src/app/App.csproj"))?;
+    assert!(
+        app.contains("<PackageVersion>1.1.0</PackageVersion>"),
+        "the pack version moved: {app}"
+    );
+    assert!(
+        app.contains("    <TargetFramework>net10.0</TargetFramework>"),
+        "the surrounding markup never moves: {app}"
+    );
+    Ok(())
+}
