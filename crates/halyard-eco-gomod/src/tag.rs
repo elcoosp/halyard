@@ -31,20 +31,17 @@ use halyard_core::package::TagTemplate;
 ///
 /// Never: the built strings always carry one `{version}` placeholder and
 /// no other braces, so [`TagTemplate::parse`] cannot fail. The guarantee
-/// is pinned by the crate's contract tests.
+/// is pinned by the crate's contract tests; the impossible `Err` arm
+/// falls back to the workspace's independent default instead of
+/// panicking (the restriction lints forbid a panic outside tests).
 #[must_use]
 pub fn template_for(root: &str) -> TagTemplate {
-    if root.is_empty() {
-        return TagTemplate::parse("v{version}").unwrap_or_else(|_| unreachable_template());
-    }
-    let raw = format!("{root}/v{{version}}");
-    TagTemplate::parse(&raw).unwrap_or_else(|_| unreachable_template())
-}
-
-/// The construction guarantee is total; this is the documented fallaway
-/// if the guarantee were ever broken (it is pinned by tests).
-fn unreachable_template() -> TagTemplate {
-    TagTemplate::parse("v{version}").expect("the root fallback is a valid template")
+    let raw = if root.is_empty() {
+        "v{version}".to_owned()
+    } else {
+        format!("{root}/v{{version}}")
+    };
+    TagTemplate::parse(&raw).unwrap_or_else(|_| TagTemplate::independent_default())
 }
 
 #[cfg(test)]
