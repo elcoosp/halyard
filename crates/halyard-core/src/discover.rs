@@ -238,6 +238,8 @@ pub enum ManifestFormat {
     /// `go.mod` / `go.work` (the Go module line grammar, hand-written
     /// lexer, M8 ADR-0057).
     Gomod,
+    /// `pom.xml` (the Maven POM subset scanner, hand-written, M8 ADR-0058).
+    Pom,
 }
 
 /// Discovery errors (§15.4 `E-DISC-*`). Every variant carries a stable
@@ -346,7 +348,7 @@ impl std::fmt::Display for DiscoverError {
             Self::NoPackage => write!(
                 f,
                 "no package or workspace found: expected a Cargo.toml with [package]/[workspace], \
-                 a package.json, a pyproject.toml or a go.mod at the repository root"
+                 a package.json, a pyproject.toml, a go.mod or a pom.xml at the repository root"
             ),
             Self::Duplicate {
                 name,
