@@ -171,6 +171,13 @@ pub fn variables_for(target: &PublishTarget) -> Vec<String> {
         // is the canonical candidate, `NODE_AUTH_TOKEN` the
         // actions/setup-node convention. First present wins.
         "npm" => vec!["NPM_TOKEN".to_owned(), "NODE_AUTH_TOKEN".to_owned()],
+        // M8 step 2 (ADR-0056): `uv publish` documents
+        // `UV_PUBLISH_TOKEN` as the token variable (`-t, --token`,
+        // env `UV_PUBLISH_TOKEN` — research note §2); the
+        // username/password pair is the recorded-open remainder (a
+        // second credential shape needs its own ADR-0019-conformant
+        // resolution).
+        "pypi" => vec!["UV_PUBLISH_TOKEN".to_owned()],
         _ => Vec::new(),
     }
 }
