@@ -552,6 +552,11 @@ fn release_row(
         let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
             Ecosystem::Cargo => (cfg.publish_cargo_registry.clone(), None, None),
             Ecosystem::PyPi => ("pypi".to_owned(), None, None),
+            // Maven rows ride the engine's disabled shape until the
+            // `mvn` argv arm lands (ADR-0058 D5): `publishable = false`
+            // at discovery keeps `enabled` false — the registry name is
+            // truthful the day the argv arm flips it.
+            Ecosystem::Maven => ("maven-central".to_owned(), None, None),
             _ => (
                 cfg.publish_npm_registry.clone(),
                 cfg.publish_npm_access.clone(),
