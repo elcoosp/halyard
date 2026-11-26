@@ -17,7 +17,7 @@ use halyard_eco_gomod::GoModAdapter;
 
 const GO_WORK: &str = "go 1.23.0\n\nuse (\n\t.\n\t./api\n\t./libs/metrics\n)\n\nreplace example.com/external/sdk => ./vendor/sdk\n";
 
-const ROOT_GOMOD: &str = r#"module example.com/halyard
+const ROOT_GOMOD: &str = r"module example.com/halyard
 
 go 1.23.0
 
@@ -25,19 +25,19 @@ require (
 	example.com/halyard/api v0.1.2
 	example.com/external/sdk v1.4.0
 )
-"#;
+";
 
-const API_GOMOD: &str = r#"module example.com/halyard/api
+const API_GOMOD: &str = r"module example.com/halyard/api
 
 go 1.23.0
 
 require example.com/halyard/libs/metrics/v2 v2.1.0
-"#;
+";
 
-const METRICS_GOMOD: &str = r#"module example.com/halyard/libs/metrics/v2
+const METRICS_GOMOD: &str = r"module example.com/halyard/libs/metrics/v2
 
 go 1.23.0
-"#;
+";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The fixture workspace: the repo-root module plus two subdir
@@ -82,9 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }];
     match GoModAdapter::new().edit_versions(&file, API_GOMOD.as_bytes(), &patches) {
         Err(failure) => println!(
-            "\nthe patch fails closed as expected: {} (E-EDIT-PATCHES) — a go.mod has no \
-             version row",
-            failure
+            "\nthe patch fails closed as expected: {failure} (E-EDIT-PATCHES) — a go.mod \
+             has no version row",
         ),
         Ok(_) => println!("\nunreachable: a tag-only manifest has no editable row"),
     }
