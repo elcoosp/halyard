@@ -36,3 +36,7 @@ ship.toml
 
 # mdBook render output (the gate + CI render the book; the HTML is a build artifact)
 /docs/site/book
+
+# Added by the M8 session: the ship manifest and the PR body stay local.
+ship.toml
+.github/pr-body.md
