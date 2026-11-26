@@ -2177,6 +2177,7 @@ impl ManifestVersionProbe for ShellProbe {
         match ecosystem {
             "cargo" => halyard_eco_cargo::manifest_version(manifest),
             "npm" => halyard_eco_npm::manifest_version(manifest),
+            "pypi" => halyard_eco_pypi::manifest_version(manifest),
             _ => None,
         }
     }
