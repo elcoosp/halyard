@@ -1470,3 +1470,90 @@ fn publish_dry_records_disabled_for_a_maven_workspace() -> Result<(), BoxError> 
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0059): the nuget lane — the publish posture. A nuget release
+// carries a publish decision with the engine's disabled shape: the row
+// records `publish_disabled` (no nuget publish grammar exists — no
+// `dotnet` argv arm, no registry probe, no auth arm), zero targets, no
+// tool spawn.
+// ---------------------------------------------------------------------------
+
+/// A nuget SDK-style workspace: one project with a `PackageVersion`
+/// row, a feat commit driving the plan row.
+fn build_nuget_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "src/app/App.csproj".to_owned(),
+                concat!(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n",
+                    "<Project Sdk=\"Microsoft.NET.Sdk\">\n",
+                    "  <PropertyGroup>\n",
+                    "    <TargetFramework>net10.0</TargetFramework>\n",
+                    "    <PackageId>Contoso.App</PackageId>\n",
+                    "    <PackageVersion>1.0.0</PackageVersion>\n",
+                    "  </PropertyGroup>\n",
+                    "</Project>\n",
+                )
+                .to_owned(),
+            ),
+            (
+                "halyard.toml".to_owned(),
+                "[publish]\nenabled = true\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold nuget workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "src/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// The dry forecast for a nuget workspace: zero publish targets, the
+/// release recorded as a `publish_disabled` skip (the row's publish
+/// decision carries the engine's disabled shape — `registry` names the
+/// canonical nuget.org, `enabled` is false until the argv arm lands),
+/// and a successful offline run.
+#[test]
+fn publish_dry_records_disabled_for_a_nuget_workspace() -> Result<(), BoxError> {
+    let fx = build_nuget_workspace("nuget-dry")?;
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+    )?;
+    assert!(out.status.success(), "the nuget forecast succeeded: {text}");
+    let value: serde_json::Value = serde_json::from_str(
+        text.trim_start_matches(char::is_whitespace)
+            .trim_start_matches(|c: char| c != '{'),
+    )
+    .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
+    assert_eq!(
+        value.get("targets").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero publish targets: {text}"
+    );
+    let skips = value
+        .get("not_targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("not_targets is an array")?;
+    let member = skips
+        .iter()
+        .find(|row| row.get("package").and_then(serde_json::Value::as_str) == Some("Contoso.App"))
+        .ok_or("the nuget release is recorded as a skip")?;
+    assert_eq!(
+        member.get("reason").and_then(serde_json::Value::as_str),
+        Some("publish_disabled"),
+        "the disabled-shape skip reason: {text}"
+    );
+    Ok(())
+}
