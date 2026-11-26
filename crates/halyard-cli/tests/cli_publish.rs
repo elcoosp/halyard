@@ -1363,3 +1363,110 @@ fn publish_dry_forecasts_no_registry_for_a_go_workspace() -> Result<(), BoxError
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0058): the maven lane — the publish posture. A maven release
+// carries a publish decision with the engine's disabled shape: the row
+// records `publish_disabled` (no maven publish grammar exists — no `mvn`
+// argv arm, no registry probe, no auth arm), zero targets, no tool
+// spawn.
+// ---------------------------------------------------------------------------
+
+/// A maven multi-module workspace: a root aggregator plus one member with
+/// its own version, a feat commit driving the member's plan row.
+fn build_maven_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "pom.xml".to_owned(),
+                concat!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                    "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n",
+                    "  <modelVersion>4.0.0</modelVersion>\n",
+                    "  <groupId>com.example</groupId>\n",
+                    "  <artifactId>halyard-mvn</artifactId>\n",
+                    "  <version>1.0.0</version>\n",
+                    "  <packaging>pom</packaging>\n",
+                    "  <modules>\n    <module>api</module>\n  </modules>\n",
+                    "</project>\n",
+                )
+                .to_owned(),
+            ),
+            (
+                "api/pom.xml".to_owned(),
+                concat!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                    "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n",
+                    "  <modelVersion>4.0.0</modelVersion>\n",
+                    "  <parent>\n",
+                    "    <groupId>com.example</groupId>\n",
+                    "    <artifactId>halyard-mvn</artifactId>\n",
+                    "    <version>1.0.0</version>\n",
+                    "  </parent>\n",
+                    "  <artifactId>halyard-mvn-api</artifactId>\n",
+                    "  <version>1.0.0</version>\n",
+                    "</project>\n",
+                )
+                .to_owned(),
+            ),
+        ],
+        "chore: scaffold maven workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("api/README.md".to_owned(), "member change\n".to_owned())],
+        "feat: the member changes",
+    ))?;
+    Ok(fx)
+}
+
+/// The dry forecast for a maven workspace: zero publish targets, the
+/// member recorded as a `publish_disabled` skip (the row's publish
+/// decision carries the engine's disabled shape — `registry` names the
+/// canonical maven-central, `enabled` is false until the argv arm
+/// lands), and a successful offline run.
+#[test]
+fn publish_dry_records_disabled_for_a_maven_workspace() -> Result<(), BoxError> {
+    let mut fx = build_maven_workspace("maven-dry")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+    )?;
+    assert!(out.status.success(), "the maven forecast succeeded: {text}");
+    let value: serde_json::Value = serde_json::from_str(
+        text.trim_start_matches(char::is_whitespace)
+            .trim_start_matches(|c: char| c != '{'),
+    )
+    .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
+    assert_eq!(
+        value.get("targets").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero publish targets: {text}"
+    );
+    let skips = value
+        .get("not_targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("not_targets is an array")?;
+    let member = skips
+        .iter()
+        .find(|row| {
+            row.get("package").and_then(serde_json::Value::as_str) == Some("halyard-mvn-api")
+        })
+        .ok_or("the maven release is recorded as a skip")?;
+    assert_eq!(
+        member.get("reason").and_then(serde_json::Value::as_str),
+        Some("publish_disabled"),
+        "the disabled-shape skip reason: {text}"
+    );
+    Ok(())
+}
