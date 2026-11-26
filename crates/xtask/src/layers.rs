@@ -198,12 +198,25 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&["semver"]),
     },
+    // M8 step 1 (ADR-0056): the pypi adapter owns the PEP 621/440/508
+    // grammars over the same span-accurate TOML parser the cargo
+    // adapter uses; no workspace deps beyond core.
+    LayerRule {
+        name: "halyard-eco-pypi",
+        workspace: &["halyard-core"],
+        external: Some(&["semver", "toml_edit"]),
+    },
     // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
     // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
     // parallel parse uses scoped std threads until budgets demand more.
     LayerRule {
         name: "halyard-discover",
-        workspace: &["halyard-core", "halyard-eco-cargo", "halyard-eco-npm"],
+        workspace: &[
+            "halyard-core",
+            "halyard-eco-cargo",
+            "halyard-eco-npm",
+            "halyard-eco-pypi",
+        ],
         external: Some(&["ignore"]),
     },
     // M2 git engine (ADR-0009): depends on core **and** the conventional
@@ -382,6 +395,7 @@ mod tests {
             "halyard-discover",
             "halyard-eco-cargo",
             "halyard-eco-npm",
+            "halyard-eco-pypi",
             "halyard-edit",
             "halyard-forge",
             "halyard-forge-bitbucket",
