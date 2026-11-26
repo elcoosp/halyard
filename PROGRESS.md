@@ -3422,3 +3422,126 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   available, (2) the M7 corpus-lane e2e and the live attested+signed
   release run (credentials/live CI), (3) the M2.6 dhat re-audit with
   the cache warm.
+
+### 2026-11-26 — The M8 NuGet cell (ADR-0059, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `60d2258` (the
+  M8 Maven session row). The reconciliation survey ran plan ↔ code ↔
+  history first: the recorded next-start items from the Maven session
+  were (1) the next M8 cell per plan order — **NuGet** — or the
+  PyPI/Go/Maven corpus replay (network-bound), (2) the M7 corpus-lane
+  e2e and the live attested+signed release run (credential-bound),
+  (3) the M2.6 dhat re-audit with the cache warm. The in-tree,
+  unclaimed seam is the M8 row's next cell per plan order — *NuGet* —
+  and its **missing-in-code** evidence: `grep -rni "nuget\|csproj"
+  crates/ --include="*.rs"` returns zero hits; no `halyard-eco-nuget`;
+  no nuget research note; `git log --oneline -50` carries no NuGet
+  work; `git branch -a` shows only the stale merged-ADR branches the
+  Go session recorded. M1 = the cell's discover/plan slice; M2 = the
+  same cell's edit/release half — both from the table, not invented,
+  following the PyPI/Go/Maven cells' own split.
+- **Grammar verification first.** `docs/research/nuget-grammars.md`
+  VERIFIED live against `learn.microsoft.com` (the NuGet
+  pack-and-restore MSBuild-target reference — the `PackageVersion` →
+  `$(Version)` resolution and the `PackageId` → `$(AssemblyName)`
+  identity chain, the pack-target property table and its inputs; the
+  package-versioning reference — SemVer 2.0.0 plus the normalization
+  rules and `NuGetVersion`'s "all accepted and equal" spellings; the
+  .NET project-SDK overview — the `Sdk` attribute and the top-level
+  `<Sdk>` element; the PackageReference page — the attribute-shaped
+  rows and the range grammar; the MSBuild customize-by-directory page —
+  the `Directory.Build.props`/`Directory.Build.targets` imports and
+  the overwrite-later rule).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_eco_nuget::NuGetAdapter` +
+  E0599 on `Ecosystem::Nuget`; the plan line the first test pins is
+  §17 M8's *"NuGet"* cell, quoted in the contract tests' module docs).
+  The green landed ADR-0059: the hand-rolled offset-preserving csproj
+  scanner (`ManifestFormat::Csproj`; the XML lexer discipline carries
+  over from the pom scanner — comments/PI/DOCTYPE/CDATA consumed in
+  place, a comment inside a captured value taints it unplanable — I4,
+  and attribute values capture verbatim with spans), the SDK-style
+  gate (the `Sdk` attribute or the top-level `<Sdk Name>` element; a
+  classic project file is consumed unmodeled, the orphan-manifest
+  posture), the documented identity chain (`PackageId` →
+  `$(AssemblyName)` → the manifest file stem), `Ecosystem::Nuget` in
+  core, the pack-slot version strategy (ADR-0056's discipline:
+  `PackageVersion` → `Version` per the pack target's resolution —
+  canonical spellings plan with an editable site; `1.0.0.0`, `1.0` and
+  the `VersionPrefix`/`VersionSuffix` composite are warned,
+  unpublishable, no site, never rewritten), the path-proven internal
+  edges (`<ProjectReference Include>` normalized against the tree —
+  a reference outside the tree refuses, a reference to a non-member
+  file warns; `<PackageReference>` stays registry-resolved), the
+  conditioned-value taints (conditions are evaluation semantics — a
+  conditioned `PropertyGroup`/property/item/reference is consumed
+  unmodeled with a warning; a conditioned `<Project>` declines the
+  whole file), the `Directory.Build.props`/`.targets` shared-import
+  warning (per project, the project file's own rows still plan), the
+  `IsPackable=false` warning, the wire-up: orchestrator dispatch + the
+  tree walk reading every `.csproj`, the planner's registry arm
+  (`nuget.org`), the xtask layer rule + member guard (26 crates ✓).
+  One scanner bug the tests caught mid-cycle: a self-closing
+  `<PackageReference/>`/`<ProjectReference/>` was dropped (the row
+  record is pre-initialized only for the element-body form — the
+  self-closing form now folds its attributes at open), pinned by the
+  now-green contract tests.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the edit contract against the interim fail-closed seam (the
+  go posture carried over M1): the three green-path edit tests failed
+  at red, green at the semantic patcher. The green: `edit_versions` —
+  the patch span must match the pack slot's value span
+  (`PackageVersion` when present, else `Version` — a patch aimed at
+  the `Version` span while `PackageVersion` owns the slot refuses),
+  the value's inner bytes swap right-to-left, the read-back verify
+  re-parses before acceptance (`E-EDIT-VERIFY`), the idempotent re-run
+  skips the already-carried target (I1), a slotless project refuses
+  (`E-EDIT-PATCHES`); the apply shell's manifest map routes
+  `*.csproj` → `nuget`; the tag-target probe's explicit `nuget` arm
+  (the semver-canonical pairing text); and the publish posture —
+  `publishable = false` at discovery, the planner's registry arm
+  naming `nuget.org`, the engine recording the `publish_disabled`
+  skip, no tool spawned (there is no dotnet publish step to shim —
+  the Maven D5 shape).
+- **Tests/bench/example totals.** M1: 4 grammar diag tests + 15
+  discovery contract tests + the planner gates
+  (`crates/halyard-core/tests/planner_nuget.rs`: the disabled publish
+  shape + the cargo control) + bench `csproj_scan` + example
+  `scan_csproj`; M2: 4 edit-seam unit tests + 7 edit contract tests +
+  the CLI e2e pair (`apply` rewrites the member csproj in place, the
+  surrounding markup byte-identical; `publish --dry` records the
+  `publish_disabled` skip) + bench `csproj_edit` + example
+  `bump_csproj`.
+- **Docs.** ADR-0059; research note
+  `docs/research/nuget-grammars.md` (VERIFIED quotes: the
+  pack-target property table, the versioning reference's normalization
+  and `NuGetVersion` passages, the SDK overview's declaration forms,
+  the customize-by-directory import/override rules); arch as-built
+  (crate tree row + the M8 row note); README (feature bullet,
+  workspace table row, examples list, the How-it-works adapter list
+  which had drifted behind go/maven); this section. No new error code
+  (discovery/edit reuse the `E-DISC-*`/`E-EDIT-*` pages;
+  `ManifestFormat` gains the `Csproj` variant its error reports name).
+- **Docs drift fixed (additive, not a milestone substitute):**
+  `E-DISC-NO-PACKAGE`'s Display and its `docs/errors/` page named
+  Cargo/package.json/pyproject/go/pom — `.csproj` joins now that a
+  nuget-only repository is plannable; `halyard init`'s no-manifests
+  refusal names all six families.
+- **Micro-debt scanned (nothing to convert):** `todo!()`/
+  `unimplemented!()` zero in the touched crates; `#[allow]`/`#[expect]`
+  zero; the zero-caller scan holds (no new symbol landed without a
+  caller or a test).
+- **Honest state at cut-off.** The `dotnet pack`/`dotnet nuget push`
+  publish argv arm stays recorded-open (no verified argv grammar in
+  this lane — `dotnet` is not installed here; the row carries the
+  engine's disabled shape), as do the nuget.org flat-container probe
+  arm, the non-`.csproj` project types (`vbproj`/`fsproj` — warned,
+  unmodeled), CPM (`Directory.Packages.props`) version resolution
+  (rows ride verbatim), and the corpus-lane replay on 2 real repos
+  (the M8 cell's acceptance-row half, network-bound, the M7 lane
+  discipline).
+- **Next session start point.** (1) the next M8 cell per plan order
+  (Dart/pub) or the PyPI/Go/Maven/NuGet corpus replay when a networked
+  lane is available, (2) the M7 corpus-lane e2e and the live
+  attested+signed release run (credentials/live CI), (3) the M2.6
+  dhat re-audit with the cache warm.
