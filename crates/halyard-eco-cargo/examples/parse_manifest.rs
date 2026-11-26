@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  version source: inherited from {file}#{key_path}");
             }
             RawVersionSource::Dynamic => println!("  version source: dynamic"),
+            RawVersionSource::Tag => println!("  version source: release tag"),
         }
         println!("  publishable: {}", pkg.publishable);
         for dep in &pkg.deps {
