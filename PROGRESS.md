@@ -3309,3 +3309,116 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   available, (2) the M7 corpus-lane e2e and the live attested+signed
   release run (credentials/live CI), (3) the M2.6 dhat re-audit with
   the cache warm.
+
+### 2026-11-26 — The M8 Maven cell (ADR-0058, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `6098726` (the
+  M8 Go-modules session row). The reconciliation survey ran plan ↔
+  code ↔ history first: the recorded next-start items from the Go
+  session were (1) the next M8 cell per plan order — **Maven/Gradle** —
+  or the PyPI/Go corpus replay (network-bound), (2) the M7 corpus-lane
+  e2e and the live attested+signed release run (credential-bound),
+  (3) the M2.6 dhat re-audit with the cache warm. The in-tree,
+  unclaimed seam is the M8 row's next cell per plan order —
+  *Maven/Gradle* — and its **missing-in-code** evidence:
+  `grep -rni "maven\|gradle" crates/ --include="*.rs"` returns zero
+  hits; no `halyard-eco-maven`; no maven research note; `git log
+  --oneline -50` carries no Maven work; `git branch -a` shows only the
+  stale merged-ADR branches the Go session recorded. M1 = the cell's
+  Maven discover/plan slice; M2 = the same cell's edit/release half —
+  both from the table, not invented, following the PyPI/Go cells' own
+  split. The **Gradle** half is recorded-open (see Honest state).
+- **Grammar verification first.** `docs/research/maven-pom-grammars.md`
+  VERIFIED live against `maven.apache.org/pom.html` and the
+  `maven-artifact` `ComparableVersion` javadoc (the coordinate identity
+  and the required-fields parenthetical, the inheritance list
+  (groupId, version, … inherited; artifactId not), the parent lookup's
+  coordinates-match rule and the `../pom.xml` default, the aggregation
+  grammar ("modules, which are relative paths to the directories or the
+  POM files of those projects") with the pom-packaging requirement and
+  the jar default, and the version-comparison grammar (arbitrary
+  strings, well-known qualifiers including `snapshot` — Maven's
+  comparator is not semver).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_eco_maven::MavenAdapter` +
+  E0599 on `Ecosystem::Maven`; the plan line the first test pins is
+  §17 M8's *"Maven/Gradle"* cell, quoted in the contract tests' module
+  docs). The green landed ADR-0058: the hand-rolled offset-preserving
+  pom.xml scanner (`ManifestFormat::Pom`; comments/PI/DOCTYPE/CDATA
+  consumed in place, a comment inside a captured value taints it
+  unplanable — I4), discovery at the documented shapes (recursive
+  `<modules>` aggregation, one-pom-one-owner listing, the
+  parent-coordinates match refusing mismatches, orphan poms skipped),
+  package identity = the `artifactId` (colon-free — git refnames carry
+  no `:`), `Ecosystem::Maven` in core, the semver-canonical version
+  strategy (ADR-0056's discipline: qualifier forms that parse as semver
+  — `1.2.3-SNAPSHOT` — plan verbatim; two-component `1.2` and
+  `${...}` property references are warned, unpublishable, no site,
+  never rewritten), parent inheritance through the existing
+  workspace-inheritance machinery (the aggregator's version, one edit
+  site on the aggregator pom), the coordinate-proven internal edges
+  (`<scope>test</scope>` → the dev edge), the wire-up: orchestrator
+  dispatch + the tree walk reading `pom.xml`, the planner's registry
+  arm (`maven-central`), the xtask layer rule + member guard (25
+  crates ✓). Two scanner bugs the tests caught mid-cycle: the
+  attribute scanner's quote-close arm did not advance the cursor (the
+  same quote byte toggled forever — the discovery fixtures spun), and
+  the close-tag skip double-counted the consumed `<` (mismatched-tag
+  errors); both pinned by the now-green contract tests.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the edit contract against the interim fail-closed seam (the
+  go posture carried over M1): the three edit tests failed at red,
+  green at the semantic patcher. The green: `edit_versions` — the
+  patch span must match the `<project>`-owned `<version>` value span
+  (a parent-block version is NOT a slot), the value's inner bytes swap
+  right-to-left, the read-back verify re-parses before acceptance
+  (`E-EDIT-VERIFY`), the idempotent re-run skips the already-carried
+  target (I1), inherited manifests carry no slot and refuse
+  (`E-EDIT-PATCHES`); the apply shell's manifest map routes
+  `pom.xml` → `maven`; the tag-target probe's explicit `maven` arm
+  (the semver-canonical pairing text); and the publish posture —
+  `publishable = false` at discovery, the planner's registry arm
+  naming `maven-central`, the engine recording the `publish_disabled`
+  skip, no tool spawned (there is no maven publish step to shim).
+- **Tests/bench/example totals.** M1: 3 grammar diag tests + 9
+  discovery contract tests + the planner gates
+  (`crates/halyard-core/tests/planner_maven.rs`: the disabled publish
+  shape + the cargo control) + bench `pom_scan` + example `scan_pom`;
+  M2: 6 edit-seam unit tests + 4 edit contract tests + the CLI e2e
+  pair (`apply` rewrites the member pom in place, the aggregator and
+  parent rows byte-identical; `publish --dry` records the
+  `publish_disabled` skip) + bench `pom_edit` + example `bump_pom`.
+- **Docs.** ADR-0058; research note
+  `docs/research/maven-pom-grammars.md` (VERIFIED quotes: pom.html's
+  coordinates/inheritance/parent/aggregation/packaging passages, the
+  `ComparableVersion` javadoc); arch as-built (crate tree row + the M8
+  row note); README (feature bullet, workspace table, examples list);
+  this section. No new error code (discovery/edit reuse the
+  `E-DISC-*`/`E-EDIT-*` pages; `ManifestFormat` gains the `Pom`
+  variant its error reports name).
+- **Docs drift fixed (additive, not a milestone substitute):**
+  `E-DISC-NO-PACKAGE`'s Display and its `docs/errors/` page named
+  Cargo/package.json/pyproject/go — `pom.xml` joins now that a
+  maven-only repository is plannable; `halyard init`'s no-manifests
+  refusal names all five families.
+- **Micro-debt scanned (nothing to convert):** `todo!()`/
+  `unimplemented!()` zero in the touched crates; `#[allow]`/`#[expect]`
+  zero; the zero-caller scan holds (no new symbol landed without a
+  caller or a test).
+- **Honest state at cut-off.** The **Gradle** half of the cell stays
+  recorded-open: a `build.gradle(.kts)` version is arbitrary
+  Groovy/Kotlin build code (an assignment, a closure, a
+  `gradle.properties` lookup, a plugin convention) — extracting one
+  without an evaluated, VERIFIED grammar would guess, and the
+  discipline forbids guessing. The corpus-lane replay on 2 real Maven
+  repos (the M8 cell's acceptance-row half) stays network-bound; the
+  `mvn deploy` publish argv arm stays unstarted (no VERIFIED argv
+  grammar yet — the row carries the engine's disabled shape,
+  recorded). Nested-aggregator `<module>` entries naming a nested POM
+  *file* are handled; `settings.xml`-level source overrides are out of
+  the shipped grammar (fail closed, recorded).
+- **Next session start point.** (1) the next M8 cell per plan order
+  (NuGet) or the PyPI/Go/Maven corpus replay when a networked lane is
+  available, (2) the M7 corpus-lane e2e and the live attested+signed
+  release run (credentials/live CI), (3) the M2.6 dhat re-audit with
+  the cache warm.
