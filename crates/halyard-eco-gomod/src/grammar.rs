@@ -101,24 +101,40 @@ fn blank_comments(text: &str) -> String {
     while i < bytes.len() {
         match bytes.get(i) {
             Some(b'/') if bytes.get(i + 1) == Some(&b'/') => {
-                while i < out.len() && out[i] != b'\n' {
-                    out[i] = b' ';
+                while i < out.len() {
+                    let Some(&byte) = out.get(i) else { break };
+                    if byte == b'\n' {
+                        break;
+                    }
+                    if let Some(slot) = out.get_mut(i) {
+                        *slot = b' ';
+                    }
                     i += 1;
                 }
             }
             Some(b'/') if bytes.get(i + 1) == Some(&b'*') => {
-                out[i] = b' ';
-                out[i + 1] = b' ';
+                if let Some(slot) = out.get_mut(i) {
+                    *slot = b' ';
+                }
+                if let Some(slot) = out.get_mut(i + 1) {
+                    *slot = b' ';
+                }
                 i += 2;
                 while i < out.len() {
                     if bytes.get(i) == Some(&b'*') && bytes.get(i + 1) == Some(&b'/') {
-                        out[i] = b' ';
-                        out[i + 1] = b' ';
+                        if let Some(slot) = out.get_mut(i) {
+                            *slot = b' ';
+                        }
+                        if let Some(slot) = out.get_mut(i + 1) {
+                            *slot = b' ';
+                        }
                         i += 2;
                         break;
                     }
-                    if out[i] != b'\n' {
-                        out[i] = b' ';
+                    if let Some(slot) = out.get_mut(i)
+                        && *slot != b'\n'
+                    {
+                        *slot = b' ';
                     }
                     i += 1;
                 }
@@ -140,15 +156,14 @@ fn tokens(line: &str, line_start: usize, file: &str) -> Result<Vec<Token>, Disco
     let bytes = line.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
-        match bytes[i] {
-            b' ' | b'\t' | b'\r' => i += 1,
-            b'"' | b'`' => {
-                let quote = bytes[i];
+        match bytes.get(i).copied() {
+            Some(b' ' | b'\t' | b'\r') => i += 1,
+            Some(quote @ (b'"' | b'`')) => {
                 let start = i;
                 i += 1;
                 let mut closed = false;
                 while i < bytes.len() {
-                    if bytes[i] == b'\\' && quote == b'"' && i + 1 < bytes.len() {
+                    if bytes.get(i) == Some(&b'\\') && quote == b'"' && i + 1 < bytes.len() {
                         i += 2;
                         continue;
                     }
