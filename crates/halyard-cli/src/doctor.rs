@@ -332,6 +332,19 @@ fn publish_auth_check() -> Check {
             access: None,
             provenance: None,
         },
+        // M8 step 2 (ADR-0056): the pypi lane joins the doctor's
+        // publish-auth table (UV_PUBLISH_TOKEN is the documented
+        // variable; absence is `ok` — the tool's own store governs).
+        halyard_publish::PublishTarget {
+            package: String::new(),
+            version: String::new(),
+            ecosystem: "pypi".to_owned(),
+            registry: "pypi".to_owned(),
+            manifest_dir: String::new(),
+            manifest: String::new(),
+            access: None,
+            provenance: None,
+        },
     ];
     match halyard_publish::auth_summary(&auth, &targets) {
         Ok(summary) => {
