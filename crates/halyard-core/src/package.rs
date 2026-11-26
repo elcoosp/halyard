@@ -19,19 +19,23 @@ pub enum Ecosystem {
     Cargo,
     /// npm / pnpm / yarn / bun (`package.json` family, §6.4).
     Npm,
+    /// Python / `PyPI` (`pyproject.toml` PEP 621 manifests, uv workspaces,
+    /// M8 step 1 — ADR-0056).
+    PyPi,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
 }
 
 impl Ecosystem {
-    /// Stable identifier used in plans and tag templates: `cargo`, `npm`,
-    /// or the interner-resolved custom name (`custom` for a foreign
-    /// symbol).
+    /// Stable identifier used in plans and tag templates: `cargo`,
+    /// `npm`, `pypi`, or the interner-resolved custom name (`custom` for
+    /// a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
             Self::Npm => "npm",
+            Self::PyPi => "pypi",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
