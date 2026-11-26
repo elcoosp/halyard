@@ -240,6 +240,9 @@ pub enum ManifestFormat {
     Gomod,
     /// `pom.xml` (the Maven POM subset scanner, hand-written, M8 ADR-0058).
     Pom,
+    /// `.csproj` (the `MSBuild` project-file subset scanner, hand-written,
+    /// M8 ADR-0059).
+    Csproj,
 }
 
 /// Discovery errors (§15.4 `E-DISC-*`). Every variant carries a stable
@@ -348,7 +351,8 @@ impl std::fmt::Display for DiscoverError {
             Self::NoPackage => write!(
                 f,
                 "no package or workspace found: expected a Cargo.toml with [package]/[workspace], \
-                 a package.json, a pyproject.toml, a go.mod or a pom.xml at the repository root"
+                 a package.json, a pyproject.toml, a go.mod, a pom.xml or a .csproj at the \
+                 repository root"
             ),
             Self::Duplicate {
                 name,
