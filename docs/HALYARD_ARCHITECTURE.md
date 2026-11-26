@@ -284,6 +284,7 @@ halyard/
 │  ├─ halyard-eco-pypi/    EcosystemAdapter for PyPI/uv (toml_edit spans, PEP 440 strategy, M8 step 1+2)
 │  ├─ halyard-eco-gomod/   EcosystemAdapter for Go modules (hand-rolled go.mod/go.work lexer, tag-only planning, subdir tags, M8)
 │  ├─ halyard-eco-maven/   EcosystemAdapter for Maven (hand-rolled pom.xml scanner, parent inheritance, semver-canonical versions, M8)
+│  ├─ halyard-eco-nuget/   EcosystemAdapter for NuGet (hand-rolled .csproj scanner, pack-slot versions, semver-canonical spellings, M8)
 │  ├─ halyard-git/         gix integration: refs, painter walk, trie tree-diff, fetch planner
 │  ├─ halyard-cache/       persistent mmap per-commit cache (only crate permitted `unsafe`)
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
@@ -352,6 +353,28 @@ half of the cell stays the recorded-open remainder (a
 `build.gradle(.kts)` version is arbitrary Groovy/Kotlin build code —
 extracting one without an evaluated, VERIFIED grammar would guess),
 with the corpus-lane replay and the `mvn deploy` argv arm.)*
+
+*(As-built note, 2026-11-26 (ADR-0059): the workspace's 26th member is
+the M8 **NuGet** cell — the `halyard-eco-nuget` adapter (the
+hand-rolled SDK-style `.csproj` scanner, the VERIFIED grammar in
+`docs/research/nuget-grammars.md` from `learn.microsoft.com`), the
+documented identity chain (`PackageId` → `$(AssemblyName)` → the
+manifest file stem), the pack-slot version strategy (`PackageVersion`
+→ `Version` per the pack target's documented resolution; the
+ADR-0056 fail-closed discipline — NuGet spellings like `1.0.0.0` and
+the `VersionPrefix`/`VersionSuffix` composite are warned and never
+rewritten), the path-proven internal edges (`<ProjectReference
+Include>` naming a member manifest; `<PackageReference>` stays
+registry-resolved), the conditioned-value taints (conditions are
+evaluation semantics — consumed unmodeled with warnings), the
+byte-preserving edit seam (read-back verified), the `*.csproj` routing
+in the apply manifest map, the tag-target probe's explicit `nuget`
+arm, and the publish posture: rows carry `publishable = false` until a
+`dotnet` argv grammar exists — the planner's registry arm names
+`nuget.org`, the engine records the `publish_disabled` skip, no tool
+is spawned. The `dotnet pack`/`dotnet nuget push` argv arm, the
+nuget.org probe, the non-`.csproj` project types and the corpus-lane
+replay stay the recorded-open remainders.)*
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
