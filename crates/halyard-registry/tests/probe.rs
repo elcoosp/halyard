@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use halyard_forge::transport::{HttpRequest, HttpResponse, MemoryTransport};
 use halyard_registry::{
-    CratesIo, Npm, Registry, RegistrySleeper, VisibilityPolicy, wait_until_visible,
+    CratesIo, Npm, PyPi, Registry, RegistrySleeper, VisibilityPolicy, wait_until_visible,
 };
 
 type BoxError = Box<dyn std::error::Error>;
@@ -249,4 +249,67 @@ fn visibility_wait_exhaustion_reports_not_visible() -> Result<(), BoxError> {
     // Three probes, two sleeps between them: base doubling, capped.
     assert_eq!(sleeper.recorded_ms(), vec![20, 40]);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// M8 step 2 (ADR-0056): the PyPI JSON-API probe — the same §13 step-2
+// idempotent-resume contract at the PyPI grammar (VERIFIED live:
+// `GET pypi.org/pypi/{name}/json` answers a `releases` map keyed by
+// version; the per-version endpoint answers 200/404).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pypi_probe_404_is_not_published() -> Result<(), BoxError> {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(404, "Not Found"));
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    assert!(!registry.published("halyard-nope", "1.0.0")?);
+    Ok(())
+}
+
+#[test]
+fn pypi_probe_release_row_is_published() -> Result<(), BoxError> {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(
+        200,
+        r#"{"info": {"name": "uv"}, "releases": {"0.13.9": [{"url": "..."}]}}"#,
+    ));
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    assert!(registry.published("uv", "0.13.9")?);
+    Ok(())
+}
+
+#[test]
+fn pypi_probe_missing_row_is_not_published() -> Result<(), BoxError> {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(
+        200,
+        r#"{"info": {"name": "uv"}, "releases": {"0.13.9": []}}"#,
+    ));
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    assert!(!registry.published("uv", "0.14.0")?);
+    Ok(())
+}
+
+#[test]
+fn pypi_probe_url_grammar_is_the_json_api() -> Result<(), BoxError> {
+    let transport = MemoryTransport::new();
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    assert_eq!(registry.probe_url("uv")?, "https://pypi.test/pypi/uv/json");
+    // Normalized names ride the URL verbatim (the PyPA identity uv and
+    // PyPI match on); a name outside the grammar never reaches the wire.
+    let transport = MemoryTransport::new();
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    let error = registry.probe_url("bad name").expect_err("invalid name");
+    assert_eq!(error.code(), "E-REG-NAME");
+    Ok(())
+}
+
+#[test]
+fn pypi_probe_non_json_answer_fails_closed() {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(200, "<html>502</html>"));
+    let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
+    let error = registry.published("uv", "0.13.9").expect_err("must fail");
+    assert_eq!(error.code(), "E-REG-PROTOCOL");
 }
