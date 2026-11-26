@@ -5,8 +5,9 @@
 //! 1. [`discover_repo`] walks the repository (respecting `.gitignore`,
 //!    pruning `target/` / `node_modules/` / `.git/`), reads every manifest
 //!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`,
-//!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`) into a
-//!    [`DiscoverCtx`]; no subprocess is ever spawned (invariant I6).
+//!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`, SDK-style
+//!    `.csproj`) into a [`DiscoverCtx`]; no subprocess is ever spawned
+//!    (invariant I6).
 //! 2. [`discover_from_ctx`] (pure) dispatches to the registered
 //!    [`EcosystemAdapter`]s in fixed order, merges the [`RawPackage`]
 //!    rows into a [`Workspace`] (interning names, resolving
@@ -90,6 +91,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::Maven,
             adapter: Box::new(halyard_eco_maven::MavenAdapter::new()),
         },
+        // M8 (ADR-0059): the nuget adapter joins the fixed dispatch
+        // order after maven (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::Nuget,
+            adapter: Box::new(halyard_eco_nuget::NuGetAdapter::new()),
+        },
     ]
 }
 
@@ -104,7 +111,8 @@ pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static PYPI: halyard_eco_pypi::PyPiAdapter = halyard_eco_pypi::PyPiAdapter;
     static GO: halyard_eco_gomod::GoModAdapter = halyard_eco_gomod::GoModAdapter;
     static MAVEN: halyard_eco_maven::MavenAdapter = halyard_eco_maven::MavenAdapter;
-    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN]
+    static NUGET: halyard_eco_nuget::NuGetAdapter = halyard_eco_nuget::NuGetAdapter;
+    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN, &NUGET]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -341,7 +349,10 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
             || rel.ends_with("/package.json")
             || rel.ends_with("/pyproject.toml")
             || rel.ends_with("/go.mod")
-            || rel.ends_with("/pom.xml");
+            || rel.ends_with("/pom.xml")
+            // M8 (ADR-0059): the nuget adapter owns the SDK-style
+            // `.csproj` grammar — every project file joins the walk.
+            || rel.ends_with(".csproj");
         if !is_manifest {
             continue;
         }
