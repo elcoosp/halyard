@@ -1278,3 +1278,88 @@ fn publish_dry_forecasts_a_pypi_uv_workspace() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0057): the go lane — tag-only. A go workspace publishes
+// NOTHING: the release rows carry no publish decision (`publish: None`),
+// the engine's documented skip records them as `no_publish_contract`,
+// zero targets exist, and no tool is spawned (there is no go publish
+// step to shim — the tag is the artifact).
+// ---------------------------------------------------------------------------
+
+/// A go workspace: a root module plus one subdir member (`go.work`), a
+/// feat commit driving the member's plan row. The manifests carry no
+/// version anywhere — the release tag is the version.
+fn build_go_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            ("go.work".to_owned(), "go 1.23.0\n\nuse (\n\t.\n\t./api\n)\n".to_owned()),
+            (
+                "go.mod".to_owned(),
+                "module example.com/halyard\n\ngo 1.23.0\n\nrequire example.com/halyard/api v0.0.0\n".to_owned(),
+            ),
+            (
+                "api/go.mod".to_owned(),
+                "module example.com/halyard/api\n\ngo 1.23.0\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold go workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![("api/README.md".to_owned(), "member change\n".to_owned())],
+        "feat: the member changes",
+    ))?;
+    Ok(fx)
+}
+
+/// The dry forecast for a go workspace: zero publish targets, the
+/// release recorded as a `no_publish_contract` skip (never
+/// `publish_disabled` — no publish decision exists to disable), and a
+/// successful offline run.
+#[test]
+fn publish_dry_forecasts_no_registry_for_a_go_workspace() -> Result<(), BoxError> {
+    let mut fx = build_go_workspace("go-dry")?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "halyard.toml".to_owned(),
+            "[publish]\nenabled = true\n".to_owned(),
+        )],
+        "chore: enable publishing",
+    ))?;
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+    )?;
+    assert!(out.status.success(), "the go forecast succeeded: {text}");
+    let value: serde_json::Value = serde_json::from_str(
+        text.trim_start_matches(char::is_whitespace)
+            .trim_start_matches(|c: char| c != '{'),
+    )
+    .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
+    assert_eq!(
+        value.get("targets").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero publish targets: {text}"
+    );
+    let skips = value
+        .get("not_targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("not_targets is an array")?;
+    let member = skips
+        .iter()
+        .find(|row| {
+            row.get("package").and_then(serde_json::Value::as_str)
+                == Some("example.com/halyard/api")
+        })
+        .ok_or("the go release is recorded as a skip")?;
+    assert_eq!(
+        member.get("reason").and_then(serde_json::Value::as_str),
+        Some("no_publish_contract"),
+        "the tag-only skip reason: {text}"
+    );
+    Ok(())
+}
