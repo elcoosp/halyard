@@ -63,6 +63,7 @@ cargo build --release
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
 - **PyPI/uv workspaces supported (M8 step 1+2)**: the same plan covers `pyproject.toml` PEP 621 projects in uv workspaces — `[tool.uv.sources]` workspace rows resolve like cargo path deps, the PEP 440 strategy plans canonical spellings (`1.2.3rc1` ⇄ `1.2.3-rc.1`) and fails closed on the recognized-but-non-canonical ones (epoch/post/dev/local, implicit segments — warned, unpublishable, never rewritten), `halyard publish` rides `uv publish` (the bare argv; `UV_PUBLISH_TOKEN` through the auth seam), and the PyPI JSON API backs the resume/visibility probes.
+- **Go modules supported (M8)**: the same plan covers `go.mod` modules and `go.work` workspaces — tag-only by the grammar's own shape (the manifest carries no version; the release tag does), `use`-directive members with workspace-proven internal edges, per-package subdir tag templates (`v{version}` at the root, `{dir}/v{version}` elsewhere) through the shared template grammar, and the `/vN` major-version rule enforced at planning (a module path declaring v2 never plans a v1 tag; the refused target is a recorded skip). A Go release carries no publish decision — the tag is the artifact.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
 - **Ship a release step, not a setup script**: the composite GitHub Action (`action/action.yml`) resolves the runner platform, downloads the pinned static release binary, verifies the checksum manifest **and** the build attestation **and** the cosign signature (`gh attestation verify` + `cosign verify-blob`, keyless, pinned to halyard's own workflow identity), caches by version, and execs `halyard action` — every piece pinned to one grammar by `cargo run -p xtask -- check-release`. The release pipeline (`/.github/workflows/release.yml`) signs every release asset keylessly and ships a signed CycloneDX SBOM of the shipped binary's dependency graph. GitLab pipelines include the same release step as a CI component (`templates/halyard.yml`), checksum-verified from the same release set.
 - **GitHub and GitLab and Forgejo/Gitea and Bitbucket supported**: the Release PR flow runs on GitHub, GitLab (M7 step 1), and Forgejo/Gitea — codeberg.org and gitea.com, self-hosted via `FORGEJO_API_URL` (M7 step 2) — MRs/pulls instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
@@ -87,6 +88,7 @@ The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE
 | `halyard-eco-cargo`    | Cargo adapter: discovery, manifest + lockfile patchers                |
 | `halyard-eco-npm`      | npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher             |
 | `halyard-eco-pypi`     | PyPI/uv adapter: PEP 621 discovery, PEP 440 strategy, pyproject edits |
+| `halyard-eco-gomod`    | Go adapter: go.mod/go.work discovery, tag-only planning, subdir tags  |
 | `halyard-git`          | gix engine: refs, history walk, tag phase, push, smart fetch          |
 | `halyard-cache`        | persistent mmap per-commit cache                                      |
 | `halyard-changelog`    | changelog styles, Release PR body, change-file grammar                |
@@ -142,6 +144,8 @@ cargo run -p halyard-forge --example content_commit
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-cli --example release_pipeline
 cargo run -p halyard-eco-pypi --example scan_pyproject
+cargo run -p halyard-eco-gomod --example scan_gomod
+cargo run -p halyard-eco-gomod --example plan_tags
 cargo run -p halyard-action --example auto_forecast
 cargo run -p halyard-action --example distribution_plan
 ```
