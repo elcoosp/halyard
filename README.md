@@ -62,13 +62,14 @@ cargo build --release
 - **Verified Release PRs**: the PR body embeds the plan (canonical JSON, DEFLATE, base64), so `halyard release` verifies the PR it releases matches the plan it computed.
 - **Conventional-commit native**: spec-compliant 1.0.0 parser (scopes, breaking-change footers, `(#NNN)` PR extraction, `fixup!`/`squash!` detection), plus optional `.halyard/changes/*.md` change files for squash-merge workflows.
 - **Affected-package selection**: `halyard affected` answers "which packages must rebuild and test?" and renders the answer in your CI's own grammar — turbo, nx, bazel, GitHub Actions, GitLab, Azure, TeamCity, CircleCI, Buildkite, Jenkins, Bitbucket, Drone.
+- **PyPI/uv workspaces supported (M8 step 1+2)**: the same plan covers `pyproject.toml` PEP 621 projects in uv workspaces — `[tool.uv.sources]` workspace rows resolve like cargo path deps, the PEP 440 strategy plans canonical spellings (`1.2.3rc1` ⇄ `1.2.3-rc.1`) and fails closed on the recognized-but-non-canonical ones (epoch/post/dev/local, implicit segments — warned, unpublishable, never rewritten), `halyard publish` rides `uv publish` (the bare argv; `UV_PUBLISH_TOKEN` through the auth seam), and the PyPI JSON API backs the resume/visibility probes.
 - **Migration path**: `halyard migrate` surveys release-please, changesets, knope, and release-plz configs, reports semantic differences, and writes a reviewed `halyard.toml` — create-only, so existing configs are never clobbered.
 - **Ship a release step, not a setup script**: the composite GitHub Action (`action/action.yml`) resolves the runner platform, downloads the pinned static release binary, verifies the checksum manifest **and** the build attestation **and** the cosign signature (`gh attestation verify` + `cosign verify-blob`, keyless, pinned to halyard's own workflow identity), caches by version, and execs `halyard action` — every piece pinned to one grammar by `cargo run -p xtask -- check-release`. The release pipeline (`/.github/workflows/release.yml`) signs every release asset keylessly and ships a signed CycloneDX SBOM of the shipped binary's dependency graph. GitLab pipelines include the same release step as a CI component (`templates/halyard.yml`), checksum-verified from the same release set.
 - **GitHub and GitLab and Forgejo/Gitea and Bitbucket supported**: the Release PR flow runs on GitHub, GitLab (M7 step 1), and Forgejo/Gitea — codeberg.org and gitea.com, self-hosted via `FORGEJO_API_URL` (M7 step 2) — MRs/pulls instead of PRs, the same §11.1 machine, backed by the shared forge conformance suite every adapter passes.
 
 ## How it works
 
-Halyard is a layered Rust workspace. `halyard-core` holds the pure types and the plan contract (no I/O); the parser, version algebra, and edit engine sit above it; ecosystem adapters (`halyard-eco-cargo`, `halyard-eco-npm`) and the git engine (`halyard-git`) sit above those; the forge, registry, publish, and action layers are driven through narrow seams (`Forge`, `Registry`, `PublishEffect`, `PublishAuth`, `ActionWriter`) so the real network adapters and the preview adapters are interchangeable. The layering is enforced by `cargo run -p xtask -- check-layers`.
+Halyard is a layered Rust workspace. `halyard-core` holds the pure types and the plan contract (no I/O); the parser, version algebra, and edit engine sit above it; ecosystem adapters (`halyard-eco-cargo`, `halyard-eco-npm`, `halyard-eco-pypi`) and the git engine (`halyard-git`) sit above those; the forge, registry, publish, and action layers are driven through narrow seams (`Forge`, `Registry`, `PublishEffect`, `PublishAuth`, `ActionWriter`) so the real network adapters and the preview adapters are interchangeable. The layering is enforced by `cargo run -p xtask -- check-layers`.
 
 The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE.md`](docs/HALYARD_ARCHITECTURE.md); progress is tracked in [`PROGRESS.md`](PROGRESS.md).
 
@@ -85,6 +86,7 @@ The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE
 | `halyard-discover`     | topology + manifests → workspace                                      |
 | `halyard-eco-cargo`    | Cargo adapter: discovery, manifest + lockfile patchers                |
 | `halyard-eco-npm`      | npm/pnpm adapter: discovery, JSON edit, pnpm-lock patcher             |
+| `halyard-eco-pypi`     | PyPI/uv adapter: PEP 621 discovery, PEP 440 strategy, pyproject edits |
 | `halyard-git`          | gix engine: refs, history walk, tag phase, push, smart fetch          |
 | `halyard-cache`        | persistent mmap per-commit cache                                      |
 | `halyard-changelog`    | changelog styles, Release PR body, change-file grammar                |
@@ -92,7 +94,7 @@ The full architecture and the milestone plan live in [`docs/HALYARD_ARCHITECTURE
 | `halyard-forge-github` | GitHub REST adapter + App-JWT auth                                    |
 | `halyard-forge-gitlab` | GitLab REST adapter (MR flow) — M7 step 1                             |
 | `halyard-forge-forgejo` | Forgejo/Gitea REST adapter (pull flow) — M7 step 2                   |
-| `halyard-registry`     | crates.io sparse index + npm packument probes                         |
+| `halyard-registry`     | crates.io sparse index + npm packument + PyPI JSON-API probes         |
 | `halyard-publish`      | publish engine: plan validation, topological layers, resume, auth     |
 | `halyard-action`       | GitHub Actions outputs over `GITHUB_OUTPUT`/`GITHUB_STEP_SUMMARY`     |
 | `halyard-cli`          | the `halyard` shell                                                   |
@@ -139,6 +141,7 @@ cargo run -p halyard-forge --example release_machine
 cargo run -p halyard-forge --example content_commit
 cargo run -p halyard-publish --example publish_plan
 cargo run -p halyard-cli --example release_pipeline
+cargo run -p halyard-eco-pypi --example scan_pyproject
 cargo run -p halyard-action --example auto_forecast
 cargo run -p halyard-action --example distribution_plan
 ```
