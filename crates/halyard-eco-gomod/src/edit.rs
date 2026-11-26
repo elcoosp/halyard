@@ -31,7 +31,13 @@ pub fn edit_versions(
             skipped: 0,
         });
     }
-    let first = &patches[0];
+    let Some(first) = patches.first() else {
+        return Ok(EditOutcome {
+            content: content.to_vec(),
+            applied: 0,
+            skipped: 0,
+        });
+    };
     Err(EditFailure::SpanMismatch {
         file: file.to_string(),
         start: first.start,
