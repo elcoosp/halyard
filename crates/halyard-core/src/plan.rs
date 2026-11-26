@@ -71,7 +71,13 @@ pub struct PlanRelease {
     /// changelog file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changelog: Option<PlanChangelog>,
-    /// Registry publishing decision for this release (§13).
+    /// Registry publishing decision for this release (§13). `None` when
+    /// no registry decision exists for the row: an unpublishable or
+    /// initial-state package, or a **tag-only** release (M8 Go,
+    /// ADR-0057 — the repository tag is the artifact; there is no
+    /// registry to decide about, and the publish engine's documented
+    /// skip keeps the row out of every forecast as
+    /// `no_publish_contract`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publish: Option<PlanPublish>,
 }
