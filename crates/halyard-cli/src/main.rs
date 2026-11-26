@@ -2169,7 +2169,9 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// pinpoint walk's manifest reads to the ecosystem adapters that own the
 /// grammars (§7.3 — the git engine never parses manifests). Ecosystems
 /// without an adapter (custom) carry no parsable version, so their
-/// targets keep the documented HEAD fallback.
+/// targets keep the documented HEAD fallback — as does the tag-only
+/// `go` ecosystem, by its adapter's own contract (M8 ADR-0057: a go.mod
+/// never carries a version, so there is nothing to pinpoint).
 struct ShellProbe;
 
 impl ManifestVersionProbe for ShellProbe {
@@ -2178,6 +2180,7 @@ impl ManifestVersionProbe for ShellProbe {
             "cargo" => halyard_eco_cargo::manifest_version(manifest),
             "npm" => halyard_eco_npm::manifest_version(manifest),
             "pypi" => halyard_eco_pypi::manifest_version(manifest),
+            "go" => halyard_eco_gomod::manifest_version(manifest),
             _ => None,
         }
     }
