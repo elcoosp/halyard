@@ -20,7 +20,7 @@ use halyard_publish::{
     AuthOutcome, PublishAuth, PublishEffect, PublishError, PublishTarget, TargetRouter,
     scrub_secrets,
 };
-use halyard_registry::{CratesIo, Npm, RegistrySleeper};
+use halyard_registry::{CratesIo, Npm, PyPi, RegistrySleeper};
 
 /// The production spawn effect: `dry` selects the tool's documented
 /// dry form (`cargo publish --dry-run --offline` / `pnpm publish
@@ -104,12 +104,17 @@ impl PublishEffect for SpawnPublishEffect {
                     halyard_eco_npm::pnpm_publish_args(self.dry, &options),
                 )
             }
+            // M8 step 2 (ADR-0056): the pypi adapter's grammar — bare
+            // argv (uv's own posture governs trusted publishing and the
+            // index); the token rides the auth seam's environment pair
+            // (UV_PUBLISH_TOKEN, the documented `--token` variable).
+            "pypi" => ("uv", halyard_eco_pypi::uv_publish_args(self.dry)),
             other => {
                 return Err(PublishError::Effect {
                     ecosystem: target.ecosystem.clone(),
                     message: format!(
                         "no publish tool grammar for ecosystem {other:?} — the adapter tables \
-                         cover cargo and npm (§13.4); extending one is an ADR"
+                         cover cargo, npm and pypi (§13.4); extending one is an ADR"
                     ),
                     retryable: false,
                 });
@@ -209,7 +214,11 @@ pub fn publish_router(
         Arc::new(UreqTransport::new());
     let mut router = TargetRouter::new()
         .with("crates.io", Arc::new(CratesIo::new(Arc::clone(&transport))))
-        .with("npm", Arc::new(Npm::new(Arc::clone(&transport))));
+        .with("npm", Arc::new(Npm::new(Arc::clone(&transport))))
+        // M8 step 2 (ADR-0056): the PyPI JSON-API probe joins the
+        // default routers under the plan contract's `pypi` registry
+        // name (the resume/visibility half of the acceptance row).
+        .with("pypi", Arc::new(PyPi::new(Arc::clone(&transport))));
     // Distinct target registry names, sorted (I3): the resolution reads
     // local files only, so the iteration order cannot change outcomes —
     // but a deterministic decline order keeps the refusal message
@@ -222,7 +231,7 @@ pub fn publish_router(
     names.dedup();
     let config_paths = halyard_eco_cargo::registry_config::cargo_config_paths(repo_root);
     for name in names {
-        if halyard_eco_cargo::is_default_registry(name) || name == "npm" {
+        if halyard_eco_cargo::is_default_registry(name) || name == "npm" || name == "pypi" {
             continue;
         }
         match halyard_eco_cargo::registry_config::registry_index(name, &config_paths) {
@@ -295,5 +304,50 @@ pub struct ThreadSleeper;
 impl RegistrySleeper for ThreadSleeper {
     fn sleep(&self, delay: Duration) {
         std::thread::sleep(delay);
+    }
+}
+
+#[cfg(test)]
+mod pypi_router_tests {
+    use super::*;
+    use halyard_publish::{PublishTarget, RegistryRouter};
+
+    /// The pypi target's registry (`pypi`) routes to the JSON-API probe
+    /// client (M8 step 2, ADR-0056): the default router registration
+    /// keeps the resume/visibility half of the M8 acceptance row
+    /// offline-testable (the registration, not the wire — the wire is
+    /// the `halyard_registry` contract suite's job).
+    #[test]
+    fn the_pypi_registry_name_routes_to_the_json_api_probe() {
+        let dir = std::env::temp_dir().join(format!("pypi-router-{}", std::process::id()));
+        let target = PublishTarget {
+            package: "p1".to_owned(),
+            version: "0.1.1".to_owned(),
+            ecosystem: "pypi".to_owned(),
+            registry: "pypi".to_owned(),
+            manifest_dir: String::new(),
+            manifest: "pyproject.toml".to_owned(),
+            access: None,
+            provenance: None,
+        };
+        let router = publish_router(&dir, &[target]).expect("router builds");
+        assert!(router.registry("pypi").is_ok(), "pypi routes");
+        // An unknown cargo name still refuses (the skip-list covers the
+        // default names only — validate-then-act, §15.3).
+        let unknown = PublishTarget {
+            registry: "not-a-registry".to_owned(),
+            ..PublishTarget {
+                package: "p1".to_owned(),
+                version: "0.1.1".to_owned(),
+                ecosystem: "cargo".to_owned(),
+                registry: "not-a-registry".to_owned(),
+                manifest_dir: String::new(),
+                manifest: "Cargo.toml".to_owned(),
+                access: None,
+                provenance: None,
+            }
+        };
+        let error = publish_router(&dir, &[unknown]).expect_err("unknown refuses");
+        assert_eq!(error.code(), "E-PUB-REGISTRY");
     }
 }
