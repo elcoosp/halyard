@@ -436,7 +436,7 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
     normalize_groups(ws, cfg, &mut state);
     cascade(ws, &graph, &order, cfg, &mut state);
 
-    let targets = materialize_versions(ws, snapshot, cfg, &state);
+    let (targets, tag_only_skips) = materialize_versions(ws, snapshot, cfg, &state);
     let targets = promote_pending_stable(ws, snapshot, cfg, &targets);
     let targets = channelize_targets(ws, snapshot, cfg, &state, &targets);
     let targets = enforce_maintenance_line(ws, cfg, &state, targets)?;
@@ -451,7 +451,7 @@ pub fn plan(snapshot: &Snapshot<'_>, cfg: &PlanConfig) -> Result<Plan, PlanError
         let Some(target) = targets.get(&pkg.id) else {
             skipped.push(PlanSkip {
                 package: name.to_owned(),
-                reason: skip_reason(pkg, cfg, ws),
+                reason: skip_reason(pkg, cfg, ws, tag_only_skips.get(&pkg.id).copied()),
             });
             continue;
         };
@@ -515,7 +515,11 @@ fn release_row(
     snapshot: &Snapshot<'_>,
 ) -> (PlanRelease, Option<(ManifestSite, String)>) {
     let name = pkg_name(ws, pkg);
-    let from = pkg.version.clone().unwrap_or_else(zero_version);
+    // The row's `from` is the SAME version the target algebra consumed
+    // (`effective_from`): for a tag-only package that is the release
+    // base tag's version (§8.2), never the zero fallback — the pair
+    // `from → to` must be internally consistent (I3).
+    let from = effective_from(ws, snapshot, pkg);
     let bump = release_bump(&from, target, state.bump(pkg.id));
     let tag =
         effective_template(ws, pkg, cfg).render(name, target, pkg.ecosystem.resolve(ws.interner()));
@@ -538,15 +542,28 @@ fn release_row(
     // invented). PyPI releases ride the default index (uv's own
     // posture; M8 step 1, ADR-0056) and never carry the npm options —
     // custom-index routing is the recorded-open config-surface
-    // remainder of the M8 row.
-    let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
-        Ecosystem::Cargo => (cfg.publish_cargo_registry.clone(), None, None),
-        Ecosystem::PyPi => ("pypi".to_owned(), None, None),
-        _ => (
-            cfg.publish_npm_registry.clone(),
-            cfg.publish_npm_access.clone(),
-            cfg.publish_npm_provenance,
-        ),
+    // remainder of the M8 row. A tag-only release (M8 Go, ADR-0057)
+    // carries **no** publish decision at all (`publish: None`): the
+    // release tag is the artifact, no registry exists, and the publish
+    // engine's documented skip keeps the row out of every forecast.
+    let publish = if pkg.ecosystem.is_tag_only() {
+        None
+    } else {
+        let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
+            Ecosystem::Cargo => (cfg.publish_cargo_registry.clone(), None, None),
+            Ecosystem::PyPi => ("pypi".to_owned(), None, None),
+            _ => (
+                cfg.publish_npm_registry.clone(),
+                cfg.publish_npm_access.clone(),
+                cfg.publish_npm_provenance,
+            ),
+        };
+        Some(PlanPublish {
+            registry,
+            enabled: pkg.publishable && cfg.publish_enabled,
+            access: npm_access,
+            provenance: npm_provenance,
+        })
     };
     let row = PlanRelease {
         package: name.to_owned(),
@@ -557,12 +574,7 @@ fn release_row(
         tag,
         reasons,
         changelog,
-        publish: Some(PlanPublish {
-            registry,
-            enabled: pkg.publishable && cfg.publish_enabled,
-            access: npm_access,
-            provenance: npm_provenance,
-        }),
+        publish,
     };
     let edit = pkg
         .version_site
@@ -966,21 +978,57 @@ fn cascade_reason(
 /// one `fix` → `1.3.0-rc.2`). A breaking step moves the triple through
 /// [`apply_bump`] (a fresh `2.0.0` base, counter restarted). Without a
 /// channel the derivation is exactly the stable planner's.
+/// The version a package plans FROM: the manifest version — except the
+/// **tag-only** ecosystems (M8 ADR-0057), whose manifest carries no
+/// version row: their `from` is the release base tag's version (§8.2,
+/// parsed through the package's own tag template), or the zero version
+/// for an initial release. Shared by the target algebra and the release
+/// row so the `from → to` pair stays internally consistent.
+fn effective_from(ws: &Workspace, snapshot: &Snapshot<'_>, pkg: &Package) -> Version {
+    if pkg.ecosystem.is_tag_only() {
+        return pkg
+            .version
+            .clone()
+            .or_else(|| base_version_of(ws, snapshot, pkg))
+            .unwrap_or_else(zero_version);
+    }
+    pkg.version.clone().unwrap_or_else(zero_version)
+}
+
+/// Materializes the per-package target versions (§4 step 4): the bump
+/// algebra over the manifest version — except the **tag-only** ecosystems
+/// (M8 ADR-0057), whose manifest carries no version row: their `from` is
+/// the release base tag's version (§8.2 step 3, parsed through the
+/// package's own subdir template), or the zero version for an initial
+/// release. Returns the targets plus the tag-only packages whose target
+/// the major-version-suffix rule refused (a `/vN` module path must
+/// release `vN.0.0`-shaped versions — the skip is reported, never
+/// silently re-scoped).
 fn materialize_versions(
     ws: &Workspace,
     snapshot: &Snapshot<'_>,
     cfg: &PlanConfig,
     state: &State,
-) -> BTreeMap<PkgId, Version> {
+) -> (BTreeMap<PkgId, Version>, BTreeMap<PkgId, &'static str>) {
     let mut targets = BTreeMap::new();
+    let mut tag_only_skips = BTreeMap::new();
     for pkg in ws.packages() {
         let id = pkg.id;
         let name = pkg_name(ws, pkg);
         if cfg.release_disabled.contains(name) {
             continue;
         }
-        let Some(from) = pkg.version.clone() else {
-            continue;
+        let from = if pkg.ecosystem.is_tag_only() {
+            // Tag-only (ADR-0057): the release base tag carries the
+            // version (§8.2 step 3 parses it through the package's own
+            // template); an initial release starts from the zero
+            // version.
+            effective_from(ws, snapshot, pkg)
+        } else {
+            let Some(from) = pkg.version.clone() else {
+                continue;
+            };
+            from
         };
         let target = if let Some(v) = state.forced(id) {
             v.clone()
@@ -1003,9 +1051,28 @@ fn materialize_versions(
             // pathological 0.x remap from ever emitting a regression.
             continue;
         }
+        // The major-version-suffix rule (go.dev/ref/mod): a module path
+        // ending in /vN must release vN-shaped versions; a target below
+        // the declared major is refused and reported.
+        if let Some(major) = tag_only_major(ws, pkg)
+            && target.major < major
+        {
+            tag_only_skips.insert(id, "major_version_suffix");
+            continue;
+        }
         targets.insert(id, target);
     }
-    targets
+    (targets, tag_only_skips)
+}
+
+/// The declared major version of a tag-only package's name (the final
+/// `/vN` of a Go module path); `None` for other ecosystems and for
+/// suffix-less paths.
+fn tag_only_major(ws: &Workspace, pkg: &Package) -> Option<u64> {
+    if !pkg.ecosystem.is_tag_only() {
+        return None;
+    }
+    crate::package::major_version_suffix(pkg_name(ws, pkg))
 }
 
 /// §10.3 maintenance-line guard (ADR-0027): with a branch-resolved
@@ -1224,9 +1291,21 @@ fn add_edit(edits: &mut BTreeMap<(String, u32, u32), String>, site: &ManifestSit
 }
 
 /// Skipped-list reason for a non-releasing package (§5.8).
-fn skip_reason(pkg: &Package, cfg: &PlanConfig, ws: &Workspace) -> String {
+fn skip_reason(
+    pkg: &Package,
+    cfg: &PlanConfig,
+    ws: &Workspace,
+    tag_only_skip: Option<&'static str>,
+) -> String {
     let name = pkg_name(ws, pkg);
-    if pkg.version.is_none() {
+    if let Some(reason) = tag_only_skip {
+        // A tag-only package the major-version-suffix rule refused (M8
+        // ADR-0057) — the recorded reason, not a silent re-scope.
+        reason.to_owned()
+    } else if pkg.version.is_none() && !pkg.ecosystem.is_tag_only() {
+        // Tag-only packages legitimately carry no manifest version (the
+        // release tag does), so a missing version is not their skip
+        // reason.
         "no_version".to_owned()
     } else if cfg.release_disabled.contains(name) {
         "release_disabled".to_owned()
