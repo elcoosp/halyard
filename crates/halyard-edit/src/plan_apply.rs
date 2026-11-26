@@ -344,7 +344,8 @@ fn map_lockfile_failure(failure: LockfileFailure) -> EditError {
 /// to the file-name convention (`Cargo.toml` → `cargo`, `package.json` →
 /// `npm`, `pyproject.toml` → `pypi`, `go.mod` → `go` — the tag-only
 /// adapter, whose edit seam fails closed, M8 ADR-0057, `pom.xml` →
-/// `maven` — the semantic version patch, M8 ADR-0058).
+/// `maven` — the semantic version patch, M8 ADR-0058, any `*.csproj` →
+/// `nuget` — the semantic version patch, M8 ADR-0059).
 fn adapter_for<'a>(
     workspace: &Workspace,
     file: &RelPath,
@@ -356,15 +357,21 @@ fn adapter_for<'a>(
         .find(|package| &package.manifest == file)
         .map(|package| package.ecosystem.resolve(workspace.interner()).to_owned())
         .or_else(|| {
-            match file.file_name() {
+            let by_name = match file.file_name() {
                 "Cargo.toml" => Some("cargo"),
                 "package.json" => Some("npm"),
                 "pyproject.toml" => Some("pypi"),
                 "go.mod" => Some("go"),
                 "pom.xml" => Some("maven"),
                 _ => None,
-            }
-            .map(str::to_owned)
+            };
+            by_name
+                .or_else(|| {
+                    // M8 (ADR-0059): every SDK-style project file
+                    // routes to the nuget adapter's semantic patch.
+                    file.as_str().ends_with(".csproj").then_some("nuget")
+                })
+                .map(str::to_owned)
         })?;
     adapters
         .iter()
