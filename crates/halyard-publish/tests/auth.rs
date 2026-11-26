@@ -305,6 +305,12 @@ fn variables_for_pins_the_grammar_table() {
         vec!["CARGO_REGISTRIES_MY_CORPS_TOKEN"]
     );
     assert_eq!(variables_for(&npm()), vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
+    let pypi = PublishTarget {
+        ecosystem: "pypi".to_owned(),
+        registry: "pypi".to_owned(),
+        ..crates_io()
+    };
+    assert_eq!(variables_for(&pypi), vec!["UV_PUBLISH_TOKEN"]);
 }
 
 #[test]
@@ -369,4 +375,31 @@ fn auth_summary_refuses_a_misconfiguration() {
     let auth = EnvPublishAuth::from_table(table(&[("NPM_TOKEN", "")]));
     let error = auth_summary(&auth, &[npm()]).expect_err("empty token refuses");
     assert_eq!(error.code(), "E-PUB-AUTH");
+}
+
+// ---------------------------------------------------------------------------
+// M8 step 2 (ADR-0056): the pypi lane's documented variable —
+// `UV_PUBLISH_TOKEN` (uv publish's `-t, --token` env; research note §2).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pypi_token_is_the_documented_variable() {
+    // The grammar is data (`variables_for` is public: the doctor's
+    // publish-auth check renders the same table).
+    let target = PublishTarget {
+        ecosystem: "pypi".to_owned(),
+        registry: "pypi".to_owned(),
+        ..crates_io()
+    };
+    assert_eq!(variables_for(&target), vec!["UV_PUBLISH_TOKEN".to_owned()]);
+
+    // A present token resolves to the environment pair the spawn sets.
+    let auth = EnvPublishAuth::from_table(table(&[("UV_PUBLISH_TOKEN", "pypi-token")]));
+    let outcome = auth
+        .credentials(&target)
+        .unwrap_or_else(|e| panic!("present: {e}"));
+    match outcome {
+        AuthOutcome::Token(credential) => assert_eq!(credential.key, "UV_PUBLISH_TOKEN"),
+        AuthOutcome::Absent => panic!("the token is present"),
+    }
 }
