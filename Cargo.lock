@@ -1487,6 +1487,7 @@ dependencies = [
  "halyard-core",
  "halyard-discover",
  "halyard-eco-cargo",
+ "halyard-eco-gomod",
  "halyard-eco-npm",
  "halyard-eco-pypi",
  "halyard-edit",
@@ -1556,6 +1557,7 @@ dependencies = [
  "criterion",
  "halyard-core",
  "halyard-eco-cargo",
+ "halyard-eco-gomod",
  "halyard-eco-npm",
  "halyard-eco-pypi",
  "halyard-test-support",
@@ -1577,6 +1579,15 @@ dependencies = [
  "semver",
  "tempfile",
  "toml_edit",
+]
+
+[[package]]
+name = "halyard-eco-gomod"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "semver",
 ]
 
 [[package]]
