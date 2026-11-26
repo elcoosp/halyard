@@ -35,6 +35,13 @@ pub enum Ecosystem {
     /// Maven Central publishing carries no argv grammar yet (the row
     /// publishes as the engine's disabled shape).
     Maven,
+    /// `NuGet` (SDK-style `.csproj` manifests, M8 — ADR-0059): versions
+    /// are the pack target's `PackageVersion`/`Version` property rows
+    /// (the documented `PackageVersion` → `$(Version)` resolution; only
+    /// semver-parseable spellings are canonical per ADR-0056's
+    /// discipline), and `dotnet` publishing carries no argv grammar yet
+    /// (the row publishes as the engine's disabled shape).
+    Nuget,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -42,8 +49,8 @@ pub enum Ecosystem {
 
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
-    /// `npm`, `pypi`, `go`, `maven`, or the interner-resolved custom
-    /// name (`custom` for a foreign symbol).
+    /// `npm`, `pypi`, `go`, `maven`, `nuget`, or the interner-resolved
+    /// custom name (`custom` for a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
@@ -51,6 +58,7 @@ impl Ecosystem {
             Self::PyPi => "pypi",
             Self::Go => "go",
             Self::Maven => "maven",
+            Self::Nuget => "nuget",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
