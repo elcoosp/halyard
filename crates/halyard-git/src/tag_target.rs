@@ -48,7 +48,9 @@ use crate::tag::TagDirective;
 
 /// Extracts the release version from manifest **bytes** — the ecosystem
 /// knowledge the git engine must not own (the engine walks; the caller
-/// knows how a `Cargo.toml` or a `package.json` spells its version).
+/// knows how a `Cargo.toml`, a `package.json` or a `pyproject.toml`
+/// spells its version — and that a `go.mod` never carries one, M8
+/// ADR-0057).
 ///
 /// The shell implements this over its ecosystem adapters (one probe
 /// dispatching on the ecosystem string); tests use a minimal text probe.
