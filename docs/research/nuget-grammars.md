@@ -212,14 +212,15 @@ has no NuGet counterpart; inventing one would guess).
 The M8 gate row is *"each: discover/edit/publish/resume tests + replay on
 2 real repos"*. The engine's publish effect spawns the ecosystem's own
 tool; the argv tables are verified against the **installed** tool
-(`uv 0.13.9 --help` for PyPI, ADR-0056) — no flag is ever invented.
-`dotnet` is not installed in this lane and `dotnet pack` /
-`dotnet nuget push` carry no verified-argv arm yet: NuGet rows carry
-`publishable = false` and the planner's registry arm names `nuget.org`
-(the ecosystem's canonical registry, truthful the day the argv arm
-lands) — the engine records the `publish_disabled` skip, ADR-0058 D5's
-Maven shape. Recorded-open: the `dotnet` argv arm, the nuget.org probe
-(the flat-container URL grammar), the auth arm, the corpus replay.
+(`uv 0.13.9 --help` for PyPI, ADR-0056) or the tool's own reference
+documentation (`dotnet`, §11 below — Microsoft Learn, fetched live) —
+no flag is ever invented. As-built (ADR-0059 continued): the `dotnet`
+argv arm landed (§11), the nuget.org flat-container probe landed (§11),
+the `NUGET_API_KEY` auth arm landed (§11); rows carry
+`publishable = true` at the documented packability gate (§10) and the
+planner's registry arm names `nuget.org` — the engine routes the plan
+contract's registry name to the probe. Recorded-open: the corpus-lane
+replay on 2 real repos (token/network-bound, the M7 lane discipline).
 
 ## 10. Packability
 
@@ -230,3 +231,98 @@ Maven shape. Recorded-open: the `dotnet` argv arm, the nuget.org probe
 A project declaring `<IsPackable>false</IsPackable>` cannot pack: the
 row keeps its version (a release tag still plans) but is
 unpublishable.
+
+## 11. The publish half — Microsoft Learn, fetched live (2026-11-27)
+
+The §17 M8 `NuGet` cell's recorded-open argv/probe/auth arms, verified
+against the tool's own reference pages (fetched 2026-11-27): the
+quickstart (*create-and-publish-a-package-using-the-dotnet-cli*), the
+`dotnet nuget push` CLI reference, and the NuGet API's
+`PackageBaseAddress` resource page.
+
+### The two-step flow (the push reference's own statement)
+
+> The command pushes an existing package. It doesn't create a package.
+> To create a package, use `dotnet pack`.
+
+### The pack step (the quickstart)
+
+> To build a NuGet package or *.nupkg* file from the project, run the
+> [dotnet pack](/en-us/dotnet/core/tools/dotnet-pack) command, which
+> also builds the project automatically.
+
+> ```dotnetcli
+> dotnet pack
+> ```
+
+The sample output documents where the artifact lands:
+
+> Successfully created package
+> 'C:\Users\myname\source\repos\AppLogger\bin\Debug\Contoso.08.28.22.001.Test.1.0.0.nupkg'.
+
+(the default Debug configuration; `<id>.<version>.nupkg` under
+`bin/Debug/` — the push path the grammar builds.)
+
+### The push step (the quickstart + the CLI reference)
+
+> ```dotnetcli
+> dotnet nuget push <package-file> --api-key <API-key> --source
+> https://api.nuget.org/v3/index.json
+> ```
+
+> `-s|--source <SOURCE>` — Specifies the server URL. [...] Starting
+> with NuGet 3.4.2, this is a mandatory parameter unless the NuGet
+> config file specifies a `DefaultPushSource` value.
+
+(the documented official-server URL rides the argv; the credential does
+not — see below.)
+
+### The auth arm (the quickstart's own tip)
+
+> Starting with NuGet 7.6 (.NET SDK 10.0.300), you can set the
+> `NUGET_API_KEY` environment variable instead of passing `--api-key`
+> on the command line. This is useful in CI/CD scenarios where you
+> don't want to pass the key as a command-line argument.
+
+(the recency is recorded honestly: NuGet 7.6 / SDK 10.0.300+; older
+SDKs keep the tool's own NuGet.config credential store as the absence
+posture — the auth seam injects nothing when the variable is absent.)
+
+### The probe arm (the `PackageBaseAddress` resource)
+
+> This resource is commonly referred to as either the "package base
+> address" or as the "flat container".
+
+> ```
+> GET {@id}/{LOWER_ID}/index.json
+> ```
+
+> If the package source has no versions of the provided package ID, a
+> 404 status code is returned.
+
+> The strings in the `versions` array are all lowercased, normalized
+> NuGet version strings.
+
+> ```
+> GET https://api.nuget.org/v3-flatcontainer/owin/index.json
+> ```
+
+(the sample base `https://api.nuget.org/v3-flatcontainer/` is the
+client's default; `LOWER_ID` — *"The package ID, lowercased using the
+rules implemented by .NET's `System.String.ToLowerInvariant()`"*. The
+plan contract's canonical `X.Y.Z` rows compare lowercased — build
+metadata never reaches a row, the csproj strategy refuses
+non-canonical spellings at discovery.)
+
+### Consequences recorded (ADR-0059 continued)
+
+- The spawn is the two documented steps: bare `dotnet pack`, then
+  `dotnet nuget push bin/Debug/<id>.<version>.nupkg --source
+  https://api.nuget.org/v3/index.json` — no flag invented (the
+  ADR-0033 unset-is-semantic rule at dotnet's grammar).
+- The dry forecast runs the packaging half only: `dotnet pack` is
+  local-only (no registry contact), but the push carries **no
+  documented dry form** — a forecast never invents one; the live run
+  spawns both steps.
+- Rows are `publishable` at the packability gate (§10); the registry
+  arm names `nuget.org`, which routes to the flat-container probe.
