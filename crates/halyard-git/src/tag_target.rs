@@ -58,10 +58,19 @@ use crate::tag::TagDirective;
 /// "this commit did not introduce the release version" — the walk
 /// continues.
 pub trait ManifestVersionProbe {
-    /// The version `manifest` (the bytes found at the request's manifest
-    /// path in one walked commit) carries under `ecosystem`'s grammar;
-    /// `None` when the bytes carry no parsable version.
-    fn manifest_version(&self, ecosystem: &str, manifest: &[u8]) -> Option<String>;
+    /// The version `manifest` (the bytes found at `manifest_path` — the
+    /// request's manifest path — in one walked commit) carries under
+    /// `ecosystem`'s grammar; `None` when the bytes carry no parsable
+    /// version. The path rides the probe because a config-declared
+    /// locator picks its pattern PER FILE (M8 ADR-0062: the `generic`
+    /// ecosystem's version files are declared, not scanned — the probe
+    /// cannot disambiguate two declared patterns without the path).
+    fn manifest_version(
+        &self,
+        ecosystem: &str,
+        manifest_path: &str,
+        manifest: &[u8],
+    ) -> Option<String>;
 }
 
 /// One tag-target resolution request: the package's manifest location,
@@ -285,10 +294,19 @@ impl GixTagTargetResolver {
 
     /// Reads a manifest blob and probes its version. `Err` = the blob is
     /// unreadable (the blob-less clone case); `Ok(None)` = readable but
-    /// the probe found no parsable version.
-    fn probed_version(&self, ecosystem: &str, blob: ObjectId) -> Result<Option<String>, ()> {
+    /// the probe found no parsable version. The manifest path rides the
+    /// probe (a config-declared locator picks its pattern per file, M8
+    /// ADR-0062).
+    fn probed_version(
+        &self,
+        ecosystem: &str,
+        manifest_path: &str,
+        blob: ObjectId,
+    ) -> Result<Option<String>, ()> {
         let bytes = self.read_blob(blob)?;
-        Ok(self.probe.manifest_version(ecosystem, &bytes))
+        Ok(self
+            .probe
+            .manifest_version(ecosystem, manifest_path, &bytes))
     }
 
     /// Verifies one manifest-OID change event (§11.1 precision rule): a
@@ -307,7 +325,7 @@ impl GixTagTargetResolver {
             // introduction.
             return Verdict::Continue;
         };
-        let Ok(version) = self.probed_version(&request.ecosystem, blob) else {
+        let Ok(version) = self.probed_version(&request.ecosystem, &request.manifest, blob) else {
             return Verdict::Degrade;
         };
         if version.as_deref() != Some(request.version.as_str()) {
@@ -320,7 +338,7 @@ impl GixTagTargetResolver {
             // initial-release state, §8.2).
             return Verdict::Pinpoint;
         };
-        match self.probed_version(&request.ecosystem, parent_blob) {
+        match self.probed_version(&request.ecosystem, &request.manifest, parent_blob) {
             Err(()) => Verdict::Degrade,
             Ok(parent_version) if parent_version.as_deref() == Some(request.version.as_str()) => {
                 Verdict::Continue
