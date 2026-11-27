@@ -2177,7 +2177,10 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// The `nuget` arm pairs them the same way (M8 ADR-0059: a `NuGet`
 /// spelling like `1.0.0.0` keeps the documented HEAD fallback). The
 /// `dart` arm pairs the pubspec's canonical semver (M8 ADR-0060: a
-/// two-component spelling keeps the documented HEAD fallback).
+/// two-component spelling keeps the documented HEAD fallback). The
+/// `rubygems` arm pairs the gemspec's canonical semver the same way (M8
+/// ADR-0061: a `Gem::Version` spelling the plan contract cannot parse
+/// keeps the documented HEAD fallback).
 struct ShellProbe;
 
 impl ManifestVersionProbe for ShellProbe {
@@ -2190,6 +2193,7 @@ impl ManifestVersionProbe for ShellProbe {
             "maven" => halyard_eco_maven::manifest_version(manifest),
             "nuget" => halyard_eco_nuget::manifest_version(manifest),
             "dart" => halyard_eco_dart::manifest_version(manifest),
+            "rubygems" => halyard_eco_rubygems::manifest_version(manifest),
             _ => None,
         }
     }
