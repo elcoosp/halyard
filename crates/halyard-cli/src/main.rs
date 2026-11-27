@@ -2174,8 +2174,10 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// never carries a version, so there is nothing to pinpoint). The
 /// `maven` arm pairs the semver-canonical spellings (M8 ADR-0058: a
 /// Maven spelling the plan contract cannot parse keeps the fallback).
-/// The `nuget` arm pairs them the same way (M8 ADR-0059: a NuGet
-/// spelling like `1.0.0.0` keeps the documented HEAD fallback).
+/// The `nuget` arm pairs them the same way (M8 ADR-0059: a `NuGet`
+/// spelling like `1.0.0.0` keeps the documented HEAD fallback). The
+/// `dart` arm pairs the pubspec's canonical semver (M8 ADR-0060: a
+/// two-component spelling keeps the documented HEAD fallback).
 struct ShellProbe;
 
 impl ManifestVersionProbe for ShellProbe {
@@ -2187,6 +2189,7 @@ impl ManifestVersionProbe for ShellProbe {
             "go" => halyard_eco_gomod::manifest_version(manifest),
             "maven" => halyard_eco_maven::manifest_version(manifest),
             "nuget" => halyard_eco_nuget::manifest_version(manifest),
+            "dart" => halyard_eco_dart::manifest_version(manifest),
             _ => None,
         }
     }
