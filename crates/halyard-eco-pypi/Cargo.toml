@@ -31,5 +31,9 @@ harness = false
 name = "publish_args"
 harness = false
 
+[[bench]]
+name = "uvlock_verify"
+harness = false
+
 [lints]
 workspace = true
