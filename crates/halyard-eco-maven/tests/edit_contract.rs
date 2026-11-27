@@ -32,13 +32,19 @@ const POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 fn the_version_site_patch_swaps_the_inner_bytes_in_place() {
     let mut ctx = DiscoverCtx::new();
     ctx.insert_file("pom.xml", POM.as_bytes().to_vec());
-    let row = &MavenAdapter::new().discover(&ctx).expect("discovery")[0];
+    let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
+    let row = rows.first().expect("the fixture discovers one row");
     let site = row.version_site.as_ref().expect("a canonical version site");
+    let span = site
+        .spans
+        .first()
+        .copied()
+        .expect("the version site carries a span");
 
     let file = RelPath::new("pom.xml").expect("fixture path");
     let patches = [PlanPatch {
-        start: site.spans[0].start,
-        end: site.spans[0].end,
+        start: span.start,
+        end: span.end,
         text: "1.3.0".to_owned(),
     }];
     let outcome = MavenAdapter::new()
@@ -69,14 +75,17 @@ fn the_read_back_verify_refuses_a_patch_that_misses_the_target() {
     // A span that matches no `<project>`-owned version text (it points
     // at the artifactId's value).
     let needle = b"edit-demo";
-    let start = POM
-        .as_bytes()
-        .windows(needle.len())
-        .position(|w| w == needle)
-        .expect("fixture contains the artifactId") as u32;
+    let start = u32::try_from(
+        POM.as_bytes()
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("fixture contains the artifactId"),
+    )
+    .expect("fits u32");
+    let length = u32::try_from(needle.len()).expect("fits u32");
     let patches = [PlanPatch {
         start,
-        end: start + needle.len() as u32,
+        end: start + length,
         text: "1.3.0".to_owned(),
     }];
     let err = MavenAdapter::new()
