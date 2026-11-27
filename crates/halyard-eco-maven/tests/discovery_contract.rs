@@ -1,6 +1,6 @@
 //! The M8 Maven cell's discovery contract (`docs/HALYARD_ARCHITECTURE.md`
 //! §17 YEAR 2, M8 row — *"More ecosystems"*, the `Maven/Gradle` cell —
-//! the next listed cell after PyPI (ADR-0056) and Go (ADR-0057), gate
+//! the next listed cell after `PyPI` (ADR-0056) and `Go` (ADR-0057), gate
 //! *"each: discover/edit/publish/resume tests + replay on 2 real
 //! repos"*; VERIFIED grammar in `docs/research/maven-pom-grammars.md`).
 //!
@@ -76,6 +76,11 @@ const WEB_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 /// names, the child without its own `<version>` inherits the parent's
 /// through the workspace-inheritance machinery (the cargo
 /// `[workspace.package].version` posture — one edit site, on the parent).
+/// The empty-row assertion (the pedantic `assert_is_empty` shape).
+fn assert_empty<T>(rows: &[T]) {
+    assert!(rows.is_empty(), "expected no rows");
+}
+
 #[test]
 fn the_maven_multi_module_workspace_discovers_rows_with_parent_inheritance() {
     let mut ctx = DiscoverCtx::new();
@@ -86,11 +91,11 @@ fn the_maven_multi_module_workspace_discovers_rows_with_parent_inheritance() {
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 3, "root + api + web");
 
-    let root = &rows[0];
+    let root = rows.first().expect("the root row");
     assert_eq!(root.name, "halyard-demo");
     assert_eq!(root.ecosystem, Ecosystem::Maven);
     assert_eq!(
-        root.version.as_ref().map(|v| v.to_string()),
+        root.version.as_ref().map(std::string::ToString::to_string),
         Some("1.2.3".to_owned()),
         "the root pom's own <version> is canonical semver"
     );
@@ -99,12 +104,12 @@ fn the_maven_multi_module_workspace_discovers_rows_with_parent_inheritance() {
     assert_eq!(site.file.as_str(), "pom.xml");
     assert!(!root.publishable, "no maven publish grammar exists yet");
 
-    let api = &rows[1];
+    let api = rows.get(1).expect("the api row");
     assert_eq!(api.name, "halyard-demo-api");
     assert_eq!(api.root.as_str(), "api");
     assert_eq!(api.manifest, "api/pom.xml");
     assert_eq!(
-        api.version.as_ref().map(|v| v.to_string()),
+        api.version.as_ref().map(std::string::ToString::to_string),
         Some("1.2.3".to_owned()),
         "the inherited version resolves through the parent"
     );
@@ -123,7 +128,7 @@ fn the_maven_multi_module_workspace_discovers_rows_with_parent_inheritance() {
         "the inheritor's edit site lives on the parent pom"
     );
 
-    let web = &rows[2];
+    let web = rows.get(2).expect("the web row");
     assert_eq!(web.name, "halyard-demo-web");
     assert_eq!(web.version_source, RawVersionSource::Local);
 }
@@ -139,7 +144,7 @@ fn a_dependency_naming_a_member_coordinate_classifies_internal() {
     ctx.insert_file("web/pom.xml", WEB_POM.as_bytes().to_vec());
 
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
-    let api = &rows[1];
+    let api = rows.get(1).expect("the api row");
     assert_eq!(api.deps.len(), 2, "both dependency rows are discovered");
     let member_dep = api
         .deps
@@ -183,7 +188,7 @@ fn without_modules_the_root_pom_is_the_single_package() {
 
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1, "only the root pom is claimed");
-    assert_eq!(rows[0].name, "tool");
+    assert_eq!(rows.first().expect("the root row").name, "tool");
 }
 
 /// The Maven-specific version spellings fail closed (the ADR-0056 PEP 440
@@ -212,7 +217,7 @@ fn non_semver_maven_spellings_fail_closed() {
 
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the root row");
     assert_eq!(
         row.version, None,
         "the two-component spelling is not padded to 1.2.0"
@@ -251,9 +256,9 @@ fn semver_parseable_qualifier_forms_stay_canonical() {
 
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the root row");
     assert_eq!(
-        row.version.as_ref().map(|v| v.to_string()),
+        row.version.as_ref().map(std::string::ToString::to_string),
         Some("1.2.3-SNAPSHOT".to_owned()),
         "the qualifier form is semver: it plans verbatim"
     );
@@ -285,8 +290,8 @@ fn a_property_reference_version_is_never_resolved() {
 
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].version, None);
-    assert!(rows[0].version_site.is_none());
+    assert_eq!(rows.first().expect("the root row").version, None);
+    assert!(rows.first().expect("the root row").version_site.is_none());
 }
 
 /// A listed module whose pom is missing from the committed tree fails
@@ -340,5 +345,5 @@ fn a_parent_coordinate_mismatch_fails_discovery() {
 fn a_repo_without_poms_discovers_nothing() {
     let ctx = DiscoverCtx::new();
     let rows = MavenAdapter::new().discover(&ctx).expect("discovery");
-    assert!(rows.is_empty());
+    assert_empty(&rows);
 }
