@@ -59,6 +59,11 @@ const LIB_CSPROJ: &str = r#"<Project Sdk="Microsoft.NET.Sdk">
 /// `PackageVersion` → `Version`, and the `ProjectReference` naming a
 /// member manifest is the proven-internal edge while the
 /// `PackageReference` stays registry-resolved (external).
+/// The empty-row assertion (the pedantic `assert_is_empty` shape).
+fn assert_empty<T>(rows: &[T]) {
+    assert!(rows.is_empty(), "expected no rows");
+}
+
 #[test]
 fn the_sdk_style_workspace_discovers_rows_with_the_proven_edge() {
     let ctx = ctx_with(&[
@@ -67,13 +72,16 @@ fn the_sdk_style_workspace_discovers_rows_with_the_proven_edge() {
     ]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 2, "both SDK-style projects are rows");
-    let app = &rows[0];
-    let lib = &rows[1];
+    let app = rows.first().expect("the app row");
+    let lib = rows.get(1).expect("the lib row");
     assert_eq!(app.name, "Contoso.App", "the PackageId is the identity");
     assert_eq!(app.ecosystem, Ecosystem::Nuget);
     assert_eq!(app.manifest, "src/app/App.csproj");
     assert_eq!(
-        app.version.as_ref().map(|v| v.to_string()).as_deref(),
+        app.version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("1.2.3"),
         "PackageVersion is the pack version"
     );
@@ -87,7 +95,10 @@ fn the_sdk_style_workspace_discovers_rows_with_the_proven_edge() {
         "the identity falls to the manifest file stem"
     );
     assert_eq!(
-        lib.version.as_ref().map(|v| v.to_string()).as_deref(),
+        lib.version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("2.0.0"),
         "Version is the PackageVersion fallback"
     );
@@ -121,7 +132,7 @@ fn the_edit_site_is_the_packageversion_or_version_element() {
         ("src/lib/Lib.csproj", LIB_CSPROJ),
     ]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
-    let app = &rows[0];
+    let app = rows.first().expect("the app row");
     let site = app.version_site.as_ref().expect("the app row has a site");
     assert_eq!(site.file.as_str(), "src/app/App.csproj");
     let text = APP_CSPROJ.as_bytes();
@@ -129,20 +140,28 @@ fn the_edit_site_is_the_packageversion_or_version_element() {
         .windows(5)
         .position(|w| w == b"1.2.3")
         .expect("fixture offset");
+    let span = site.spans.first().expect("the span");
     assert_eq!(
-        site.spans[0].start as usize, expected,
+        span.start,
+        u32::try_from(expected).expect("fits"),
         "PackageVersion span"
     );
-    assert_eq!(site.spans[0].end as usize, expected + 5);
-    let lib = &rows[1];
+    assert_eq!(
+        span.end,
+        u32::try_from(expected + 5).expect("fits"),
+        "PackageVersion span end"
+    );
+    let lib = rows.get(1).expect("the lib row");
     let lib_site = lib.version_site.as_ref().expect("the lib row has a site");
     let lib_text = LIB_CSPROJ.as_bytes();
     let lib_expected = lib_text
         .windows(5)
         .position(|w| w == b"2.0.0")
         .expect("fixture offset");
+    let lib_span = lib_site.spans.first().expect("the span");
     assert_eq!(
-        lib_site.spans[0].start as usize, lib_expected,
+        lib_span.start,
+        u32::try_from(lib_expected).expect("fits"),
         "the Version span"
     );
 }
@@ -182,9 +201,14 @@ fn the_sdk_child_element_declares_the_sdk() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1, "the SDK-child form is SDK-style");
-    assert_eq!(rows[0].name, "SdkChild");
+    assert_eq!(rows.first().expect("the row").name, "SdkChild");
     assert_eq!(
-        rows[0].version.as_ref().map(|v| v.to_string()).as_deref(),
+        rows.first()
+            .expect("the row")
+            .version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("0.3.0")
     );
 }
@@ -206,7 +230,7 @@ fn a_non_semver_nuget_spelling_is_warned_and_never_rewritten() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert!(row.version.is_none(), "the four-part form plans no version");
     assert!(row.version_site.is_none(), "no site — never rewritten");
     assert!(
@@ -235,7 +259,7 @@ fn the_prefix_suffix_composite_is_warned_unplannable() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert!(row.version.is_none(), "the composite plans no version");
     assert!(
         row.warnings
@@ -263,7 +287,7 @@ fn a_project_without_a_version_property_is_warned() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert!(row.version.is_none());
     assert!(row.version_site.is_none());
     assert!(
@@ -293,7 +317,7 @@ fn a_conditioned_version_is_consumed_unmodeled() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert!(
         row.version.is_none(),
         "a conditioned version never plans (the value may not be pack-time)"
@@ -316,9 +340,12 @@ fn directory_build_props_warns_but_own_versions_still_plan() {
     ]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert_eq!(
-        row.version.as_ref().map(|v| v.to_string()).as_deref(),
+        row.version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("2.0.0"),
         "the project file's own Version overrides the imported defaults"
     );
@@ -373,7 +400,7 @@ fn the_assembly_name_is_the_identity_fallback() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].name, "Contoso.Assembly");
+    assert_eq!(rows.first().expect("the row").name, "Contoso.Assembly");
 }
 
 /// `<IsPackable>false</IsPackable>`: the project cannot pack (the
@@ -393,9 +420,12 @@ fn an_unpackable_project_keeps_its_version_and_warns() {
     )]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert_eq!(
-        row.version.as_ref().map(|v| v.to_string()).as_deref(),
+        row.version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("1.0.0"),
         "the version still plans"
     );
@@ -414,9 +444,12 @@ fn a_redeclared_version_follows_the_last_declaration() {
     let ctx = ctx_with(&[("twice/Twice.csproj", TWICE_CSPROJ)]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1);
-    let row = &rows[0];
+    let row = rows.first().expect("the row");
     assert_eq!(
-        row.version.as_ref().map(|v| v.to_string()).as_deref(),
+        row.version
+            .as_ref()
+            .map(std::string::ToString::to_string)
+            .as_deref(),
         Some("1.4.0"),
         "the later declaration wins"
     );
@@ -426,7 +459,10 @@ fn a_redeclared_version_follows_the_last_declaration() {
         .windows(5)
         .position(|w| w == b"1.4.0")
         .expect("offset");
-    assert_eq!(site.spans[0].start as usize, expected);
+    assert_eq!(
+        site.spans.first().expect("the span").start,
+        u32::try_from(expected).expect("fits")
+    );
 }
 
 /// No `.csproj` at all: an empty result (the orchestrator merges
@@ -435,7 +471,7 @@ fn a_redeclared_version_follows_the_last_declaration() {
 fn a_repo_without_csproj_files_discovers_nothing() {
     let ctx = DiscoverCtx::new();
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
-    assert!(rows.is_empty());
+    assert_empty(&rows);
 }
 
 /// The twice fixture (kept beside the test that pins its offset).
@@ -455,5 +491,5 @@ const TWICE_CSPROJ: &str = r#"<Project Sdk="Microsoft.NET.Sdk">
 fn only_csproj_files_are_nuget_manifests() {
     let ctx = ctx_with(&[("pom.xml", "<project/>")]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
-    assert!(rows.is_empty());
+    assert_empty(&rows);
 }
