@@ -38,9 +38,16 @@
 //! Shared `Directory.Build.props`/`Directory.Build.targets` imports are
 //! consumed unmodeled with a per-project warning.
 //!
-//! `NuGet` publishing carries no argv grammar yet (no verified `dotnet`
-//! arm) — rows carry `publishable = false` (the engine's disabled
-//! shape; ADR-0059).
+//! `NuGet` publishing rides the documented `dotnet` two-step flow
+//! (the §17 cell's argv arm, ADR-0059 continued —
+//! [`publish::dotnet_pack_args`] / [`publish::dotnet_push_args`], the
+//! VERIFIED grammar in `docs/research/nuget-grammars.md` §11): the
+//! push reference states the split itself — *"The command pushes an
+//! existing package. It doesn't create a package. To create a package,
+//! use `dotnet pack`."* Rows are `publishable` at the documented
+//! packability gate (`<IsPackable>false</IsPackable>` keeps the row
+//! unpublishable, §10); the credential rides the documented
+//! `NUGET_API_KEY` environment pair (I7 — the argv never carries it).
 
 use halyard_core::EcosystemAdapter;
 use halyard_core::discover::{
@@ -52,6 +59,10 @@ use semver::Version;
 
 pub mod edit;
 pub mod grammar;
+// The §17 cell's publish argv arm (ADR-0059): the shell spawns, the
+// adapter owns the tool grammar — the `refresh_command` convention.
+pub mod publish;
+pub use publish::{dotnet_pack_args, dotnet_push_args};
 
 /// The release version the `.csproj` **bytes** carry — the
 /// semver-canonical pairing text when the project's pack version
@@ -243,10 +254,14 @@ fn row(
         manifest: project.manifest.clone(),
         version: version_value,
         version_source: RawVersionSource::Local,
-        // ADR-0059: no `dotnet` publish grammar exists (no argv arm, no
-        // registry probe, no auth arm) — the row versions and tags, and
-        // the publish engine records the disabled shape.
-        publishable: false,
+        // ADR-0059 continued: the `dotnet` argv arm landed (the
+        // documented pack/push grammar, `publish::dotnet_push_args`) —
+        // the row publishes through the documented packability gate
+        // (§10 of the research note: *"IsPackable — A Boolean value
+        // that specifies whether the project can be packed. The
+        // default value is `true`."*); `<IsPackable>false</IsPackable>`
+        // keeps the row unpublishable.
+        publishable: !csproj.unpackable,
         deps,
         tag_template: None,
         changelog: None,
