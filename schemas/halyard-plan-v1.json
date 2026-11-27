@@ -278,7 +278,7 @@
               "type": "null"
             }
           ],
-          "description": "Registry publishing decision for this release (§13)."
+          "description": "Registry publishing decision for this release (§13). `None` when\nno registry decision exists for the row: an unpublishable or\ninitial-state package, or a **tag-only** release (M8 Go,\nADR-0057 — the repository tag is the artifact; there is no\nregistry to decide about, and the publish engine's documented\nskip keeps the row out of every forecast as\n`no_publish_contract`)."
         },
         "reasons": {
           "description": "Why the bump happened; the reason chain that powers `halyard explain`\n(§5.6).",
