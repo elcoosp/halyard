@@ -269,6 +269,9 @@ pub enum ManifestFormat {
     /// `*.gemspec` (the Ruby/`Gem::Specification` subset scanner,
     /// hand-written, M8 ADR-0061).
     Gemspec,
+    /// A `Dockerfile` (the Dockerfile-reference subset scanner,
+    /// hand-written, M8 ADR-0063).
+    Dockerfile,
     /// A config-declared plain-text version file (`[[generic]]`, M8
     /// ADR-0062) — the file is user-defined text located by the
     /// declared regex; the format any manifest error on it reports.
