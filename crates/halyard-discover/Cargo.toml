@@ -15,6 +15,7 @@ halyard-eco-gomod = { workspace = true }
 halyard-eco-maven = { workspace = true }
 halyard-eco-nuget = { workspace = true }
 halyard-eco-dart = { workspace = true }
+halyard-eco-docker = { workspace = true }
 halyard-eco-generic = { workspace = true }
 halyard-eco-rubygems = { workspace = true }
 halyard-eco-pypi = { workspace = true }
