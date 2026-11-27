@@ -1493,6 +1493,7 @@ dependencies = [
  "halyard-eco-npm",
  "halyard-eco-nuget",
  "halyard-eco-pypi",
+ "halyard-eco-rubygems",
  "halyard-edit",
  "halyard-forge",
  "halyard-forge-bitbucket",
@@ -1566,6 +1567,7 @@ dependencies = [
  "halyard-eco-npm",
  "halyard-eco-nuget",
  "halyard-eco-pypi",
+ "halyard-eco-rubygems",
  "halyard-test-support",
  "ignore",
  "insta",
@@ -1648,6 +1650,15 @@ dependencies = [
  "semver",
  "tempfile",
  "toml_edit",
+]
+
+[[package]]
+name = "halyard-eco-rubygems"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "semver",
 ]
 
 [[package]]
