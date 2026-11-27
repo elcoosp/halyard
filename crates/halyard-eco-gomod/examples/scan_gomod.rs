@@ -54,7 +54,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "module {:?} root {:?} tag template {:?} publishable {}",
             row.name,
             row.root,
-            row.tag_template.as_ref().map(|t| t.as_str()),
+            row.tag_template
+                .as_ref()
+                .map(halyard_core::package::TagTemplate::as_str),
             row.publishable,
         );
         println!(
