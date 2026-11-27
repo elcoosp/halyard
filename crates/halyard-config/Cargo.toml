@@ -14,6 +14,9 @@ serde = { workspace = true }
 toml = { workspace = true }
 serde_json = { workspace = true }
 halyard-core = { workspace = true }
+# ADR-0062: the `[[generic]]` locator patterns compile at load time
+# (`E-CFG-GENERIC`) with the same regex engine the adapter matches with.
+regex = { workspace = true }
 
 # Schema generation for the checked-in `halyard.toml` JSON schema (`M0.7`);
 # feature-gated like `halyard-core` so default builds stay lean.
