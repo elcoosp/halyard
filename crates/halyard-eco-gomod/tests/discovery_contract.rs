@@ -20,6 +20,11 @@ use halyard_eco_gomod::{GoModAdapter, tag};
 /// `go.work` + member `go.mod`s discover as tag-only rows with subdir
 /// tag templates (the §17 M8 cell's three facts: tag-only, `go.work`,
 /// subdir tags).
+/// The empty-row assertion (the pedantic `assert_is_empty` shape).
+fn assert_empty<T>(rows: &[T]) {
+    assert!(rows.is_empty(), "expected no rows");
+}
+
 #[test]
 fn the_go_workspace_discovers_tag_only_rows_with_subdir_tags() {
     let mut ctx = DiscoverCtx::new();
@@ -45,7 +50,7 @@ fn the_go_workspace_discovers_tag_only_rows_with_subdir_tags() {
     let rows = GoModAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 3, "root + api + libs/metrics");
 
-    let root = &rows[0];
+    let root = rows.first().expect("the row");
     assert_eq!(root.name, "example.com/halyard");
     assert_eq!(root.ecosystem, Ecosystem::Go);
     assert_eq!(root.version, None, "tag-only: go.mod carries no version");
@@ -56,27 +61,34 @@ fn the_go_workspace_discovers_tag_only_rows_with_subdir_tags() {
     );
     assert!(root.version_site.is_none(), "no editable version site");
     assert_eq!(
-        root.tag_template.as_ref().map(|t| t.as_str()),
+        root.tag_template
+            .as_ref()
+            .map(halyard_core::package::TagTemplate::as_str),
         Some("v{version}"),
         "root module tags v{{version}}"
     );
 
-    let api = &rows[1];
+    let api = rows.get(1).expect("the row");
     assert_eq!(api.name, "example.com/halyard/api");
     assert_eq!(api.root.as_str(), "api");
     assert_eq!(
-        api.tag_template.as_ref().map(|t| t.as_str()),
+        api.tag_template
+            .as_ref()
+            .map(halyard_core::package::TagTemplate::as_str),
         Some("api/v{version}"),
         "subdir module tags subdir/v{{version}}"
     );
     // The external require stays registry-resolved (not internal).
     assert_eq!(api.deps.len(), 1);
-    assert!(!api.deps[0].internal);
+    assert!(!api.deps.first().expect("the dep row").internal);
 
-    let metrics = &rows[2];
+    let metrics = rows.get(2).expect("the row");
     assert_eq!(metrics.name, "example.com/halyard/libs/metrics/v2");
     assert_eq!(
-        metrics.tag_template.as_ref().map(|t| t.as_str()),
+        metrics
+            .tag_template
+            .as_ref()
+            .map(halyard_core::package::TagTemplate::as_str),
         Some("libs/metrics/v{version}"),
         "the tag prefix is the directory, not the module path"
     );
@@ -114,7 +126,7 @@ fn workspace_member_requires_and_local_replaces_classify_internal() {
 
     let rows = GoModAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 2, "api + web (vendor/sdk is not a use member)");
-    let api = &rows[0];
+    let api = rows.first().expect("the row");
     assert_eq!(api.deps.len(), 2);
     let member_dep = api
         .deps
@@ -155,9 +167,16 @@ fn without_go_work_the_root_module_is_the_single_workspace() {
 
     let rows = GoModAdapter::new().discover(&ctx).expect("discovery");
     assert_eq!(rows.len(), 1, "only the root module is claimed");
-    assert_eq!(rows[0].name, "example.com/standalone");
     assert_eq!(
-        rows[0].tag_template.as_ref().map(|t| t.as_str()),
+        rows.first().expect("the row").name,
+        "example.com/standalone"
+    );
+    assert_eq!(
+        rows.first()
+            .expect("the row")
+            .tag_template
+            .as_ref()
+            .map(halyard_core::package::TagTemplate::as_str),
         Some("v{version}")
     );
 }
@@ -181,7 +200,7 @@ fn a_use_member_without_go_mod_fails_discovery() {
 fn a_repo_without_go_manifests_discovers_nothing() {
     let ctx = DiscoverCtx::new();
     let rows = GoModAdapter::new().discover(&ctx).expect("discovery");
-    assert!(rows.is_empty());
+    assert_empty(&rows);
 }
 
 /// The tag templates the adapter builds render the documented shapes.
