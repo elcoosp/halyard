@@ -44,3 +44,5 @@ ship.toml
 # ship delivery artifacts (session-local, never committed)
 ship.toml
 .github/pr-body.md
+ship.toml
+.github/pr-body.md
