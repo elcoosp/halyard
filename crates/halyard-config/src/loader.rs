@@ -54,6 +54,7 @@ const ROOT_KEYS: &[&str] = &[
     "forge",
     "package",
     "link",
+    "generic",
 ];
 
 /// Valid keys under a dotted path (`""` = root); `None` for a path that is
@@ -80,8 +81,11 @@ fn section_keys(path: &str) -> Option<&'static [&'static str]> {
         "forge" => Some(&["kind", "commit_mode"]),
         "package.element" => Some(&["name", "release", "include", "exclude", "channel"]),
         "link.element" => Some(&["from", "to", "mode"]),
-        // `package` / `link` are array-of-tables: their elements are
-        // validated against the `<path>.element` keys instead.
+        // M8 ADR-0062: the `[[generic]]` array-of-tables elements.
+        "generic.element" => Some(&["name", "file", "pattern"]),
+        // `package` / `link` / `generic` are array-of-tables: their
+        // elements are validated against the `<path>.element` keys
+        // instead.
         _ => None,
     }
 }
@@ -145,10 +149,10 @@ fn check_element(
     parent_path: &str,
     label: &str,
 ) -> Result<(), ConfigError> {
-    let known = if parent_path == "package" {
-        section_keys("package.element")
-    } else {
-        section_keys("link.element")
+    let known = match parent_path {
+        "package" => section_keys("package.element"),
+        "generic" => section_keys("generic.element"),
+        _ => section_keys("link.element"),
     };
     let Some(known) = known else {
         return Ok(());
