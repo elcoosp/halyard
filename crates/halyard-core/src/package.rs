@@ -59,6 +59,17 @@ pub enum Ecosystem {
     /// the local `~/.gem/credentials` file) — the row publishes as the
     /// engine's disabled shape.
     RubyGems,
+    /// The `generic` ecosystem (config-declared packages over
+    /// regex-edited version files, M8 — ADR-0062): the escape hatch for
+    /// repositories no manifest grammar covers. The version is the named
+    /// `version` capture group of the user-declared pattern in the
+    /// declared file (only semver-parseable captures are canonical per
+    /// ADR-0056's discipline), and the release carries **no publish
+    /// decision** — the plan names no registry for the generic
+    /// ecosystem, and inventing one is precisely what the escape hatch
+    /// must not do (the tag is the artifact; the user's own pipeline
+    /// owns publishing).
+    Generic,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -66,8 +77,9 @@ pub enum Ecosystem {
 
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
-    /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, `rubygems`, or the
-    /// interner-resolved custom name (`custom` for a foreign symbol).
+    /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, `rubygems`,
+    /// `generic`, or the interner-resolved custom name (`custom` for a
+    /// foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
@@ -78,6 +90,7 @@ impl Ecosystem {
             Self::Nuget => "nuget",
             Self::Dart => "dart",
             Self::RubyGems => "rubygems",
+            Self::Generic => "generic",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
