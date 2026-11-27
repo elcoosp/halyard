@@ -29,7 +29,12 @@ use tempfile::TempDir;
 struct PipelineProbe;
 
 impl ManifestVersionProbe for PipelineProbe {
-    fn manifest_version(&self, ecosystem: &str, manifest: &[u8]) -> Option<String> {
+    fn manifest_version(
+        &self,
+        ecosystem: &str,
+        _manifest_path: &str,
+        manifest: &[u8],
+    ) -> Option<String> {
         match ecosystem {
             "cargo" => halyard_eco_cargo::manifest_version(manifest),
             "npm" => halyard_eco_npm::manifest_version(manifest),
