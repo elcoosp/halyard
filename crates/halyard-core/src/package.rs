@@ -49,6 +49,16 @@ pub enum Ecosystem {
     /// env var — the row publishes as the engine's disabled shape until
     /// a pub.dev auth grammar exists.
     Dart,
+    /// The `RubyGems` ecosystem (`*.gemspec` manifests, M8 — ADR-0061):
+    /// versions are the gemspec's `version` attribute rows at the
+    /// `Gem::Version` grammar (*"Versions shall be represented by three
+    /// non-negative integers, separated by periods (e.g. 3.1.4)."*; only
+    /// semver-parseable spellings are canonical per ADR-0056's
+    /// discipline), and `RubyGems` publishing carries no argv arm yet (the
+    /// documented flow pushes a built `.gem` whose credential surface is
+    /// the local `~/.gem/credentials` file) — the row publishes as the
+    /// engine's disabled shape.
+    RubyGems,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -56,7 +66,7 @@ pub enum Ecosystem {
 
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
-    /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, or the
+    /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, `rubygems`, or the
     /// interner-resolved custom name (`custom` for a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
@@ -67,6 +77,7 @@ impl Ecosystem {
             Self::Maven => "maven",
             Self::Nuget => "nuget",
             Self::Dart => "dart",
+            Self::RubyGems => "rubygems",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
