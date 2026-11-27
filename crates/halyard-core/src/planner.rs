@@ -545,8 +545,13 @@ fn release_row(
     // remainder of the M8 row. A tag-only release (M8 Go, ADR-0057)
     // carries **no** publish decision at all (`publish: None`): the
     // release tag is the artifact, no registry exists, and the publish
-    // engine's documented skip keeps the row out of every forecast.
-    let publish = if pkg.ecosystem.is_tag_only() {
+    // engine's documented skip keeps the row out of every forecast. The
+    // same no-decision shape governs the `generic` ecosystem (M8
+    // ADR-0062): a regex-edited version file names no registry — there
+    // is no registry name to record, and inventing one is precisely
+    // what the escape hatch must not do — so the row versions and tags
+    // and the engine records the `no_publish_contract` skip.
+    let publish = if pkg.ecosystem.is_tag_only() || pkg.ecosystem == Ecosystem::Generic {
         None
     } else {
         let (registry, npm_access, npm_provenance) = match pkg.ecosystem {
