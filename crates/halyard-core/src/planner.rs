@@ -569,6 +569,14 @@ fn release_row(
             // the registry name is truthful the day the auth arm flips
             // it.
             Ecosystem::Dart => ("pub.dev".to_owned(), None, None),
+            // RubyGems rows ride the engine's disabled shape until the
+            // `gem build`/`gem push` argv arm lands (ADR-0061 D5 — the
+            // documented flow pushes a built `.gem` and its credential
+            // surface is the local `~/.gem/credentials` file):
+            // `publishable = false` at discovery keeps `enabled` false —
+            // the registry name is truthful the day the argv arm flips
+            // it.
+            Ecosystem::RubyGems => ("rubygems.org".to_owned(), None, None),
             _ => (
                 cfg.publish_npm_registry.clone(),
                 cfg.publish_npm_access.clone(),
