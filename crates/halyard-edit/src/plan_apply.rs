@@ -347,7 +347,8 @@ fn map_lockfile_failure(failure: LockfileFailure) -> EditError {
 /// `maven` — the semantic version patch, M8 ADR-0058, any `*.csproj` →
 /// `nuget` — the semantic version patch, M8 ADR-0059, `pubspec.yaml` →
 /// `dart` — the semantic version patch, M8 ADR-0060, any `*.gemspec` →
-/// `rubygems` — the semantic version patch, M8 ADR-0061).
+/// `rubygems` — the semantic version patch, M8 ADR-0061, `Dockerfile` →
+/// `docker` — the semantic version patch, M8 ADR-0063).
 fn adapter_for<'a>(
     workspace: &Workspace,
     file: &RelPath,
@@ -368,6 +369,9 @@ fn adapter_for<'a>(
                 // M8 (ADR-0060): the dart adapter's semantic patch owns
                 // the pubspec version row.
                 "pubspec.yaml" => Some("dart"),
+                // M8 (ADR-0063): the docker adapter's semantic patch
+                // owns the OCI version label.
+                "Dockerfile" => Some("docker"),
                 _ => None,
             };
             by_name
