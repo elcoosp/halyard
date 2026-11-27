@@ -1557,3 +1557,98 @@ fn publish_dry_records_disabled_for_a_nuget_workspace() -> Result<(), BoxError> 
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0060): the dart lane — the publish posture. A dart release
+// carries a publish decision with the engine's disabled shape: the row
+// records `publish_disabled` (pub.dev publishing documents no token env
+// var — no auth arm the engine could carry; no registry probe), zero
+// targets, no tool spawn.
+// ---------------------------------------------------------------------------
+
+/// A dart pub workspace: the root plus one member with a canonical
+/// `version` row, a feat commit driving the plan row.
+fn build_dart_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "pubspec.yaml".to_owned(),
+                concat!(
+                    "# the pub workspace root (the documented shape)\n",
+                    "name: _\n",
+                    "publish_to: none\n",
+                    "environment:\n  sdk: ^3.6.0\n",
+                    "workspace:\n  - packages/app\n",
+                )
+                .to_owned(),
+            ),
+            (
+                "packages/app/pubspec.yaml".to_owned(),
+                concat!(
+                    "# the app member\n",
+                    "name: app\n",
+                    "version: 1.0.0\n",
+                    "resolution: workspace\n",
+                    "dependencies:\n  http: ^1.2.0\n",
+                )
+                .to_owned(),
+            ),
+            (
+                "halyard.toml".to_owned(),
+                "[publish]\nenabled = true\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold dart workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "packages/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// The dry forecast for a dart workspace: zero publish targets, the
+/// release recorded as a `publish_disabled` skip (the row's publish
+/// decision carries the engine's disabled shape — `registry` names the
+/// canonical pub.dev, `enabled` is false until the auth arm lands), and
+/// a successful offline run.
+#[test]
+fn publish_dry_records_disabled_for_a_dart_workspace() -> Result<(), BoxError> {
+    let fx = build_dart_workspace("dart-dry")?;
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+    )?;
+    assert!(out.status.success(), "the dart forecast succeeded: {text}");
+    let value: serde_json::Value = serde_json::from_str(
+        text.trim_start_matches(char::is_whitespace)
+            .trim_start_matches(|c: char| c != '{'),
+    )
+    .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
+    assert_eq!(
+        value.get("targets").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero publish targets: {text}"
+    );
+    let skips = value
+        .get("not_targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("not_targets is an array")?;
+    let member = skips
+        .iter()
+        .find(|row| row.get("package").and_then(serde_json::Value::as_str) == Some("app"))
+        .ok_or("the dart release is recorded as a skip")?;
+    assert_eq!(
+        member.get("reason").and_then(serde_json::Value::as_str),
+        Some("publish_disabled"),
+        "the disabled-shape skip reason: {text}"
+    );
+    Ok(())
+}
