@@ -227,3 +227,70 @@ fn apply_rewrites_the_csproj_version_of_a_nuget_workspace() -> Result<(), BoxErr
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0060): the dart lane — the semantic in-place pubspec edit. The
+// plan's own-version patch lands on the `version` value's span; the
+// surrounding YAML (quotes, comments, every other row) never moves (I4).
+// ---------------------------------------------------------------------------
+
+/// A dart pub workspace: the root plus one member with a canonical
+/// `version` row, a feat commit driving the member's plan row (minor:
+/// 1.0.0 → 1.1.0).
+fn build_dart_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    let scaffold = vec![
+        (
+            "pubspec.yaml".to_owned(),
+            concat!(
+                "# the pub workspace root (the documented shape)\n",
+                "name: _\n",
+                "publish_to: none\n",
+                "environment:\n  sdk: ^3.6.0\n",
+                "workspace:\n  - packages/app\n",
+            )
+            .to_owned(),
+        ),
+        (
+            "packages/app/pubspec.yaml".to_owned(),
+            concat!(
+                "# the app member\n",
+                "name: app\n",
+                "version: 1.0.0\n",
+                "resolution: workspace\n",
+                "dependencies:\n  http: ^1.2.0\n",
+            )
+            .to_owned(),
+        ),
+    ];
+    fx.commit_with(&CommitSpec::files(
+        scaffold,
+        "chore: scaffold dart workspace",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "packages/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// `halyard apply` rewrites the pubspec's version in place: the value
+/// swaps 1.0.0 → 1.1.0 and every other byte of the pubspec is identical
+/// (I4) — the comment, the constraint row, the resolution marker.
+#[test]
+fn apply_rewrites_the_pubspec_version_of_a_dart_workspace() -> Result<(), BoxError> {
+    let fx = build_dart_workspace("dart-apply")?;
+    let (ok, out) = halyard(fx.root(), &["apply"])?;
+    assert!(ok, "apply failed: {out}");
+    let app = std::fs::read_to_string(fx.root().join("packages/app/pubspec.yaml"))?;
+    assert!(app.contains("version: 1.1.0\n"), "the version moved: {app}");
+    assert!(
+        app.contains("# the app member\nname: app\n") && app.contains("http: ^1.2.0"),
+        "the surrounding YAML never moves: {app}"
+    );
+    Ok(())
+}
