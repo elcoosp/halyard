@@ -427,6 +427,39 @@ multi-file package form, shared version files, multiple-match
 grammars, and the corpus-lane replay stay the recorded-open
 remainders.)*
 
+*(As-built note, 2026-11-27 (ADR-0063): the workspace's 30th member is
+the M8 **`Docker image tags`** cell — the `halyard-eco-docker` adapter
+(the hand-rolled `Dockerfile` scanner — offset-preserving comment
+skipping and continuation joining, the VERIFIED grammar in
+`docs/research/docker-image-tags.md` from the Dockerfile reference and
+the OCI Image Spec's annotations table), the per-file package row shape
+(every `Dockerfile` in the committed tree is a standalone package row —
+the ADR-0061 RubyGems shape), the identity chain (the OCI
+`org.opencontainers.image.title` label → the containing directory's
+name → the manifest path; collisions ride the orchestrator's
+`E-DISC-DUPLICATE` refusal), the OCI version-label strategy
+(`org.opencontainers.image.version` — *"version of the packaged
+software"* — is the edit site; only semver-parseable values are
+canonical per ADR-0056's fail-closed discipline — every other spelling
+is warned, unpublishable, never rewritten; a `FROM` row's tag names the
+**base** image and is consumed unmodeled; Docker's own override rule
+(*"the most-recently-applied value overrides any previously-set
+value"*) makes the LAST version label the site, superseded rows warn),
+the byte-preserving edit seam (read-back re-scan verified; the verify
+pins the text, never the offset), the `Dockerfile` routing in the apply
+manifest map, the tag-target probe's explicit `docker` arm, and the
+publish posture: rows carry `publishable = false` until a
+`docker build`/`docker push` argv grammar exists (building and pushing
+an image spawns the local daemon) — the planner's registry arm names
+the documented default registry host `docker.io` (an unqualified
+`docker pull debian` resolves to `docker.io/library/debian:latest`),
+the engine records the `publish_disabled` skip, no tool is spawned. The
+xtask layer rule (`halyard-eco-docker`: core + `semver`; 30 crates ✓).
+The suffixed/`-f` manifest variants, stage-reachability modeling
+(multi-stage labels reaching the final image only through a
+`FROM`-based chain), the argv arm, the docker.io probe, and the
+corpus-lane replay stay the recorded-open remainders.)*
+
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
 
@@ -1347,6 +1380,28 @@ through the owning package's ecosystem, and the path-aware tag-target
 probe arm. The cell's recorded-open remainders: the multi-file package
 form and pattern arrays, shared version files, multiple-match grammars,
 and the corpus-lane replay on 2 real repos.)*
+
+*(As-built note, 2026-11-27 (ADR-0063): the M8 row's **`Docker image
+tags`** cell ships — the last M8 ecosystem cell: the `Dockerfile`
+grammar (the hand-rolled, offset-preserving scanner — the VERIFIED
+quote set in `docs/research/docker-image-tags.md`), the per-file
+package row shape (every `Dockerfile` in the committed tree is a
+standalone package row), the identity chain (the OCI
+`org.opencontainers.image.title` label → the containing directory → the
+manifest path), the OCI version-label strategy
+(`org.opencontainers.image.version` is the edit site; only
+semver-parseable values are canonical per ADR-0056's discipline; a
+`FROM` row's tag names the **base** image and is consumed unmodeled;
+Docker's documented override rule makes the LAST version label the
+site, superseded rows warn), the byte-preserving edit seam (read-back
+re-scan verified), the apply-shell routing (`Dockerfile` → `docker`),
+the tag-target probe's explicit `docker` arm, and the publish posture
+(the engine's disabled shape — the registry arm names the documented
+default host `docker.io`, the engine records the `publish_disabled`
+skip, no tool is spawned). The cell's recorded-open remainders: the
+suffixed/`-f` manifest variants, stage-reachability modeling, the
+`docker build`/`docker push` argv arm, the docker.io probe, and the
+corpus-lane replay on 2 real repos.)*
 
 ### YEAR 3 — Moat & platform
 
