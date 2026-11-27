@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use halyard_forge::transport::{HttpRequest, HttpResponse, MemoryTransport};
 use halyard_registry::{
-    CratesIo, Npm, PyPi, Registry, RegistrySleeper, VisibilityPolicy, wait_until_visible,
+    CratesIo, Npm, Nuget, PyPi, Registry, RegistrySleeper, VisibilityPolicy, wait_until_visible,
 };
 
 type BoxError = Box<dyn std::error::Error>;
@@ -312,4 +312,70 @@ fn pypi_probe_non_json_answer_fails_closed() {
     let registry = PyPi::with_registry_base(Arc::new(transport), "https://pypi.test");
     let error = registry.published("uv", "0.13.9").expect_err("must fail");
     assert_eq!(error.code(), "E-REG-PROTOCOL");
+}
+
+// The nuget.org flat-container probe (the §17 M8 `NuGet` cell's
+// recorded-open probe arm, ADR-0059): the VERIFIED `PackageBaseAddress`
+// grammar (`docs/research/nuget-grammars.md` §11 —
+// `GET {@id}/{LOWER_ID}/index.json`, *"If the package source has no
+// versions of the provided package ID, a 404 status code is returned"*,
+// *"The strings in the `versions` array are all lowercased, normalized
+// NuGet version strings"*; the sample base
+// `https://api.nuget.org/v3-flatcontainer/`).
+#[test]
+fn nuget_probe_urls_follow_the_verified_flat_container_grammar() -> Result<(), BoxError> {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(200, r#"{"versions":["13.0.3"]}"#));
+    let registry = Nuget::new(Arc::new(transport.clone()));
+    assert!(registry.published("Newtonsoft.Json", "13.0.3")?);
+    let sent: &[HttpRequest] = &transport.sent();
+    let sent = sent.first().ok_or("the probe sent one request")?;
+    assert_eq!(sent.method, "GET");
+    assert_eq!(
+        sent.url, "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/index.json",
+        "the id is lowercased per the documented LOWER_ID rule"
+    );
+    Ok(())
+}
+
+#[test]
+fn nuget_probe_404_means_not_published_and_versions_mean_published() -> Result<(), BoxError> {
+    // §13 step 2: the flat container 404s a package id with no versions
+    // (the documented response contract) — the resume path reads it as
+    // "not published yet", not an error.
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(404, ""));
+    let registry = Nuget::new(Arc::new(transport));
+    assert!(!registry.published("absent.pkg", "1.0.0")?);
+    Ok(())
+}
+
+#[test]
+fn nuget_probe_absent_version_row_is_not_published() -> Result<(), BoxError> {
+    // The id exists but the requested version is not among the rows
+    // (the visibility-wait continuation state).
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(200, r#"{"versions":["9.0.1"]}"#));
+    let registry = Nuget::new(Arc::new(transport));
+    assert!(!registry.published("newtonsoft.json", "13.0.3")?);
+    Ok(())
+}
+
+#[test]
+fn nuget_probe_refuses_uninterpretable_documents_fail_closed() {
+    let transport = MemoryTransport::new();
+    transport.enqueue(response(200, "not json"));
+    let registry = Nuget::new(Arc::new(transport));
+    let error = registry
+        .published("broken.pkg", "1.0.0")
+        .expect_err("garbage refuses");
+    assert_eq!(error.code(), "E-REG-PROTOCOL", "{error}");
+}
+
+#[test]
+fn nuget_probe_invalid_names_never_reach_the_wire() {
+    let transport = MemoryTransport::new();
+    let registry = Nuget::new(Arc::new(transport));
+    assert!(registry.published("", "1.0.0").is_err());
+    assert!(registry.published("has space", "1.0.0").is_err());
 }
