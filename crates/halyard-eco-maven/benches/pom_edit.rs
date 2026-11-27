@@ -26,23 +26,52 @@ const ROOT_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 fn version_span(pom: &str) -> (u32, u32) {
     let marker = "<version>";
-    let start = pom.find(marker).expect("fixture carries the version") + marker.len();
-    let end = pom[start..].find("</version>").expect("fixture closes") + start;
-    (start as u32, end as u32)
+    let close = "</version>";
+    // The fixture is a constant that must carry the version row; a miss
+    // exits loudly (bench fns are not `#[test]`, so the test-lint
+    // allowance does not reach them — the csproj_edit bench posture).
+    let fail = |what: &str| -> ! {
+        eprintln!("the bench fixture must carry {what}");
+        std::process::exit(101);
+    };
+    let Some(open_idx) = pom.find(marker) else {
+        fail(marker);
+    };
+    let value_start = open_idx + marker.len();
+    let Some(close_idx) = pom
+        .match_indices(close)
+        .map(|(idx, _)| idx)
+        .find(|idx| *idx >= value_start)
+    else {
+        fail(close);
+    };
+    let to_u32 = |value: usize, what: &str| u32::try_from(value).unwrap_or_else(|_| fail(what));
+    (to_u32(value_start, marker), to_u32(close_idx, close))
 }
 
 fn edit() {
-    let file = RelPath::new("pom.xml").expect("fixture path");
+    // The fixture is a constant that must edit; a failure exits loudly
+    // (bench fns are not `#[test]`, so the test-lint allowance does not
+    // reach them — the csproj_edit bench posture).
+    let fail = |what: &str| -> ! {
+        eprintln!("the bench fixture must {what}");
+        std::process::exit(101);
+    };
+    let Some(file) = RelPath::new("pom.xml") else {
+        fail("carry a normalized fixture path");
+    };
     let (start, end) = version_span(ROOT_POM);
     let patches = [PlanPatch {
         start,
         end,
         text: "1.5.0".to_owned(),
     }];
-    let out = MavenAdapter::new()
-        .edit_versions(&file, ROOT_POM.as_bytes(), &patches)
-        .expect("bench fixture edits");
-    assert_eq!(out.applied, 1);
+    match MavenAdapter::new().edit_versions(&file, ROOT_POM.as_bytes(), &patches) {
+        Ok(out) if out.applied == 1 => {}
+        _ => {
+            fail("edit cleanly");
+        }
+    }
 }
 
 fn bench(c: &mut Criterion) {
