@@ -87,8 +87,9 @@ fn the_sdk_style_workspace_discovers_rows_with_the_proven_edge() {
     );
     assert_eq!(app.version_source, RawVersionSource::Local);
     assert!(
-        !app.publishable,
-        "no dotnet argv grammar exists yet — the disabled publish posture"
+        app.publishable,
+        "the dotnet argv arm landed (ADR-0059 continued) — the documented \
+         packability gate governs, not the disabled posture"
     );
     assert_eq!(
         lib.name, "Lib",
@@ -492,4 +493,54 @@ fn only_csproj_files_are_nuget_manifests() {
     let ctx = ctx_with(&[("pom.xml", "<project/>")]);
     let rows = NuGetAdapter::new().discover(&ctx).expect("discovery");
     assert_empty(&rows);
+}
+
+// The §17 M8 `NuGet` cell's publish half (ADR-0059): rows carry
+// `publishable = true` the day the `dotnet` argv arm lands — the
+// documented packability posture (`docs/research/nuget-grammars.md`
+// §10) is the gate: *"IsPackable — A Boolean value that specifies
+// whether the project can be packed. The default value is `true`"*;
+// `<IsPackable>false</IsPackable>` keeps the row unpublishable.
+#[test]
+fn canonical_rows_publish_and_unpackable_rows_do_not() -> Result<(), Box<dyn std::error::Error>> {
+    // A ref-free canonical row (a `ProjectReference` outside the ctx
+    // refuses at the glob gate — the proven-edge contract).
+    const CANONICAL: &str = r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackageId>Contoso.App</PackageId>
+    <PackageVersion>1.2.3</PackageVersion>
+  </PropertyGroup>
+</Project>
+"#;
+    let rows = NuGetAdapter::new()
+        .discover(&ctx_with(&[("App.csproj", CANONICAL)]))
+        .expect("discovery");
+    let row = rows.first().ok_or("the canonical row exists")?;
+    assert!(
+        row.publishable,
+        "a canonical SDK-style row is publishable (the argv arm landed)"
+    );
+
+    let unpackable = r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>
+"#;
+    let rows = NuGetAdapter::new()
+        .discover(&ctx_with(&[("App.csproj", unpackable)]))
+        .expect("discovery");
+    let row = rows.first().ok_or("the unpackable row exists")?;
+    assert!(
+        !row.publishable,
+        "IsPackable=false keeps the row unpublishable"
+    );
+    assert!(
+        row.warnings.iter().any(|w| w.code == "not-packable"),
+        "the packability refusal is a recorded warning: {:?}",
+        row.warnings
+    );
+    Ok(())
 }
