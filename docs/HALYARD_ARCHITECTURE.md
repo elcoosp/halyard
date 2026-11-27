@@ -405,6 +405,28 @@ planner's registry arm names `pub.dev`, the engine records the
 the pub.dev probe arm, the `dart pub get` lockfile refresh, the glob
 superset beyond the single-`*` form, and the corpus-lane replay).)*
 
+*(As-built note, 2026-11-27 (ADR-0062): the workspace's 29th member is
+the M8 **`generic`** cell — the `halyard-eco-generic` adapter (the
+config-declared escape hatch: `[[generic]]` entries in `halyard.toml` —
+`name`/`file`/`pattern` — validated at load with the new `E-CFG-GENERIC`
+code; the locator pattern compiles under the `regex` crate's syntax and
+carries exactly one capture group named `version`, the VERIFIED
+prior-art grammar in `docs/research/generic-version-files.md`), the
+config→discovery channel made real (`DiscoverInput.generic`; the shell
+resolves config **before** discovery and feeds `[[link]]` entries
+through the same channel — the surface had been resolved-but-unwired
+since M4.7), the semver-canonical capture strategy (ADR-0056's
+fail-closed discipline — non-parseable captures are warned, no edit
+site, never rewritten), the no-publish-decision row shape (`publish:
+None` — the plan names no registry for the generic ecosystem, and
+inventing one is precisely what the escape hatch must not do; the
+engine records the `no_publish_contract` skip), and the xtask layer
+rule (`halyard-eco-generic`: core + `semver` + `regex`;
+`halyard-config` consciously gains `regex`; 29 crates ✓). The
+multi-file package form, shared version files, multiple-match
+grammars, and the corpus-lane replay stay the recorded-open
+remainders.)*
+
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
 
@@ -1306,6 +1328,25 @@ cell's recorded-open remainders: the VERIFIED `dart pub publish` argv
 arm, the pub.dev probe arm, the `dart pub get` lockfile refresh, the
 glob superset beyond the single-`*` form, and the corpus-lane replay
 on 2 real repos.)*
+
+*(As-built note, 2026-11-27 (ADR-0062): the M8 row's **`generic`** cell
+ships — the config-declared escape hatch for repositories no manifest
+grammar covers: the `[[generic]]` config surface (`name`/`file`/
+`pattern`, one entry = one package over one regex-edited version file),
+the load-time validation with the new `E-CFG-GENERIC` code (the pattern
+compiles under the `regex` crate's syntax and carries exactly one
+capture group named `version`; names and files are unique), the
+config→discovery channel (`DiscoverInput.generic`; the shell resolves
+config before discovery — the `[[link]]` entries ride the same channel
+into `detect_links` for the first time), the semver-canonical capture
+strategy per ADR-0056's discipline, the row shape (`publishable =
+false`, the release carries **no publish decision** — the plan names no
+registry, the tag is the artifact; the engine records the
+`no_publish_contract` skip), the planner gates, the apply-shell routing
+through the owning package's ecosystem, and the path-aware tag-target
+probe arm. The cell's recorded-open remainders: the multi-file package
+form and pattern arrays, shared version files, multiple-match grammars,
+and the corpus-lane replay on 2 real repos.)*
 
 ### YEAR 3 — Moat & platform
 
