@@ -39,6 +39,11 @@ pub struct HalyardConfig {
     /// Explicit polyglot links (`[[link]]`, §6.5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link: Vec<LinkCfg>,
+    /// Config-declared packages over regex-edited version files
+    /// (`[[generic]]`, M8 ADR-0062) — the escape hatch for repositories
+    /// no manifest grammar covers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generic: Vec<GenericCfg>,
 }
 
 /// `[repo]` section.
@@ -338,6 +343,28 @@ pub enum LinkMode {
     Cascade,
     /// Source and target always carry the same version.
     Lockstep,
+}
+
+/// `[[generic]]` config-declared package (M8 ADR-0062): one entry is one
+/// package whose version lives in one plain-text file at the text the
+/// declared pattern's named `version` capture group spans. The loader
+/// validates the entry (`E-CFG-GENERIC`): the pattern compiles under the
+/// `regex` crate's syntax and carries exactly one capture group, named
+/// `version`; the file is a normalized repo-relative path; names and
+/// files are unique across entries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema-gen", derive(schemars::JsonSchema))]
+pub struct GenericCfg {
+    /// The package name (the identity plans, tags and reports use).
+    pub name: String,
+    /// The version file (normalized, repo-relative) — the package's
+    /// manifest row.
+    pub file: String,
+    /// The locator pattern: the `regex` crate's syntax, exactly one
+    /// named capture group `version` spanning the version text (the
+    /// VERIFIED prior-art grammar,
+    /// `docs/research/generic-version-files.md` §1.1).
+    pub pattern: String,
 }
 
 /// JSON Schema document (`draft 2020-12`) for the `halyard.toml` v1 format,
