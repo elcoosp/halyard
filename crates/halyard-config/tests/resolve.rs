@@ -748,3 +748,180 @@ fn npm_publish_options_layer_high_over_low() -> Result<(), Box<dyn Error>> {
     assert_eq!(resolved.publish_npm_provenance, Some(false));
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// M8 (ADR-0062): the `[[generic]]` surface — validation grammar (the
+// pattern compiles and carries exactly one capture group named
+// `version`; the file is a normalized repo-relative path; names and
+// files are unique) and the resolved specs.
+// ---------------------------------------------------------------------------
+
+/// A valid one-entry config, parsed through the loader.
+fn generic_config(pattern: &str, file: &str) -> Result<HalyardConfig, Box<dyn Error>> {
+    let src = format!(
+        r#"
+[[generic]]
+name = "squid-utils"
+file = "{file}"
+pattern = '{pattern}'
+"#
+    );
+    Ok(halyard_config::load_from_str(&src)?)
+}
+
+#[test]
+fn generic_entries_resolve_into_specs() -> Result<(), Box<dyn Error>> {
+    let resolved = resolve(&[
+        Layer::Defaults,
+        Layer::File(generic_config(r"(?<version>\d+\.\d+\.\d+)", "VERSION")?),
+    ])?;
+    assert_eq!(resolved.generic.len(), 1, "the entry resolves");
+    let spec = resolved.generic.first().ok_or("one spec")?;
+    assert_eq!(spec.name, "squid-utils");
+    assert_eq!(spec.file, "VERSION");
+    assert_eq!(spec.pattern, r"(?<version>\d+\.\d+\.\d+)");
+    Ok(())
+}
+
+#[test]
+fn a_pattern_without_a_named_version_group_refuses() {
+    let error = resolve(&[
+        Layer::Defaults,
+        // The pattern matches but names no `version` group: ambiguous
+        // intent, fail closed naming the documented spelling.
+        Layer::File(generic_config(r"\d+\.\d+\.\d+", "VERSION").expect("the config parses")),
+    ])
+    .expect_err("the unnamed match refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+    assert!(
+        error.to_string().contains("(?<version>"),
+        "the error names the documented spelling: {error}"
+    );
+}
+
+#[test]
+fn a_pattern_with_an_unnamed_capture_group_refuses() {
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(generic_config(r"(\d+\.\d+\.\d+)", "VERSION").expect("the config parses")),
+    ])
+    .expect_err("the unnamed capture group refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+}
+
+#[test]
+fn a_pattern_with_two_capture_groups_refuses() {
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(
+            generic_config(r"(?<version>\d+)\.(?<minor>\d+)", "VERSION")
+                .expect("the config parses"),
+        ),
+    ])
+    .expect_err("two capture groups refuse");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+}
+
+#[test]
+fn a_non_compiling_pattern_refuses() {
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(generic_config(r"(?<version>[unclosed", "VERSION").expect("the config parses")),
+    ])
+    .expect_err("the broken pattern refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+    assert!(
+        error.to_string().contains("does not compile"),
+        "the compile error is named: {error}"
+    );
+}
+
+#[test]
+fn a_non_normalized_file_refuses() {
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(
+            generic_config(r"(?<version>\d+\.\d+\.\d+)", "../VERSION").expect("the config parses"),
+        ),
+    ])
+    .expect_err("the non-normalized path refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+}
+
+#[test]
+fn duplicate_names_and_files_refuse() -> Result<(), Box<dyn Error>> {
+    let src = r#"
+[[generic]]
+name = "app"
+file = "VERSION"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+
+[[generic]]
+name = "app"
+file = "OTHER"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+"#;
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(halyard_config::load_from_str(src)?),
+    ])
+    .expect_err("the duplicate name refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+    let src = r#"
+[[generic]]
+name = "app"
+file = "VERSION"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+
+[[generic]]
+name = "other"
+file = "VERSION"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+"#;
+    let error = resolve(&[
+        Layer::Defaults,
+        Layer::File(halyard_config::load_from_str(src)?),
+    ])
+    .expect_err("the duplicate file refuses");
+    assert_eq!(error.code(), "E-CFG-GENERIC");
+    Ok(())
+}
+
+#[test]
+fn generic_entries_concatenate_low_to_high() -> Result<(), Box<dyn Error>> {
+    let low = generic_config(r"(?<version>\d+\.\d+\.\d+)", "VERSION")?;
+    let src = r#"
+[[generic]]
+name = "other"
+file = "pkg/VERSION"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+"#;
+    let high = halyard_config::load_from_str(src)?;
+    let resolved = resolve(&[Layer::Defaults, Layer::File(low), Layer::File(high)])?;
+    assert_eq!(
+        resolved
+            .generic
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["squid-utils", "other"],
+        "the arrays concatenate in layer order"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unknown_key_inside_a_generic_entry_refuses_with_did_you_mean() {
+    let src = r#"
+[[generic]]
+name = "app"
+filez = "VERSION"
+pattern = '(?<version>\d+\.\d+\.\d+)'
+"#;
+    let error = halyard_config::load_from_str(src).expect_err("the unknown key refuses");
+    assert_eq!(error.code(), "E-CFG-UNKNOWN-KEY");
+    assert!(
+        error.to_string().contains("`file`"),
+        "the did-you-mean suggestion names the valid key: {error}"
+    );
+}
