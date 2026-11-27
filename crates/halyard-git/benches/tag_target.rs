@@ -22,7 +22,12 @@ const PIN_DEPTH: usize = 500;
 struct BenchProbe;
 
 impl ManifestVersionProbe for BenchProbe {
-    fn manifest_version(&self, _ecosystem: &str, manifest: &[u8]) -> Option<String> {
+    fn manifest_version(
+        &self,
+        _ecosystem: &str,
+        _manifest_path: &str,
+        manifest: &[u8],
+    ) -> Option<String> {
         let text = std::str::from_utf8(manifest).ok()?;
         for line in text.lines() {
             let line = line.trim();
