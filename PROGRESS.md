@@ -3677,6 +3677,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   attested+signed release run (credentials/live CI), (3) the M2.6
   dhat re-audit with the cache warm.
 | M8 `generic` cell (ADR-0062) | done (row partial: corpus replay + multi-file packages + shared files + multiple-match grammars recorded-open) | (tree left dirty; no commits) | M1: the `halyard-eco-generic` crate (the config-declared escape hatch — the `[[generic]]` surface `name`/`file`/`pattern` validated at load with the new `E-CFG-GENERIC` code + docs page + regenerated schema; the locator pattern compiles under the `regex` crate and carries exactly one capture group named `version`, unnamed groups refuse), `Ecosystem::Generic` + `ManifestFormat::Text` in core, `GenericFileSpec` beside the adapter trait, the adapter's scanner (leftmost match, capture span = edit site, `non-canonical-version`/`no-version`/`unmodeled-match` warnings, missing-file `E-DISC-GLOB`, non-UTF-8 `E-DISC-MANIFEST`), the config→discovery channel (`DiscoverInput.generic`; the shell resolves config BEFORE discovery in `context_with_base`/`cmd_fetch`/`doctor`), the planner's no-publish-decision arm (`publish: None` — no registry name to record, ADR-0062 D3), the xtask layer rule + member guard (29 crates ✓; config consciously gains `regex`). M2: the semantic edit seam (patch span must equal the capture span, right-to-left-safe in-place swap, read-back verify re-matches, idempotent I1, undeclared-file refusal), the apply shell's adapter chaining (the routing resolves through the owning package), the path-aware `ManifestVersionProbe` (the trait gains the manifest path; the shell probe carries the specs; the `generic` arm pairs the declared pattern's canonical capture; 4 sibling impls updated), benches `generic_scan` + `generic_edit`, examples `scan_generic` + `bump_generic`. Red→green on record twice: M1's red = E0432 on `halyard_eco_generic::GenericAdapter`/`GenericFileSpec` + E0599 on `Ecosystem::Generic`/`ManifestFormat::Text` (the plan line the first test pins is §17 M8's *"`generic` (regex-edited version files)"* cell, quoted in the contract tests' module docs); M2's red = the four green-path edit tests failing against the interim fail-closed seam (the go posture), green at the semantic patcher. Docs drift fixed additively: the `[[link]]` config surface had been resolved-but-unwired since M4.7 (every CLI call site passed `DiscoverInput::default()`) — the same channel feeds `detect_links` now; the plan schema regenerated picked up the pre-existing `PlanPublish` doc drift; the loader snapshot gained `generic`. Research note VERIFIED live (Knope's named-group grammar + semver rule, release-please's annotation contrast, the regex crate's group semantics). ADR-0062; arch as-built (crate row + M8 row note); README rows | deferred: the corpus-lane replay on 2 real repos (network-bound, the M7 lane discipline), the multi-file package form + pattern arrays, shared version files, multiple-match grammars, the Maven cell's Gradle half (the plan's own recorded-open gate), the Docker image tags cell + M9-M12+ per plan order | 2026-11-27; session log below |
+| M8 `Docker image tags` cell (ADR-0063) | done (row partial: corpus replay + suffixed/`-f` variants + stage-reachability + argv arm + docker.io probe recorded-open) | (tree left dirty; no commits) | M1: the `halyard-eco-docker` crate (the hand-rolled `Dockerfile` lexer — offset-preserving comment skipping and continuation joining with per-byte original offsets, the VERIFIED grammar in `docs/research/docker-image-tags.md` from docs.docker.com + the OCI Image Spec's annotations table), the per-file row shape (every `Dockerfile` in the committed tree is a standalone package row, the ADR-0061 RubyGems shape), the identity chain (OCI `org.opencontainers.image.title` label → the containing directory's name → the manifest path; collisions ride the orchestrator's `E-DISC-DUPLICATE`), `Ecosystem::Docker` (`resolve()` → `"docker"`) + `ManifestFormat::Dockerfile` in core, the OCI version-label strategy (`org.opencontainers.image.version` — *"version of the packaged software"* — is the edit site; only semver-parseable values are canonical per ADR-0056's discipline; a `FROM` row's tag names the base image and is consumed unmodeled; Docker's documented override rule makes the LAST version label the site, superseded rows warn), the planner's disabled-publish arm (registry `docker.io` — the documented default host an unqualified `docker pull debian` resolves to — `enabled: false` until an argv arm), the `Dockerfile` walk arm in `collect_ctx` (the literal documented default name, root + nested), the fixed-dispatch adapter registration (9th tree-scanned adapter), the xtask layer rule (30 crates ✓), the init zero-package message gains `Dockerfile`. M2: the semantic edit seam (patch span must equal the LAST version label's value span, right-to-left-safe in-place swap, read-back re-scan verify pins the text never the offset, idempotent I1, no-slot + non-UTF-8 refusals), the `Dockerfile` → `docker` routing in the apply manifest map, the tag-target probe's explicit `docker` arm (a label spelling the plan contract cannot parse keeps the documented HEAD fallback), benches `docker_scan` + `docker_edit`, examples `scan_docker` + `bump_docker`. Red→green on record twice: M1's red = E0432 on `halyard_eco_docker::DockerAdapter` + E0599 on `Ecosystem::Docker`/`ManifestFormat::Dockerfile` + the CLI plan e2e (the plan line the first test pins is §17 M8's *"`Docker image tags`"* cell, quoted in the contract tests' module docs); M2's red = the edit-contract + apply e2e failing against the interim fail-closed seam (the go posture), green at the semantic patcher. Micro-debt cleaned additively: the `.gitignore` carried five duplicated ship-delivery block pairs — deduped to one. Research note VERIFIED live (the Dockerfile reference's `LABEL`/`FROM`/format sections + the OCI annotations table + the `docker image pull` default-registry output). ADR-0063; arch as-built (30th-member note + M8 row note); README rows | deferred: the corpus-lane replay on 2 real repos (network-bound, the M7 lane discipline), the suffixed/`-f` manifest variants, stage-reachability modeling, the `docker build`/`docker push` argv arm, the docker.io existence probe, the RubyGems session's missing PROGRESS row + arch note (recorded drift from the ADR-0062 session, not re-scoped here), the Gradle half of the Maven cell (the plan's own recorded-open gate), M9–M12+ per plan order | 2026-11-27; session log below |
 
 ### 2026-11-27 — The M8 `generic` cell (ADR-0062, tree left dirty, no commits)
 
@@ -3772,3 +3773,126 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   corpus replay when a networked lane is available, (2) the M7
   corpus-lane e2e and the live attested+signed release run
   (credentials/live CI), (3) the M2.6 dhat re-audit with the cache warm.
+
+### 2026-11-27 — The M8 `Docker image tags` cell (ADR-0063, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `343f2ac` (the
+  generic session's HEAD — whose own next-start point named this cell).
+  The reconciliation survey ran plan ↔ code ↔ history first: the M8
+  row's remaining cells were `Docker image tags` (fully missing) and the
+  Maven cell's Gradle half (the plan's own recorded-open gate — a
+  `build.gradle(.kts)` version is arbitrary Groovy/Kotlin build code and
+  extracting one without an evaluated, VERIFIED grammar would guess, so
+  it stays the recorded-open remainder ADR-0058 left it as). The
+  Docker cell's missing-in-code evidence: `grep -rni "docker" crates/
+  --include="*.rs"` returns zero code hits; no `halyard-eco-docker`; no
+  docker research note; `git log --all --oneline -S "docker" -i` carries
+  only the docs mentions the ADR-0062 row text introduced; `git branch
+  -a` carries no docker work. M1 = the cell's discover/plan slice; M2 =
+  the release half — from the table, not invented, following the eight
+  landed cells' split. Also recorded at survey time: the RubyGems
+  session's PROGRESS row + session-log section and the arch doc's
+  as-built note are still missing at HEAD (the drift the ADR-0062
+  session recorded belongs to that session's author — left standing,
+  recorded again below).
+- **Grammar verification first.** `docs/research/docker-image-tags.md`
+  VERIFIED live: the Dockerfile reference's format section (*"The
+  instruction is not case-sensitive"*, *"Comment lines are removed
+  before the Dockerfile instructions are executed"*), the `LABEL`
+  section (*"The LABEL instruction adds metadata to an image. A LABEL
+  is a key-value pair."*, the `LABEL <key> = <value> [<key> =
+  <value>...]` syntax, *"You can specify multiple labels on a single
+  line"*, *"use quotes and backslashes as you would in command-line
+  parsing"*, *"Be sure to use double quotes"*, and the override rule
+  *"the most-recently-applied value overrides any previously-set
+  value"*), the `FROM` section (*"The FROM instruction initializes a
+  new build stage and sets the base image"* — the tag is the base
+  image's), the OCI Image Spec annotations table
+  (`org.opencontainers.image.version` — *"version of the packaged
+  software"*, *"version MAY be Semantic versioning-compatible"*), and
+  the `docker image pull` reference (an unqualified pull resolves to
+  `docker.io/library/debian:latest` — the default registry host the
+  planner arm names). No surveyed competitor ships a Dockerfile
+  grammar (Knope's escape hatch and release-please's generic
+  annotations are the vocabularies ADR-0062 already declined to
+  imitate) — the cell rides the OCI spec, the industry-standard
+  metadata vocabulary for images.
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_eco_docker::DockerAdapter`
+  + E0599 on `Ecosystem::Docker`/`ManifestFormat::Dockerfile`; the CLI
+  plan e2e ran red — no docker row, no duplicate refusal; the plan line
+  the first test pins is §17 M8's *"`Docker image tags`"* cell, quoted
+  in the contract tests' module docs). The green: the hand-rolled
+  lexer (`grammar.rs` — offset-preserving comment skipping, continuation
+  joining with per-byte original offsets so a value carried over a
+  continuation keeps its file span; quoted and bare values, quoted keys,
+  multi-pair instructions; non-case-sensitive instructions; `FROM` rows
+  counted and consumed), the per-file row shape (identity chain: OCI
+  title label → containing directory → manifest path; `E-DISC-DUPLICATE`
+  on collisions), the version strategy (the LAST version label is the
+  site per Docker's documented override rule; superseded rows warn
+  `superseded-version-label`; non-semver values warn
+  `non-canonical-version` with no site — never rewritten; no label
+  warns `no-version`), `Ecosystem::Docker` + `ManifestFormat::Dockerfile`
+  in core, the planner's disabled-publish arm (registry `docker.io`,
+  `enabled: false`), the `Dockerfile` walk arm in `collect_ctx`, the
+  fixed-dispatch registration (9th tree-scanned adapter), the xtask
+  layer rule (30 crates ✓), the init message. 9 discovery-contract
+  tests + 2 planner gates + 3 CLI e2e (plan row + planning never
+  mutates the Dockerfile + the duplicate refusal through the JSON
+  envelope) + bench `docker_scan` + example `scan_docker`.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the edit contract against the interim fail-closed seam (the
+  go posture carried over M1): the nine edit-contract tests and the
+  apply e2e failed at red, green at the semantic patcher. The green:
+  `edit_versions` — the patch span must equal the LAST version label's
+  value span (a drifted file refuses `E-EDIT-PATCHES`; a Dockerfile
+  without the label has no slot), the captured bytes swap in place
+  right-to-left-safe (the quotes, the sibling labels, the `FROM` rows,
+  the comments never move — I4), the read-back verify re-scans before
+  acceptance (the verify pins the text, never the offset — a
+  length-changing swap legitimately moves the span; a shape-breaking
+  target refuses `E-EDIT-VERIFY`), the idempotent re-run skips the
+  carried target (I1); the apply shell routes `Dockerfile` → `docker`
+  through the owning package's ecosystem (no file-name guess for
+  foreign files); the tag-target probe gains the explicit `docker` arm
+  (a label spelling the plan contract cannot parse keeps the documented
+  HEAD fallback). 9 edit-contract tests + 3 inline seam tests + the CLI
+  e2e pair (`apply` rewrites the OCI version label in place, every
+  other byte identical; `publish --dry` records the `publish_disabled`
+  skip with the `docker.io` registry named) + bench `docker_edit` +
+  example `bump_docker`.
+- **Docs drift fixed (additive, not a milestone substitute):** the
+  `.gitignore` had accumulated five duplicated ship-delivery block
+  pairs (one per landed session appending its own pair) — deduped to
+  one canonical pair, the ignore behavior unchanged (`git check-ignore`
+  re-verified for `ship.toml` + `.github/pr-body.md`). The init
+  zero-package message names the `Dockerfile` grammar now. **Recorded
+  (not fixed here):** the RubyGems session's PROGRESS row and
+  session-log section and the arch doc's ADR-0061 as-built note stay
+  missing at HEAD — the ADR-0061, README rows and code exist; the row
+  belongs to that session's author.
+- **Micro-debt scanned:** `todo!`/`unimplemented!` zero in the touched
+  surfaces; `allow`/`expect` lint suppressions zero (the lint-hygiene
+  grep stays empty); `DiscoverError::NoPackage` remains defined-but-
+  never-raised (documented + code-string-tested only) — left standing,
+  recorded (the second standing item beside the RubyGems drift).
+- **Honest state at cut-off.** The corpus-lane replay on 2 real repos
+  (the M8 cell's acceptance-row half, network-bound, the M7 lane
+  discipline), the suffixed/`-f` manifest variants (a `Dockerfile.prod`
+  or `-f`-named file is buildable input but not the documented default
+  name), stage-reachability modeling (a label in an intermediate stage
+  reaches the final image only through a `FROM`-based chain — the
+  scanner stays per-file), the `docker build`/`docker push` argv arm
+  and the docker.io existence probe, the Maven cell's Gradle half (the
+  plan's own recorded-open gate), the M7 corpus-lane e2e + the live
+  attested+signed release run (credentials/live CI), and the M2.6 dhat
+  re-audit with the cache warm stay the recorded-open remainders. The
+  M8 row's eight ecosystem cells are now all landed; the next M8-order
+  work is the replay lane.
+- **Next session start point.** (1) the M8 corpus-lane replay (PyPI/
+  Go/Maven/NuGet/Dart/RubyGems/generic/Docker on 2 real repos) when a
+  networked lane is available, (2) the M9 plugin-system milestone per
+  plan order, or the M7 corpus-lane e2e and the live attested+signed
+  release run (credentials/live CI), (3) the M2.6 dhat re-audit with
+  the cache warm.
