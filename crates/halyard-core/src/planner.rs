@@ -582,6 +582,15 @@ fn release_row(
             // the registry name is truthful the day the argv arm flips
             // it.
             Ecosystem::RubyGems => ("rubygems.org".to_owned(), None, None),
+            // Docker rows ride the engine's disabled shape until a
+            // `docker build`/`docker push` argv arm lands (ADR-0063 D5 —
+            // building and pushing an image spawns the local daemon, a
+            // contract no argv grammar exists for): `publishable = false`
+            // at discovery keeps `enabled` false — the registry name is
+            // truthful the day the argv arm flips it (the documented
+            // default registry host: an unqualified `docker pull debian`
+            // resolves to `docker.io/library/debian:latest`).
+            Ecosystem::Docker => ("docker.io".to_owned(), None, None),
             _ => (
                 cfg.publish_npm_registry.clone(),
                 cfg.publish_npm_access.clone(),
