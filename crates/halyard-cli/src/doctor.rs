@@ -346,6 +346,20 @@ fn publish_auth_check() -> Check {
             access: None,
             provenance: None,
         },
+        // The nuget.org lane joins the doctor's publish-auth table (the
+        // §17 M8 `NuGet` cell's argv arm, ADR-0059: NUGET_API_KEY is the
+        // documented variable; absence is `ok` — the tool's own
+        // NuGet.config store governs).
+        halyard_publish::PublishTarget {
+            package: String::new(),
+            version: String::new(),
+            ecosystem: "nuget".to_owned(),
+            registry: "nuget.org".to_owned(),
+            manifest_dir: String::new(),
+            manifest: String::new(),
+            access: None,
+            provenance: None,
+        },
     ];
     match halyard_publish::auth_summary(&auth, &targets) {
         Ok(summary) => {
