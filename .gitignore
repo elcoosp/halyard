@@ -40,3 +40,7 @@ ship.toml
 # Added by the M8 session: the ship manifest and the PR body stay local.
 ship.toml
 .github/pr-body.md
+
+# ship delivery artifacts (session-local, never committed)
+ship.toml
+.github/pr-body.md
