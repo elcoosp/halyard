@@ -54,7 +54,12 @@ impl TextProbe {
 }
 
 impl ManifestVersionProbe for TextProbe {
-    fn manifest_version(&self, ecosystem: &str, manifest: &[u8]) -> Option<String> {
+    fn manifest_version(
+        &self,
+        ecosystem: &str,
+        _manifest_path: &str,
+        manifest: &[u8],
+    ) -> Option<String> {
         self.seen.borrow_mut().push(
             // The test fixtures only ever use these two ecosystems; the
             // leak-free static str keeps the record cheap.
