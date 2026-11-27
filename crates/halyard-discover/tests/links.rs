@@ -44,7 +44,7 @@ fn napi_rs_fixture_links_expected_pairs() {
     ] {
         let root = fixture.root();
         let walked =
-            halyard_discover::collect_ctx(root).unwrap_or_else(|e| unreachable!("walk: {e}"));
+            halyard_discover::collect_ctx(root, &[]).unwrap_or_else(|e| unreachable!("walk: {e}"));
         for path in walked.tree().map(str::to_owned) {
             let bytes =
                 std::fs::read(root.join(&path)).unwrap_or_else(|e| unreachable!("read back: {e}"));
@@ -101,7 +101,7 @@ fn wasm_pack_fixture_links_expected_pair() {
     ] {
         let root = fixture.root();
         let walked =
-            halyard_discover::collect_ctx(root).unwrap_or_else(|e| unreachable!("walk: {e}"));
+            halyard_discover::collect_ctx(root, &[]).unwrap_or_else(|e| unreachable!("walk: {e}"));
         for path in walked.tree().map(str::to_owned) {
             let bytes =
                 std::fs::read(root.join(&path)).unwrap_or_else(|e| unreachable!("read back: {e}"));
@@ -141,6 +141,7 @@ fn explicit_link_fixture_uses_configured_mode() {
     };
     let fixture = build_npm_fixture(&spec).unwrap_or_else(|e| unreachable!("fixture: {e}"));
     let input = DiscoverInput {
+        generic: Vec::new(),
         links: vec![halyard_core::link::ExplicitLinkSpec {
             from: "one".to_owned(),
             to: "two".to_owned(),
@@ -167,6 +168,7 @@ fn explicit_link_unknown_name_errors() {
     };
     let fixture = build_npm_fixture(&spec).unwrap_or_else(|e| unreachable!("fixture: {e}"));
     let input = DiscoverInput {
+        generic: Vec::new(),
         links: vec![halyard_core::link::ExplicitLinkSpec {
             from: "one".to_owned(),
             to: "ghost".to_owned(),
@@ -209,7 +211,7 @@ fn workspace_path_fixture_links_colocation() {
     ] {
         let root = fixture.root();
         let walked =
-            halyard_discover::collect_ctx(root).unwrap_or_else(|e| unreachable!("walk: {e}"));
+            halyard_discover::collect_ctx(root, &[]).unwrap_or_else(|e| unreachable!("walk: {e}"));
         for path in walked.tree().map(str::to_owned) {
             let bytes =
                 std::fs::read(root.join(&path)).unwrap_or_else(|e| unreachable!("read back: {e}"));
