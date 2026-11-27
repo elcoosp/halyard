@@ -246,6 +246,9 @@ pub enum ManifestFormat {
     /// `pubspec.yaml` (the pub/YAML subset scanner, hand-written,
     /// M8 ADR-0060).
     Pubspec,
+    /// `*.gemspec` (the Ruby/`Gem::Specification` subset scanner,
+    /// hand-written, M8 ADR-0061).
+    Gemspec,
 }
 
 /// Discovery errors (§15.4 `E-DISC-*`). Every variant carries a stable
@@ -354,8 +357,8 @@ impl std::fmt::Display for DiscoverError {
             Self::NoPackage => write!(
                 f,
                 "no package or workspace found: expected a Cargo.toml with [package]/[workspace], \
-                 a package.json, a pyproject.toml, a go.mod, a pom.xml, a .csproj or a \
-                 pubspec.yaml at the repository root"
+                 a package.json, a pyproject.toml, a go.mod, a pom.xml, a .csproj, a \
+                 pubspec.yaml or a .gemspec at the repository root"
             ),
             Self::Duplicate {
                 name,
