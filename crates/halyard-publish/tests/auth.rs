@@ -311,6 +311,18 @@ fn variables_for_pins_the_grammar_table() {
         ..crates_io()
     };
     assert_eq!(variables_for(&pypi), vec!["UV_PUBLISH_TOKEN"]);
+    // The nuget.org auth arm (the §17 M8 `NuGet` cell's recorded-open
+    // argv-arm half, ADR-0059): `dotnet nuget push` documents the
+    // variable itself — *"Starting with NuGet 7.6 (.NET SDK
+    // 10.0.300), you can set the `NUGET_API_KEY` environment variable
+    // instead of passing `--api-key` on the command line"* — and the
+    // key rides the environment pair, never argv (invariant I7).
+    let nuget = PublishTarget {
+        ecosystem: "nuget".to_owned(),
+        registry: "nuget.org".to_owned(),
+        ..crates_io()
+    };
+    assert_eq!(variables_for(&nuget), vec!["NUGET_API_KEY"]);
 }
 
 #[test]
