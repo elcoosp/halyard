@@ -24,7 +24,9 @@ use semver::Version;
 /// 40-byte layout makes impossible.
 fn oid(suffix: u8) -> Option<Oid> {
     let mut hex = [b'a'; 40];
-    hex[39] = b'0' + (suffix % 10);
+    if let Some(last) = hex.get_mut(39) {
+        *last = b'0' + (suffix % 10);
+    }
     Oid::from_hex(&hex)
 }
 
@@ -112,7 +114,7 @@ fn snapshot<'a>(
         bases: bases.clone(),
     };
     let refs = ReleaseRefs::from_bases(bases);
-    let head = oid(9).expect("fixture oid");
+    let head = oid(9).unwrap_or_else(|| fixture_fail("fixture oid"));
     let history = FixedHistory::new(Some(head), digest);
     // The snapshot borrows; leak the boxed provider for the test lifetime
     // (each test builds one snapshot).
@@ -137,7 +139,17 @@ fn template_for_root(root: &str) -> halyard_core::package::TagTemplate {
     } else {
         format!("{root}/v{{version}}")
     };
-    halyard_core::package::TagTemplate::parse(&raw).expect("fixture template")
+    match halyard_core::package::TagTemplate::parse(&raw) {
+        Ok(template) => template,
+        Err(_) => fixture_fail("fixture template"),
+    }
+}
+
+/// The loud exit for an impossible fixture (the helper fns are not
+/// `#[test]`, so the test-lint allowance does not reach them).
+fn fixture_fail(what: &str) -> ! {
+    eprintln!("the fixture must carry {what}");
+    std::process::exit(101);
 }
 
 fn cfg() -> PlanConfig {
@@ -151,6 +163,11 @@ fn cfg() -> PlanConfig {
 /// manifest has no version row, the base tag `api/v0.1.0` parses to
 /// 0.1.0 through the package's own subdir template, and a feat commit
 /// bumps it to 0.2.0 with the subdir tag `api/v0.2.0`.
+/// The empty-row assertion (the pedantic `assert_is_empty` shape).
+fn assert_empty<T>(rows: &[T]) {
+    assert!(rows.is_empty(), "expected no rows");
+}
+
 #[test]
 fn a_tag_only_package_plans_from_its_release_base_tag() {
     let mut ws = Workspace::new();
@@ -173,7 +190,7 @@ fn a_tag_only_package_plans_from_its_release_base_tag() {
     );
     let plan = plan(&snapshot, &cfg()).expect("the tag-only row plans");
     assert_eq!(plan.releases.len(), 1, "the go package releases");
-    let row = &plan.releases[0];
+    let row = plan.releases.first().expect("the item");
     assert_eq!(row.package, "example.com/repo/api");
     assert_eq!(row.from, "0.1.0", "the base tag carries the from version");
     assert_eq!(
@@ -200,7 +217,7 @@ fn an_initial_tag_only_release_starts_from_the_zero_version() {
     let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None]);
     let plan = plan(&snapshot, &cfg()).expect("the initial row plans");
     assert_eq!(plan.releases.len(), 1);
-    let row = &plan.releases[0];
+    let row = plan.releases.first().expect("the item");
     assert_eq!(row.from, "0.0.0", "zero-version start");
     assert_eq!(
         row.to, "0.0.1",
@@ -235,7 +252,10 @@ fn a_major_suffix_module_refuses_a_target_below_its_major() {
         "the below-major target never releases"
     );
     assert_eq!(plan.skipped.len(), 1);
-    assert_eq!(plan.skipped[0].reason, "major_version_suffix");
+    assert_eq!(
+        plan.skipped.first().expect("the item").reason,
+        "major_version_suffix"
+    );
 }
 
 /// A suffix-honoring target releases at the declared major: a /v2
@@ -264,9 +284,10 @@ fn a_major_suffix_module_plans_at_its_declared_major() {
     );
     let plan = plan(&snapshot, &cfg()).expect("the plan builds");
     assert_eq!(plan.releases.len(), 1);
-    assert_eq!(plan.releases[0].to, "2.1.0");
+    assert_eq!(plan.releases.first().expect("the item").to, "2.1.0");
     assert_eq!(
-        plan.releases[0].tag, "libs/metrics/v2.1.0",
+        plan.releases.first().expect("the item").tag,
+        "libs/metrics/v2.1.0",
         "the subdir tag carries the major-version version"
     );
 }
@@ -293,12 +314,13 @@ fn manifest_versioned_packages_keep_their_planning_shape() {
     );
     let plan = plan(&snapshot, &cfg()).expect("the cargo row plans");
     assert_eq!(plan.releases.len(), 1);
-    assert_eq!(plan.releases[0].from, "0.3.0");
+    assert_eq!(plan.releases.first().expect("the item").from, "0.3.0");
     assert_eq!(
-        plan.releases[0].to, "0.3.1",
+        plan.releases.first().expect("the item").to,
+        "0.3.1",
         "the cargo-compatible 0.y.z policy: a feat bumps the patch"
     );
-    assert_eq!(plan.releases[0].tag, "app-v0.3.1");
+    assert_eq!(plan.releases.first().expect("the item").tag, "app-v0.3.1");
 }
 
 /// The release half of the cell (§17 M8 — *tag-only*): a Go release row
@@ -319,9 +341,9 @@ fn a_tag_only_release_row_carries_no_publish_decision() {
     let plan = plan(&snapshot, &cfg()).expect("the tag-only row plans");
     assert_eq!(plan.releases.len(), 1);
     assert!(
-        plan.releases[0].publish.is_none(),
+        plan.releases.first().expect("the item").publish.is_none(),
         "a tag-only row carries no registry publish decision, got {:?}",
-        plan.releases[0].publish
+        plan.releases.first().expect("the item").publish
     );
 }
 
@@ -340,7 +362,10 @@ fn a_manifest_versioned_row_keeps_its_publish_decision() {
     let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![Some(base)]);
     let plan = plan(&snapshot, &cfg()).expect("the cargo row plans");
     assert_eq!(plan.releases.len(), 1);
-    let publish = plan.releases[0]
+    let publish = plan
+        .releases
+        .first()
+        .expect("the item")
         .publish
         .as_ref()
         .expect("a cargo row carries its publish decision");
@@ -359,10 +384,11 @@ fn a_untouched_tag_only_package_skips_as_no_changes() {
     push_go_pkg(&mut ws, "example.com/repo", "", "go.mod").expect("fixture package");
     let snapshot = snapshot(&ws, Vec::new(), vec![Vec::new()], vec![None]);
     let plan = plan(&snapshot, &cfg()).expect("the plan builds");
-    assert!(plan.releases.is_empty());
+    assert_empty(&plan.releases);
     assert_eq!(plan.skipped.len(), 1);
     assert_eq!(
-        plan.skipped[0].reason, "no_changes",
+        plan.skipped.first().expect("the item").reason,
+        "no_changes",
         "a tag-only package's missing manifest version is not a skip reason"
     );
 }
