@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(parsed.module, "example.com/my/thing");
         assert_eq!(parsed.go.as_deref(), Some("1.23.0"));
         assert_eq!(parsed.requires.len(), 2);
-        assert_eq!(parsed.requires[0].version, "v1.0.2");
+        assert_eq!(parsed.requires.first().expect("the row").version, "v1.0.2");
         assert_eq!(parsed.replaces.len(), 1);
     }
 
@@ -665,13 +665,20 @@ mod tests {
         let parsed = parse_gomod(text, "go.mod").expect("block forms parse");
         assert_eq!(parsed.requires.len(), 2);
         // The version span points at `v1.2.3` in the original bytes.
-        let span = parsed.requires[0].version_span;
+        let span = parsed.requires.first().expect("the row").version_span;
         let bytes = text.as_bytes();
-        assert_eq!(&bytes[span.start as usize..=span.end as usize], b"v1.2.3");
-        // The indirect marker is inert (a comment).
         assert_eq!(
-            &bytes[parsed.requires[1].version_span.start as usize
-                ..=parsed.requires[1].version_span.end as usize],
+            bytes
+                .get(span.start as usize..=span.end as usize)
+                .expect("the span is in bounds"),
+            b"v1.2.3"
+        );
+        // The indirect marker is inert (a comment).
+        let indirect = parsed.requires.get(1).expect("the row").version_span;
+        assert_eq!(
+            bytes
+                .get(indirect.start as usize..=indirect.end as usize)
+                .expect("the span is in bounds"),
             b"v0.1.0"
         );
     }
@@ -681,17 +688,25 @@ mod tests {
         let text = "module example.com/m\n\nreplace example.com/a => ./vendor/a\nreplace example.com/b v1.0.0 => example.com/c v1.0.1\n";
         let parsed = parse_gomod(text, "go.mod").expect("replaces parse");
         assert_eq!(
-            parsed.replaces[0].target,
+            parsed.replaces.first().expect("the row").target,
             ReplaceTarget::Path("./vendor/a".to_owned())
         );
         assert_eq!(
-            parsed.replaces[1].target,
+            parsed.replaces.get(1).expect("the row").target,
             ReplaceTarget::Module {
                 path: "example.com/c".to_owned(),
                 version: "v1.0.1".to_owned()
             }
         );
-        assert_eq!(parsed.replaces[1].old_version.as_deref(), Some("v1.0.0"));
+        assert_eq!(
+            parsed
+                .replaces
+                .get(1)
+                .expect("the row")
+                .old_version
+                .as_deref(),
+            Some("v1.0.0")
+        );
     }
 
     #[test]
@@ -699,7 +714,10 @@ mod tests {
         let text = "module \"example.com/m\"\n\nrequire \"example.com/a\" v1.0.0\n";
         let parsed = parse_gomod(text, "go.mod").expect("quoted paths parse");
         assert_eq!(parsed.module, "example.com/m");
-        assert_eq!(parsed.requires[0].path, "example.com/a");
+        assert_eq!(
+            parsed.requires.first().expect("the row").path,
+            "example.com/a"
+        );
     }
 
     #[test]
@@ -736,9 +754,14 @@ mod tests {
     fn block_comments_blank_without_shifting_offsets() {
         let text = "module example.com/m /* inline\nblock */ \n\nrequire example.com/a v1.0.0\n";
         let parsed = parse_gomod(text, "go.mod").expect("block comments parse");
-        assert_eq!(parsed.requires[0].version, "v1.0.0");
+        assert_eq!(parsed.requires.first().expect("the row").version, "v1.0.0");
         let bytes = text.as_bytes();
-        let span = parsed.requires[0].version_span;
-        assert_eq!(&bytes[span.start as usize..=span.end as usize], b"v1.0.0");
+        let span = parsed.requires.first().expect("the row").version_span;
+        assert_eq!(
+            bytes
+                .get(span.start as usize..=span.end as usize)
+                .expect("the span is in bounds"),
+            b"v1.0.0"
+        );
     }
 }
