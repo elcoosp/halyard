@@ -13,6 +13,7 @@ members = [
     "crates/halyard-discover",
     "crates/halyard-eco-cargo",
     "crates/halyard-eco-dart",
+    "crates/halyard-eco-generic",
     "crates/halyard-eco-npm",
     "crates/halyard-eco-gomod",
     "crates/halyard-eco-maven",
@@ -89,6 +90,7 @@ halyard-core = { path = "crates/halyard-core", features = ["schema-gen"] }
 halyard-discover = { path = "crates/halyard-discover" }
 halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
 halyard-eco-dart = { path = "crates/halyard-eco-dart" }
+halyard-eco-generic = { path = "crates/halyard-eco-generic" }
 halyard-eco-npm = { path = "crates/halyard-eco-npm" }
 halyard-eco-gomod = { path = "crates/halyard-eco-gomod" }
 halyard-eco-maven = { path = "crates/halyard-eco-maven" }
@@ -126,6 +128,10 @@ blake3 = "1.8"
 winnow = "1"
 proptest = "1.8"
 insta = "1"
+# ADR-0062: the `generic` cell's regex-edited version files compile the
+# user-declared locator pattern with the `regex` crate (the VERIFIED
+# named-group semantics live in docs/research/generic-version-files.md §2).
+regex = "1.11"
 # Cargo-audit: override transitive dependencies with patched versions
 url = "2.5.9"
 heapless = "0.9.4"
