@@ -10,7 +10,7 @@ use halyard_eco_gomod::GoModAdapter;
 
 const GO_WORK: &str = "go 1.23.0\n\nuse (\n\t.\n\t./api\n\t./libs/metrics\n)\n\nreplace example.com/external/sdk => ./vendor/sdk\n";
 
-const ROOT_GOMOD: &str = r#"module example.com/halyard
+const ROOT_GOMOD: &str = r"module example.com/halyard
 
 go 1.23.0
 
@@ -21,9 +21,9 @@ require (
 )
 
 replace example.com/other/dep => example.com/fork/dep v0.2.1
-"#;
+";
 
-const API_GOMOD: &str = r#"module example.com/halyard/api
+const API_GOMOD: &str = r"module example.com/halyard/api
 
 go 1.23.0
 
@@ -33,14 +33,14 @@ require (
 )
 
 exclude example.com/external/sdk v1.3.0
-"#;
+";
 
-const METRICS_GOMOD: &str = r#"module example.com/halyard/libs/metrics/v2
+const METRICS_GOMOD: &str = r"module example.com/halyard/libs/metrics/v2
 
 go 1.23.0
 
 require example.com/external/sdk v1.4.0
-"#;
+";
 
 fn ctx() -> DiscoverCtx {
     let mut ctx = DiscoverCtx::new();
@@ -53,9 +53,16 @@ fn ctx() -> DiscoverCtx {
 
 fn scan() {
     let ctx = ctx();
-    let rows = GoModAdapter::new()
-        .discover(&ctx)
-        .expect("bench fixture discovers");
+    // The fixture is a constant that must discover; a failure exits
+    // loudly (bench fns are not `#[test]`, so the test-lint allowance
+    // does not reach them — the pom_edit bench posture).
+    let rows = match GoModAdapter::new().discover(&ctx) {
+        Ok(rows) => rows,
+        Err(error) => {
+            eprintln!("the bench fixture must discover: {error}");
+            std::process::exit(101);
+        }
+    };
     assert_eq!(rows.len(), 3);
 }
 
