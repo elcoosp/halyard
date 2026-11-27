@@ -5102,6 +5102,12 @@ fn native_lockfile_refreshes(
             }
             "npm" => halyard_eco_npm::lockfile::verify_native_refresh(&before, &after, &members)
                 .map_err(|e| CliError::new(e.code(), e.to_string()))?,
+            // The uv.lock lockfile half (ADR-0056): the refresh's
+            // effect is verified by the pypi adapter's verifier — only
+            // member `version` rows may move (the observed uv
+            // fidelity), everything else refuses fail-closed.
+            "pypi" => halyard_eco_pypi::uvlock::verify_native_refresh(&before, &after, &members)
+                .map_err(|e| CliError::new(e.code(), e.to_string()))?,
             other => {
                 return Err(CliError::new(
                     halyard_core::lockfile::NativeRefreshError::CODE,
