@@ -30,12 +30,19 @@ use crate::atomic::atomic_write;
 use crate::error::EditError;
 
 /// The lockfile targets of the apply flow, as `(repo-relative path,
-/// ecosystem)` pairs: the root `Cargo.lock` (§9.2, M3.2) and the root
-/// `pnpm-lock.yaml` (§9.3, M3.4). Both live at the repository root, never
-/// inside a member directory. Other npm-family lockfiles
+/// ecosystem)` pairs: the root `Cargo.lock` (§9.2, M3.2), the root
+/// `pnpm-lock.yaml` (§9.3, M3.4) and the root `uv.lock` (the M8 PyPI
+/// cell's lockfile half, ADR-0056). All live at the repository root,
+/// never inside a member directory. Other npm-family lockfiles
 /// (`package-lock.json`, `yarn.lock`, `bun.lock`) are native-only in v1
-/// and get no in-memory stage.
-const LOCKFILE_TARGETS: [(&str, &str); 2] = [("Cargo.lock", "cargo"), ("pnpm-lock.yaml", "npm")];
+/// and get no in-memory stage; the pypi stage rides the same native-only
+/// shape (uv's documented management posture — the adapter declines and
+/// the §9.2 rule-4 refresh owns the file).
+const LOCKFILE_TARGETS: [(&str, &str); 3] = [
+    ("Cargo.lock", "cargo"),
+    ("pnpm-lock.yaml", "npm"),
+    ("uv.lock", "pypi"),
+];
 
 /// Deterministic per-file result of one apply pass (M3.6 summary row).
 #[derive(Clone, Debug, PartialEq, Eq)]
