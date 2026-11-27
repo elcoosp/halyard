@@ -1488,6 +1488,7 @@ dependencies = [
  "halyard-discover",
  "halyard-eco-cargo",
  "halyard-eco-dart",
+ "halyard-eco-docker",
  "halyard-eco-generic",
  "halyard-eco-gomod",
  "halyard-eco-maven",
@@ -1564,6 +1565,7 @@ dependencies = [
  "halyard-core",
  "halyard-eco-cargo",
  "halyard-eco-dart",
+ "halyard-eco-docker",
  "halyard-eco-generic",
  "halyard-eco-gomod",
  "halyard-eco-maven",
@@ -1594,6 +1596,15 @@ dependencies = [
 
 [[package]]
 name = "halyard-eco-dart"
+version = "0.0.0"
+dependencies = [
+ "criterion",
+ "halyard-core",
+ "semver",
+]
+
+[[package]]
+name = "halyard-eco-docker"
 version = "0.0.0"
 dependencies = [
  "criterion",
