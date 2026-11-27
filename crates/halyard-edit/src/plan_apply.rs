@@ -346,7 +346,8 @@ fn map_lockfile_failure(failure: LockfileFailure) -> EditError {
 /// adapter, whose edit seam fails closed, M8 ADR-0057, `pom.xml` →
 /// `maven` — the semantic version patch, M8 ADR-0058, any `*.csproj` →
 /// `nuget` — the semantic version patch, M8 ADR-0059, `pubspec.yaml` →
-/// `dart` — the semantic version patch, M8 ADR-0060).
+/// `dart` — the semantic version patch, M8 ADR-0060, any `*.gemspec` →
+/// `rubygems` — the semantic version patch, M8 ADR-0061).
 fn adapter_for<'a>(
     workspace: &Workspace,
     file: &RelPath,
@@ -374,6 +375,11 @@ fn adapter_for<'a>(
                     // M8 (ADR-0059): every SDK-style project file
                     // routes to the nuget adapter's semantic patch.
                     file.as_str().ends_with(".csproj").then_some("nuget")
+                })
+                .or_else(|| {
+                    // M8 (ADR-0061): every gemspec file routes to the
+                    // rubygems adapter's semantic patch.
+                    file.as_str().ends_with(".gemspec").then_some("rubygems")
                 })
                 .map(str::to_owned)
         })?;
