@@ -3676,3 +3676,99 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   networked lane is available, (2) the M7 corpus-lane e2e and the live
   attested+signed release run (credentials/live CI), (3) the M2.6
   dhat re-audit with the cache warm.
+| M8 `generic` cell (ADR-0062) | done (row partial: corpus replay + multi-file packages + shared files + multiple-match grammars recorded-open) | (tree left dirty; no commits) | M1: the `halyard-eco-generic` crate (the config-declared escape hatch — the `[[generic]]` surface `name`/`file`/`pattern` validated at load with the new `E-CFG-GENERIC` code + docs page + regenerated schema; the locator pattern compiles under the `regex` crate and carries exactly one capture group named `version`, unnamed groups refuse), `Ecosystem::Generic` + `ManifestFormat::Text` in core, `GenericFileSpec` beside the adapter trait, the adapter's scanner (leftmost match, capture span = edit site, `non-canonical-version`/`no-version`/`unmodeled-match` warnings, missing-file `E-DISC-GLOB`, non-UTF-8 `E-DISC-MANIFEST`), the config→discovery channel (`DiscoverInput.generic`; the shell resolves config BEFORE discovery in `context_with_base`/`cmd_fetch`/`doctor`), the planner's no-publish-decision arm (`publish: None` — no registry name to record, ADR-0062 D3), the xtask layer rule + member guard (29 crates ✓; config consciously gains `regex`). M2: the semantic edit seam (patch span must equal the capture span, right-to-left-safe in-place swap, read-back verify re-matches, idempotent I1, undeclared-file refusal), the apply shell's adapter chaining (the routing resolves through the owning package), the path-aware `ManifestVersionProbe` (the trait gains the manifest path; the shell probe carries the specs; the `generic` arm pairs the declared pattern's canonical capture; 4 sibling impls updated), benches `generic_scan` + `generic_edit`, examples `scan_generic` + `bump_generic`. Red→green on record twice: M1's red = E0432 on `halyard_eco_generic::GenericAdapter`/`GenericFileSpec` + E0599 on `Ecosystem::Generic`/`ManifestFormat::Text` (the plan line the first test pins is §17 M8's *"`generic` (regex-edited version files)"* cell, quoted in the contract tests' module docs); M2's red = the four green-path edit tests failing against the interim fail-closed seam (the go posture), green at the semantic patcher. Docs drift fixed additively: the `[[link]]` config surface had been resolved-but-unwired since M4.7 (every CLI call site passed `DiscoverInput::default()`) — the same channel feeds `detect_links` now; the plan schema regenerated picked up the pre-existing `PlanPublish` doc drift; the loader snapshot gained `generic`. Research note VERIFIED live (Knope's named-group grammar + semver rule, release-please's annotation contrast, the regex crate's group semantics). ADR-0062; arch as-built (crate row + M8 row note); README rows | deferred: the corpus-lane replay on 2 real repos (network-bound, the M7 lane discipline), the multi-file package form + pattern arrays, shared version files, multiple-match grammars, the Maven cell's Gradle half (the plan's own recorded-open gate), the Docker image tags cell + M9-M12+ per plan order | 2026-11-27; session log below |
+
+### 2026-11-27 — The M8 `generic` cell (ADR-0062, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `b908a4e` (the
+  RubyGems session's HEAD — whose own PROGRESS row and arch as-built
+  note are missing, recorded as drift below). The reconciliation survey
+  ran plan ↔ code ↔ history first: the M8 row's remaining cells per
+  plan order were `generic` and Docker image tags (RubyGems had landed
+  after the Dart session's recorded next-start point; the Gradle half
+  stays the plan's own recorded-open gate). The `generic` cell's
+  missing-in-code evidence: `grep -rni
+  "Ecosystem::Generic\|eco-generic\|GenericAdapter" crates/ --include="*.rs"`
+  returns zero code hits; no `halyard-eco-generic`; no generic research
+  note; `git log --oneline -50` and `git branch -a` carry no generic
+  work. M1 = the cell's discover/plan slice; M2 = the release half —
+  from the table, not invented, following the seven landed cells' split.
+- **Grammar verification first.** `docs/research/generic-version-files.md`
+  VERIFIED live: Knope's `versioned_files` regex form (knope.tech
+  packages reference — *"The regex pattern must include a named capture
+  group called version … This capture group identifies the version
+  number to replace."*; *"The matched string must be a valid semantic
+  version"*), release-please's `Generic` updater (the annotation
+  vocabulary halyard's escape hatch exists to avoid — the fixed
+  `x-release-please-*` matchers in `src/updaters/generic.ts`), the
+  `regex` crate's group semantics (docs.rs: `(?<name>exp)` named groups,
+  *"indexed by opening parenthesis"*, group 0 *"implicit … the entire
+  match"*, Unicode haystacks).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  the missing seam itself (E0432 on `halyard_eco_generic::GenericAdapter`
+  + `halyard_core::discover::GenericFileSpec`; E0599 on
+  `Ecosystem::Generic` + `ManifestFormat::Text`; the plan line the first
+  test pins is §17 M8's *"`generic` (regex-edited version files)"* cell,
+  quoted in the contract tests' module docs). The green: the
+  `[[generic]]` config surface (the loader's frozen key tables + the
+  `E-CFG-GENERIC` validation — compile failure, capture-group shape,
+  duplicate names/files, non-normalized paths; the docs page +
+  regenerated schema), the adapter's scanner (leftmost match = the
+  version row, the capture span = the edit site, the ADR-0056
+  fail-closed capture strategy), the config→discovery channel (the
+  shell resolves config BEFORE discovery — `DiscoverInput.generic` —
+  and `collect_ctx` reads the declared files), the planner's
+  no-publish-decision arm, the xtask layer rule (29 crates ✓). 9
+  discovery-contract tests + 2 planner gates + 9 config tests + 2 CLI
+  e2e (`plan --format json` over a generic-only repository: the row
+  plans with `publish` absent and the capture-span edit present;
+  planning never mutates the declared file) + bench `generic_scan` +
+  example `scan_generic`.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the edit contract against the interim fail-closed seam (the
+  go posture carried over M1): the four green-path edit tests failed at
+  red, green at the semantic patcher. The green: `edit_versions` — the
+  patch span must equal the capture's span (drift refuses
+  `E-EDIT-PATCHES`), the captured bytes swap in place, the read-back
+  verify re-matches before acceptance (a target the pattern's group
+  cannot carry refuses `E-EDIT-VERIFY`; the verify pins the text, never
+  the offset — a length-changing swap legitimately moves the span), the
+  idempotent re-run skips the carried target (I1); the apply shell
+  chains the config-built adapter (the routing resolves through the
+  owning package's ecosystem — no file-name fallback for arbitrary
+  paths); the path-aware probe (the trait gains the manifest path —
+  `TagTargetRequest` always carried it — the shell probe carries the
+  specs, the `generic` arm pairs the declared pattern's canonical
+  capture; the bench/example/test probe impls updated). 8 edit-contract
+  tests + the CLI e2e pair (`apply` rewrites the declared file in
+  place, the config file byte-identical; `publish --dry` records the
+  `no_publish_contract` skip) + bench `generic_edit` + example
+  `bump_generic`.
+- **Docs drift fixed (additive, not a milestone substitute):** the
+  `[[link]]` config surface had been resolved-but-unwired since M4.7 —
+  `ResolvedConfig.links` existed, `detect_links` consumed
+  `DiscoverInput.links`, and every CLI call site passed
+  `DiscoverInput::default()`; the same channel that feeds `[[generic]]`
+  now feeds `[[link]]` (the `discover_input` mapping, with a test-ready
+  path through the shared pipeline). The schema regeneration picked up
+  the pre-existing `PlanPublish` doc-comment drift the Go session left
+  in `schemas/halyard-plan-v1.json`. **Recorded (not fixed here):** the
+  RubyGems session's PROGRESS row and session-log section and the arch
+  doc's 28th-member/M8 as-built note are missing at HEAD — the ADR-0061,
+  README rows and code exist; the row belongs to that session's author.
+- **Micro-debt scanned:** `todo!`/`unimplemented!` zero in the touched
+  surfaces; `allow`/`expect` lint suppressions zero (the lint-hygiene
+  grep stays empty); `DiscoverError::NoPackage` remains defined-but-
+  never-raised (documented + code-string-tested only) — left standing,
+  recorded.
+- **Honest state at cut-off.** The corpus-lane replay on 2 real repos
+  (the M8 cell's acceptance-row half, network-bound, the M7 lane
+  discipline), the multi-file package form and pattern arrays (A1), the
+  shared-version-file refusal (A1), multiple-match grammars (A2), and
+  the Maven cell's Gradle half + the Docker image tags cell stay the
+  recorded-open remainders.
+- **Next session start point.** (1) the next M8 cell per plan order
+  (Docker image tags) or the PyPI/Go/Maven/NuGet/Dart/RubyGems/generic
+  corpus replay when a networked lane is available, (2) the M7
+  corpus-lane e2e and the live attested+signed release run
+  (credentials/live CI), (3) the M2.6 dhat re-audit with the cache warm.
