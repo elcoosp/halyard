@@ -1,6 +1,6 @@
 //! Config errors — stable codes `E-CFG-UNKNOWN-KEY`, `E-CFG-TAG-STYLE`,
 //! `E-CFG-TOML`, `E-CFG-ENV`, `E-CFG-MIGRATE`, `E-CFG-CHANNEL`,
-//! `E-CFG-INIT` (§15.4; pages under `docs/errors/`).
+//! `E-CFG-INIT`, `E-CFG-GENERIC` (§15.4; pages under `docs/errors/`).
 
 /// An error while loading or resolving `halyard.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,6 +78,19 @@ pub enum ConfigError {
         /// What is wrong, what was looked at and what to do instead.
         message: String,
     },
+    /// A `[[generic]]` entry (M8 ADR-0062) does not fit its documented
+    /// grammar: the pattern does not compile under the `regex` crate's
+    /// syntax, or it does not carry exactly one capture group named
+    /// `version`, or the file path is not a normalized repo-relative
+    /// path, or a name/file is duplicated across entries. Fail-closed:
+    /// a half-understood declaration never reaches discovery.
+    Generic {
+        /// The `[[generic]]` entry the error is about (the `name`, when
+        /// present, else the `file`).
+        entry: String,
+        /// What is wrong and what the documented grammar is.
+        reason: String,
+    },
 }
 
 impl ConfigError {
@@ -97,6 +110,8 @@ impl ConfigError {
     pub const MAINTENANCE_CODE: &'static str = "E-CFG-MAINTENANCE";
     /// Stable code for [`ConfigError::Init`].
     pub const INIT_CODE: &'static str = "E-CFG-INIT";
+    /// Stable code for [`ConfigError::Generic`].
+    pub const GENERIC_CODE: &'static str = "E-CFG-GENERIC";
 
     /// Stable error code for this variant.
     pub fn code(&self) -> &'static str {
@@ -109,6 +124,7 @@ impl ConfigError {
             Self::Channel { .. } => Self::CHANNEL_CODE,
             Self::MaintenanceLine { .. } => Self::MAINTENANCE_CODE,
             Self::Init { .. } => Self::INIT_CODE,
+            Self::Generic { .. } => Self::GENERIC_CODE,
         }
     }
 }
@@ -168,6 +184,14 @@ impl std::fmt::Display for ConfigError {
             Self::Init { path, message } => {
                 write!(f, "[{}] cannot scaffold {path}: {message}", Self::INIT_CODE)
             }
+            Self::Generic { entry, reason } => write!(
+                f,
+                "[{}] invalid `[[generic]]` entry {entry:?}: {reason} — the pattern must \
+                 compile under the `regex` crate's syntax and carry exactly one capture \
+                 group named `version` (spelled `(?<version>…)`), and the file must be a \
+                 normalized repo-relative path",
+                Self::GENERIC_CODE
+            ),
         }
     }
 }
