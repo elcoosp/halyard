@@ -2184,7 +2184,10 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// declared pattern's canonical capture per file (M8 ADR-0062: the probe
 /// is path-aware — a config-declared locator picks its pattern by the
 /// manifest path; a file with no declared pattern, or a capture the plan
-/// contract cannot parse, keeps the documented HEAD fallback).
+/// contract cannot parse, keeps the documented HEAD fallback). The
+/// `docker` arm pairs the OCI version label's canonical semver the same
+/// way (M8 ADR-0063: a label spelling the plan contract cannot parse
+/// keeps the documented HEAD fallback).
 struct ShellProbe {
     /// The resolved config's `[[generic]]` declarations (the locator
     /// patterns, keyed by the declared file).
@@ -2216,6 +2219,7 @@ impl ManifestVersionProbe for ShellProbe {
             "nuget" => halyard_eco_nuget::manifest_version(manifest),
             "dart" => halyard_eco_dart::manifest_version(manifest),
             "rubygems" => halyard_eco_rubygems::manifest_version(manifest),
+            "docker" => halyard_eco_docker::manifest_version(manifest),
             "generic" => self
                 .generic
                 .iter()
