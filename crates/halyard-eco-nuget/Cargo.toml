@@ -24,5 +24,9 @@ harness = false
 name = "csproj_edit"
 harness = false
 
+[[bench]]
+name = "publish_args"
+harness = false
+
 [lints]
 workspace = true
