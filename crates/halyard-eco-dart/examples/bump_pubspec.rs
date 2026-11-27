@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }];
     match DartAdapter::new().edit_versions(&file, PUBSPEC.as_bytes(), &off_row) {
         Err(failure) => {
-            println!("\nthe off-row patch fails closed as expected: {failure} (E-EDIT-PATCHES)")
+            println!("\nthe off-row patch fails closed as expected: {failure} (E-EDIT-PATCHES)");
         }
         Ok(_) => println!("\nunreachable: an off-row span cannot match"),
     }
