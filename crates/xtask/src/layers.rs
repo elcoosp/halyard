@@ -74,7 +74,10 @@ const RULES: &[LayerRule] = &[
     LayerRule {
         name: "halyard-config",
         workspace: &["halyard-core"],
-        external: Some(&["serde", "schemars", "serde_json", "toml"]),
+        // ADR-0062: `regex` compiles the `[[generic]]` locator patterns
+        // at load time (`E-CFG-GENERIC`) — the same engine the adapter
+        // matches with, one edge not two grammars.
+        external: Some(&["serde", "schemars", "serde_json", "toml", "regex"]),
     },
     LayerRule {
         name: "halyard-conventional",
@@ -242,6 +245,16 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&["semver"]),
     },
+    // M8 (ADR-0062): the generic adapter compiles the config-declared
+    // locator patterns and matches the declared version files; `regex`
+    // is the locator grammar (the VERIFIED semantics in
+    // docs/research/generic-version-files.md §2) — no workspace deps
+    // beyond core.
+    LayerRule {
+        name: "halyard-eco-generic",
+        workspace: &["halyard-core"],
+        external: Some(&["semver", "regex"]),
+    },
     // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
     // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
     // parallel parse uses scoped std threads until budgets demand more.
@@ -256,6 +269,7 @@ const RULES: &[LayerRule] = &[
             "halyard-eco-maven",
             "halyard-eco-nuget",
             "halyard-eco-dart",
+            "halyard-eco-generic",
             "halyard-eco-rubygems",
         ],
         external: Some(&["ignore"]),
@@ -436,6 +450,7 @@ mod tests {
             "halyard-discover",
             "halyard-eco-cargo",
             "halyard-eco-dart",
+            "halyard-eco-generic",
             "halyard-eco-npm",
             "halyard-eco-pypi",
             "halyard-eco-gomod",
