@@ -562,10 +562,13 @@ fn release_row(
             // at discovery keeps `enabled` false — the registry name is
             // truthful the day the argv arm flips it.
             Ecosystem::Maven => ("maven-central".to_owned(), None, None),
-            // NuGet rows ride the engine's disabled shape until the
-            // `dotnet` argv arm lands (ADR-0059): `publishable = false`
-            // at discovery keeps `enabled` false — the registry name is
-            // truthful the day the argv arm flips it.
+            // NuGet rows publish through the `dotnet` argv arm (the §17
+            // cell's argv arm, ADR-0059 continued — the documented
+            // pack/push grammar, `docs/research/nuget-grammars.md` §11);
+            // `publishable` rides the documented packability gate
+            // (`<IsPackable>false</IsPackable>` keeps the row
+            // unpublishable at discovery). The registry name is the
+            // documented push source's registry.
             Ecosystem::Nuget => ("nuget.org".to_owned(), None, None),
             // Dart rows ride the engine's disabled shape until a pub.dev
             // publish auth grammar exists (ADR-0060 D5 — the documented
