@@ -14,6 +14,7 @@ halyard-eco-npm = { workspace = true }
 halyard-eco-gomod = { workspace = true }
 halyard-eco-maven = { workspace = true }
 halyard-eco-nuget = { workspace = true }
+halyard-eco-dart = { workspace = true }
 halyard-eco-pypi = { workspace = true }
 # §6.2: repository walk with .gitignore respect and build-dir pruning.
 ignore = { workspace = true }
