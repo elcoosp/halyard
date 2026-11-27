@@ -195,6 +195,29 @@
         }
       ]
     },
+    "GenericCfg": {
+      "description": "`[[generic]]` config-declared package (M8 ADR-0062): one entry is one\npackage whose version lives in one plain-text file at the text the\ndeclared pattern's named `version` capture group spans. The loader\nvalidates the entry (`E-CFG-GENERIC`): the pattern compiles under the\n`regex` crate's syntax and carries exactly one capture group, named\n`version`; the file is a normalized repo-relative path; names and\nfiles are unique across entries.",
+      "properties": {
+        "file": {
+          "description": "The version file (normalized, repo-relative) — the package's\nmanifest row.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The package name (the identity plans, tags and reports use).",
+          "type": "string"
+        },
+        "pattern": {
+          "description": "The locator pattern: the `regex` crate's syntax, exactly one\nnamed capture group `version` spanning the version text (the\nVERIFIED prior-art grammar,\n`docs/research/generic-version-files.md` §1.1).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "file",
+        "pattern"
+      ],
+      "type": "object"
+    },
     "InitialReleaseCfg": {
       "description": "`initial_release` options (§8.3 complexity bound).",
       "properties": {
@@ -558,6 +581,13 @@
         }
       ],
       "description": "Forge adapter selection."
+    },
+    "generic": {
+      "description": "Config-declared packages over regex-edited version files\n(`[[generic]]`, M8 ADR-0062) — the escape hatch for repositories\nno manifest grammar covers.",
+      "items": {
+        "$ref": "#/$defs/GenericCfg"
+      },
+      "type": "array"
     },
     "link": {
       "description": "Explicit polyglot links (`[[link]]`, §6.5).",
