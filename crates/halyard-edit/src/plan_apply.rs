@@ -345,7 +345,8 @@ fn map_lockfile_failure(failure: LockfileFailure) -> EditError {
 /// `npm`, `pyproject.toml` → `pypi`, `go.mod` → `go` — the tag-only
 /// adapter, whose edit seam fails closed, M8 ADR-0057, `pom.xml` →
 /// `maven` — the semantic version patch, M8 ADR-0058, any `*.csproj` →
-/// `nuget` — the semantic version patch, M8 ADR-0059).
+/// `nuget` — the semantic version patch, M8 ADR-0059, `pubspec.yaml` →
+/// `dart` — the semantic version patch, M8 ADR-0060).
 fn adapter_for<'a>(
     workspace: &Workspace,
     file: &RelPath,
@@ -363,6 +364,9 @@ fn adapter_for<'a>(
                 "pyproject.toml" => Some("pypi"),
                 "go.mod" => Some("go"),
                 "pom.xml" => Some("maven"),
+                // M8 (ADR-0060): the dart adapter's semantic patch owns
+                // the pubspec version row.
+                "pubspec.yaml" => Some("dart"),
                 _ => None,
             };
             by_name
