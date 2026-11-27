@@ -115,6 +115,11 @@ pub struct ResolvedConfig {
     pub packages: Vec<PackageOverride>,
     /// Explicit polyglot links (§6.5), low→high.
     pub links: Vec<crate::model::LinkCfg>,
+    /// The config-declared `generic` packages (M8 ADR-0062), validated
+    /// into the discovery specs (the pattern compiles and carries
+    /// exactly one named `version` capture group; names and files are
+    /// unique).
+    pub generic: Vec<halyard_core::discover::GenericFileSpec>,
 }
 
 impl ResolvedConfig {
@@ -267,6 +272,7 @@ fn merge_into(lower: &mut HalyardConfig, higher: HalyardConfig) {
     // Tables concatenate low → high.
     lower.package.extend(higher.package);
     lower.link.extend(higher.link);
+    lower.generic.extend(higher.generic);
 }
 
 /// Merges the `[repo]` section.
@@ -571,7 +577,91 @@ fn materialize(effective: HalyardConfig) -> Result<ResolvedConfig, ConfigError> 
         forge_commit_mode: forge.commit_mode.unwrap_or(CommitMode::Auto),
         packages: effective.package,
         links: effective.link,
+        generic: generic_specs_of(&effective.generic)?,
     })
+}
+
+/// Validates the `[[generic]]` entries (M8 ADR-0062) into the discovery
+/// specs the shell feeds [`halyard_core::discover::DiscoverInput`]. The
+/// grammar (the VERIFIED prior art in
+/// `docs/research/generic-version-files.md` §1.1/§4): the pattern
+/// compiles under the `regex` crate's syntax and carries **exactly one
+/// capture group, named `version`** — unnamed groups refuse (ambiguous
+/// intent; the error names the `(?<version>…)` spelling), and the
+/// leftmost match is the version row. The file must be a normalized
+/// repo-relative path; names and files are unique across entries (a
+/// shared file would aim two packages' edits at one span).
+fn generic_specs_of(
+    entries: &[crate::model::GenericCfg],
+) -> Result<Vec<halyard_core::discover::GenericFileSpec>, ConfigError> {
+    use std::collections::BTreeSet;
+    let mut names: BTreeSet<&str> = BTreeSet::new();
+    let mut files: BTreeSet<&str> = BTreeSet::new();
+    entries
+        .iter()
+        .map(|entry| {
+            let label = if entry.name.trim().is_empty() {
+                entry.file.clone()
+            } else {
+                entry.name.clone()
+            };
+            if entry.name.trim().is_empty() {
+                return Err(ConfigError::Generic {
+                    entry: label,
+                    reason: "the package `name` must not be empty".to_owned(),
+                });
+            }
+            if entry.file.is_empty() || halyard_core::package::RelPath::new(&entry.file).is_none() {
+                return Err(ConfigError::Generic {
+                    entry: label,
+                    reason: format!(
+                        "the version `file` {:?} is not a normalized repo-relative path",
+                        entry.file
+                    ),
+                });
+            }
+            let compiled =
+                regex::Regex::new(&entry.pattern).map_err(|error| ConfigError::Generic {
+                    entry: label.clone(),
+                    reason: format!("the `pattern` does not compile: {error}"),
+                })?;
+            let groups: Vec<Option<&str>> = compiled.capture_names().skip(1).collect();
+            if groups.len() != 1 || groups.first() != Some(&Some("version")) {
+                return Err(ConfigError::Generic {
+                    entry: label.clone(),
+                    reason: format!(
+                        "the `pattern` must carry exactly one capture group named `version` \
+                         (spelled `(?<version>…)`); it carries {} capture group(s)",
+                        groups.len()
+                    ),
+                });
+            }
+            if !names.insert(entry.name.as_str()) {
+                return Err(ConfigError::Generic {
+                    entry: label.clone(),
+                    reason: format!(
+                        "the package name {:?} is declared more than once",
+                        entry.name
+                    ),
+                });
+            }
+            if !files.insert(entry.file.as_str()) {
+                return Err(ConfigError::Generic {
+                    entry: label,
+                    reason: format!(
+                        "the version file {:?} is declared more than once — two packages \
+                         cannot share one edit site",
+                        entry.file
+                    ),
+                });
+            }
+            Ok(halyard_core::discover::GenericFileSpec {
+                name: entry.name.clone(),
+                file: entry.file.clone(),
+                pattern: entry.pattern.clone(),
+            })
+        })
+        .collect()
 }
 
 /// The documented `HALYARD_*` environment mapping (§16.4 layer 4):
