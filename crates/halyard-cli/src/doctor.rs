@@ -43,12 +43,13 @@ pub fn check(
     let mut checks: Vec<Check> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    // Discovery (also produces the advisories).
+    // Discovery (also produces the advisories). Config first (M8
+    // ADR-0062): the config-declared `[[generic]]` version files are
+    // discovery input (the `DiscoverInput` channel).
+    let config = crate::resolve_config(cli)?;
+    let input = crate::discover_input(&config);
     let discovery = profiler.span("doctor-discover", || {
-        halyard_discover::discover_repo(
-            std::path::Path::new("."),
-            &halyard_discover::DiscoverInput::default(),
-        )
+        halyard_discover::discover_repo(std::path::Path::new("."), &input)
     });
     let discovery = discovery.map_err(|e| CliError::new(e.code(), e.to_string()))?;
     for warning in &discovery.warnings {
