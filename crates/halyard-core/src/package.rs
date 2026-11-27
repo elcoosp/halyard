@@ -70,6 +70,16 @@ pub enum Ecosystem {
     /// must not do (the tag is the artifact; the user's own pipeline
     /// owns publishing).
     Generic,
+    /// The `Docker image tags` ecosystem (`Dockerfile` manifests, M8 —
+    /// ADR-0063): versions are the OCI-documented version annotation
+    /// (`org.opencontainers.image.version`, *"version of the packaged
+    /// software"*) carried by the Dockerfile reference's `LABEL`
+    /// instruction (only semver-parseable values are canonical per
+    /// ADR-0056's discipline), a `FROM` row's tag is the **base**
+    /// image's version and never an edit site, and `docker` publishing
+    /// carries no argv grammar yet (the row publishes as the engine's
+    /// disabled shape).
+    Docker,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -78,8 +88,8 @@ pub enum Ecosystem {
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
     /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, `rubygems`,
-    /// `generic`, or the interner-resolved custom name (`custom` for a
-    /// foreign symbol).
+    /// `generic`, `docker`, or the interner-resolved custom name
+    /// (`custom` for a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
@@ -91,6 +101,7 @@ impl Ecosystem {
             Self::Dart => "dart",
             Self::RubyGems => "rubygems",
             Self::Generic => "generic",
+            Self::Docker => "docker",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
