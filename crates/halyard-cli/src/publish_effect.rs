@@ -20,7 +20,7 @@ use halyard_publish::{
     AuthOutcome, PublishAuth, PublishEffect, PublishError, PublishTarget, TargetRouter,
     scrub_secrets,
 };
-use halyard_registry::{CratesIo, Npm, PyPi, RegistrySleeper};
+use halyard_registry::{CratesIo, Npm, Nuget, PyPi, RegistrySleeper};
 
 /// The production spawn effect: `dry` selects the tool's documented
 /// dry form (`cargo publish --dry-run --offline` / `pnpm publish
@@ -67,7 +67,13 @@ impl PublishEffect for SpawnPublishEffect {
             Ok(AuthOutcome::Absent) => None,
             Err(error) => return Err(error),
         };
-        let (tool, args): (&str, Vec<String>) = match target.ecosystem.as_str() {
+        // The spawn steps: every ecosystem's grammar owns its argv
+        // table; the nuget arm (the §17 M8 `NuGet` cell's argv arm,
+        // ADR-0059) is the documented two-step flow — pack then push
+        // (the push reference: *"The command pushes an existing
+        // package. It doesn't create a package. To create a package,
+        // use `dotnet pack`."*).
+        let steps: Vec<(&'static str, Vec<String>)> = match target.ecosystem.as_str() {
             "cargo" => {
                 // `--manifest-path` is resolved against the repo root
                 // (the paths in the publication are repo-relative);
@@ -85,7 +91,7 @@ impl PublishEffect for SpawnPublishEffect {
                     &target.registry,
                     self.dry,
                 );
-                ("cargo", args)
+                vec![("cargo", args)]
             }
             // §13.4 names `pnpm publish` as the npm-side tool; a
             // plain-npm repository without pnpm fails honestly rather
@@ -99,70 +105,102 @@ impl PublishEffect for SpawnPublishEffect {
                     access: target.access.clone(),
                     provenance: target.provenance,
                 };
-                (
+                vec![(
                     "pnpm",
                     halyard_eco_npm::pnpm_publish_args(self.dry, &options),
-                )
+                )]
             }
             // M8 step 2 (ADR-0056): the pypi adapter's grammar — bare
             // argv (uv's own posture governs trusted publishing and the
             // index); the token rides the auth seam's environment pair
             // (UV_PUBLISH_TOKEN, the documented `--token` variable).
-            "pypi" => ("uv", halyard_eco_pypi::uv_publish_args(self.dry)),
+            "pypi" => vec![("uv", halyard_eco_pypi::uv_publish_args(self.dry))],
+            // The documented two-step flow (ADR-0059 continued, the
+            // VERIFIED grammar in `docs/research/nuget-grammars.md`
+            // §11): bare `dotnet pack` (the quickstart's own command —
+            // local-only, safe to exercise in a forecast), then
+            // `dotnet nuget push bin/Debug/<id>.<version>.nupkg
+            // --source https://api.nuget.org/v3/index.json` (the
+            // documented official-server example). The credential rides
+            // the documented `NUGET_API_KEY` environment pair (I7 —
+            // the argv never carries it); the push has **no documented
+            // dry form**, so the dry forecast runs the packaging half
+            // only and no flag is invented (ADR-0033).
+            "nuget" => {
+                let pack = halyard_eco_nuget::dotnet_pack_args();
+                if self.dry {
+                    vec![("dotnet", pack)]
+                } else {
+                    let push = halyard_eco_nuget::dotnet_push_args(
+                        &target.registry,
+                        &target.package,
+                        &target.version,
+                    )
+                    .map_err(|message| PublishError::Effect {
+                        ecosystem: target.ecosystem.clone(),
+                        message,
+                        retryable: false,
+                    })?;
+                    vec![("dotnet", pack), ("dotnet", push)]
+                }
+            }
             other => {
                 return Err(PublishError::Effect {
                     ecosystem: target.ecosystem.clone(),
                     message: format!(
                         "no publish tool grammar for ecosystem {other:?} — the adapter tables \
-                         cover cargo, npm and pypi (§13.4); extending one is an ADR"
+                         cover cargo, npm, pypi and nuget (§13.4); extending one is an ADR"
                     ),
                     retryable: false,
                 });
             }
         };
-        let mut command = Command::new(tool);
-        command
-            .args(&args)
-            .current_dir(package_root(self.repo_root.as_path(), target));
-        if let Some(credential) = &credential {
-            // The resolved pair rides the environment — argv (I7) and
-            // every log path stay credential-free; the value is
-            // scrubbed from anything the tool surfaces (below).
-            command.env(&credential.key, &credential.value);
+        for (tool, args) in steps {
+            let mut command = Command::new(tool);
+            command
+                .args(&args)
+                .current_dir(package_root(self.repo_root.as_path(), target));
+            if let Some(credential) = &credential {
+                // The resolved pair rides the environment — argv (I7) and
+                // every log path stay credential-free; the value is
+                // scrubbed from anything the tool surfaces (below).
+                command.env(&credential.key, &credential.value);
+            }
+            let output = command.output().map_err(|error| PublishError::Effect {
+                ecosystem: target.ecosystem.clone(),
+                message: format!("spawn {tool}: {error} (is the tool installed?)"),
+                // A missing tool is deterministic for this environment
+                // — the resume probe protects the re-run either way.
+                retryable: false,
+            })?;
+            if output.status.success() {
+                continue;
+            }
+            // The tool's own words carry the diagnosis (the last non-empty
+            // stderr line — a trailing blank line must not blank the
+            // diagnosis), scrubbed of every resolved secret before it
+            // reaches the row: a token a misconfigured tool echoes never
+            // reaches the renderers (§13.5 "never log tokens" is enforced
+            // here, not by convention).
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let tail = stderr
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("");
+            let secrets = self.auth.secrets();
+            let refs: Vec<&str> = secrets.iter().map(String::as_str).collect();
+            return Err(PublishError::Effect {
+                ecosystem: target.ecosystem.clone(),
+                message: format!(
+                    "{tool} exited {}: {}",
+                    output.status.code().unwrap_or(-1),
+                    scrub_secrets(tail, &refs)
+                ),
+                retryable: false,
+            });
         }
-        let output = command.output().map_err(|error| PublishError::Effect {
-            ecosystem: target.ecosystem.clone(),
-            message: format!("spawn {tool}: {error} (is the tool installed?)"),
-            // A missing tool is deterministic for this environment
-            // — the resume probe protects the re-run either way.
-            retryable: false,
-        })?;
-        if output.status.success() {
-            return Ok(());
-        }
-        // The tool's own words carry the diagnosis (the last non-empty
-        // stderr line — a trailing blank line must not blank the
-        // diagnosis), scrubbed of every resolved secret before it
-        // reaches the row: a token a misconfigured tool echoes never
-        // reaches the renderers (§13.5 "never log tokens" is enforced
-        // here, not by convention).
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let tail = stderr
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-        let secrets = self.auth.secrets();
-        let refs: Vec<&str> = secrets.iter().map(String::as_str).collect();
-        Err(PublishError::Effect {
-            ecosystem: target.ecosystem.clone(),
-            message: format!(
-                "{tool} exited {}: {}",
-                output.status.code().unwrap_or(-1),
-                scrub_secrets(tail, &refs)
-            ),
-            retryable: false,
-        })
+        Ok(())
     }
 }
 
@@ -218,7 +256,14 @@ pub fn publish_router(
         // M8 step 2 (ADR-0056): the PyPI JSON-API probe joins the
         // default routers under the plan contract's `pypi` registry
         // name (the resume/visibility half of the acceptance row).
-        .with("pypi", Arc::new(PyPi::new(Arc::clone(&transport))));
+        .with("pypi", Arc::new(PyPi::new(Arc::clone(&transport))))
+        // The nuget.org probe arm (the §17 M8 `NuGet` cell's recorded
+        // -open probe arm, ADR-0059): the plan contract's `nuget.org`
+        // registry name routes to the flat-container probe (the
+        // VERIFIED `PackageBaseAddress` grammar,
+        // `docs/research/nuget-grammars.md` §11) — the resume/visibility
+        // half of the cell's acceptance row.
+        .with("nuget.org", Arc::new(Nuget::new(Arc::clone(&transport))));
     // Distinct target registry names, sorted (I3): the resolution reads
     // local files only, so the iteration order cannot change outcomes —
     // but a deterministic decline order keeps the refusal message
@@ -231,7 +276,11 @@ pub fn publish_router(
     names.dedup();
     let config_paths = halyard_eco_cargo::registry_config::cargo_config_paths(repo_root);
     for name in names {
-        if halyard_eco_cargo::is_default_registry(name) || name == "npm" || name == "pypi" {
+        if halyard_eco_cargo::is_default_registry(name)
+            || name == "npm"
+            || name == "pypi"
+            || name == "nuget.org"
+        {
             continue;
         }
         match halyard_eco_cargo::registry_config::registry_index(name, &config_paths) {
@@ -349,5 +398,33 @@ mod pypi_router_tests {
         };
         let error = publish_router(&dir, &[unknown]).expect_err("unknown refuses");
         assert_eq!(error.code(), "E-PUB-REGISTRY");
+    }
+}
+
+// The nuget.org probe arm (the §17 M8 `NuGet` cell's recorded-open
+// probe arm, ADR-0059): the plan contract's `nuget.org` registry name
+// routes to the flat-container probe (the VERIFIED `PackageBaseAddress`
+// grammar, `docs/research/nuget-grammars.md` §11) — the
+// resume/visibility half of the cell's acceptance row.
+#[cfg(test)]
+mod nuget_router_tests {
+    use super::*;
+    use halyard_publish::RegistryRouter;
+
+    #[test]
+    fn the_nuget_org_registry_name_routes_to_the_flat_container_probe() {
+        let dir = std::env::temp_dir().join(format!("nuget-router-{}", std::process::id()));
+        let target = PublishTarget {
+            package: "Contoso.App".to_owned(),
+            version: "0.1.1".to_owned(),
+            ecosystem: "nuget".to_owned(),
+            registry: "nuget.org".to_owned(),
+            manifest_dir: String::new(),
+            manifest: "App.csproj".to_owned(),
+            access: None,
+            provenance: None,
+        };
+        let router = publish_router(&dir, &[target]).expect("router builds");
+        assert!(router.registry("nuget.org").is_ok(), "nuget.org routes");
     }
 }
