@@ -20,16 +20,20 @@ use halyard_eco_nuget::NuGetAdapter;
 const APP: &str = r#"<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><PackageId>App</PackageId><PackageVersion>1.2.3</PackageVersion></PropertyGroup></Project>"#;
 
 fn span_of(haystack: &str, needle: &str) -> (u32, u32) {
-    let start = u32::try_from(
-        haystack
-            .find(needle)
-            .unwrap_or_else(|| panic!("fixture offset {needle}")),
-    )
-    .expect("fits u32");
-    (
-        start,
-        start + u32::try_from(needle.len()).expect("fits u32"),
-    )
+    let start = usize_to_u32(haystack.find(needle), needle);
+    let length = usize_to_u32(Some(needle.len()), needle);
+    (start, start + length)
+}
+
+/// The fixture offset as a plan-contract span coordinate (`None` cannot
+/// happen for a constant fixture, but the failure must stay loud and
+/// panic-free — the bench posture).
+fn usize_to_u32(value: Option<usize>, needle: &str) -> u32 {
+    if let Some(value) = value.and_then(|value| u32::try_from(value).ok()) {
+        return value;
+    }
+    eprintln!("the fixture must carry {needle}");
+    std::process::exit(101);
 }
 
 fn patch(haystack: &str, needle: &str, text: &str) -> PlanPatch {
