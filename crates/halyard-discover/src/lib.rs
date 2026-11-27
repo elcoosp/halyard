@@ -104,6 +104,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::Dart,
             adapter: Box::new(halyard_eco_dart::DartAdapter::new()),
         },
+        // M8 (ADR-0061): the rubygems adapter joins the fixed dispatch
+        // order after dart (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::RubyGems,
+            adapter: Box::new(halyard_eco_rubygems::RubyGemsAdapter::new()),
+        },
     ]
 }
 
@@ -120,7 +126,8 @@ pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static MAVEN: halyard_eco_maven::MavenAdapter = halyard_eco_maven::MavenAdapter;
     static NUGET: halyard_eco_nuget::NuGetAdapter = halyard_eco_nuget::NuGetAdapter;
     static DART: halyard_eco_dart::DartAdapter = halyard_eco_dart::DartAdapter;
-    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN, &NUGET, &DART]
+    static RUBYGEMS: halyard_eco_rubygems::RubyGemsAdapter = halyard_eco_rubygems::RubyGemsAdapter;
+    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN, &NUGET, &DART, &RUBYGEMS]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -362,7 +369,10 @@ pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
             || rel.ends_with("/pubspec.yaml")
             // M8 (ADR-0059): the nuget adapter owns the SDK-style
             // `.csproj` grammar — every project file joins the walk.
-            || rel.ends_with(".csproj");
+            || rel.ends_with(".csproj")
+            // M8 (ADR-0061): the rubygems adapter owns the `.gemspec`
+            // grammar — every gemspec file joins the walk.
+            || rel.ends_with(".gemspec");
         if !is_manifest {
             continue;
         }
