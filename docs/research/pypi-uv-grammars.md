@@ -142,3 +142,43 @@ per-version endpoint answers `404` for an unpublished version. The probe
 (`halyard_registry::PyPi`) mirrors the npm packument client's contract:
 `404` ⇒ not published, a release row matching the version ⇒ published,
 everything else fail-closed (`E-REG-*`).
+
+## 8. The `uv.lock` lockfile half — `docs.astral.sh/uv/concepts/projects/layout/` (fetched 2026-11-27) + the installed tool (`uv 0.13.10`, captured 2026-11-27)
+
+The §17 M8 `PyPI` cell's recorded-open lockfile remainder. The lockfile's
+ownership is documented in the strongest terms the project's fail-closed
+discipline asks for:
+
+> uv.lock is a human-readable TOML file but is managed by uv and should
+> not be edited manually.
+
+> The uv.lock format is specific to uv and not usable by other tools.
+
+> The lockfile may also be explicitly updated using `uv lock`.
+
+(plus *"This file should be checked into version control"* — the root
+`uv.lock` a release workspace carries.)
+
+Consequences recorded for the seam (ADR-0056's cell, the uv.lock half):
+
+- **No in-memory patcher**: editing the bytes halyard's side is exactly
+  what uv's posture forbids — the adapter's `patch_lockfile` declines
+  (`NeedsNative`) naming the posture and the refresh argv; the native
+  refresh owns the file (the same native-only shape the npm family rides
+  for package-lock.json/yarn.lock/bun.lock, §9.3).
+- **The refresh argv is the tool's own**: `uv lock` — *"Update the
+  project's lockfile"*; `--offline` — *"Disable network access [env:
+  UV_OFFLINE=]"* (the installed tool's help, uv 0.13.10 — the
+  cargo/pnpm offline discipline: the §9.2 rule-4 effect step never
+  touches the network, and the tool's own error governs when the cache
+  cannot resolve offline).
+- **The fidelity contract, proven empirically**: a member version bump
+  (pyproject `version = "0.1.0"` → `"0.2.0"`, then `uv lock --offline`)
+  rewrites exactly the member's `version` row inside its `[[package]]`
+  entry — the diff against the prior lockfile was that one line. The
+  header (`version = 1`, `revision = 5`, `requires-python`), the
+  `[manifest]` members and every sibling row survive verbatim. The
+  verifier (`halyard_eco_pypi::uvlock::verify_native_refresh`) pins
+  exactly that: header + non-member rows byte-identical, member rows may
+  move, everything else refuses `E-LOCK-NATIVE` (§9.2: "only workspace
+  members may change").
