@@ -24,17 +24,34 @@ const APP: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 "#;
 
 fn edit() {
-    let file = RelPath::new("src/app/App.csproj").expect("fixture path");
-    let start = u32::try_from(APP.find("<PackageVersion>").expect("fixture")).expect("fits") + 16;
+    // The fixture is a constant that must parse; a miss exits loudly
+    // (bench fns are not `#[test]`, so the test-lint allowance does not
+    // reach them — the pom_edit bench posture).
+    let fail = |what: &str| -> ! {
+        eprintln!("the bench fixture must {what}");
+        std::process::exit(101);
+    };
+    let Some(file) = RelPath::new("src/app/App.csproj") else {
+        fail("carry a normalized fixture path");
+    };
+    let start = (APP
+        .find("<PackageVersion>")
+        .unwrap_or_else(|| fail("carry the pack version row"))
+        + "<PackageVersion>".len())
+    .try_into()
+    .unwrap_or_else(|_| fail("carry the pack version row"));
     let patches = [PlanPatch {
         start,
         end: start + 5,
         text: "1.5.0".to_owned(),
     }];
-    let out = NuGetAdapter
-        .edit_versions(&file, APP.as_bytes(), &patches)
-        .expect("bench fixture edits");
-    assert_eq!(out.applied, 1);
+    match NuGetAdapter.edit_versions(&file, APP.as_bytes(), &patches) {
+        Ok(out) if out.applied == 1 => {}
+        _ => {
+            eprintln!("the bench fixture must edit");
+            std::process::exit(101);
+        }
+    }
 }
 
 fn bench(c: &mut Criterion) {
