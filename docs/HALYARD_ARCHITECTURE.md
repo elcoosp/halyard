@@ -1281,12 +1281,21 @@ spellings with the semver-typed plan contract, byte-preserving
 `uv publish` argv grammar, the `halyard_registry::PyPi` JSON-API probe
 registered under the plan contract's `pypi` registry name, the
 `UV_PUBLISH_TOKEN` auth arm, the `pypi` row in the doctor's
-publish-auth table). The cell's recorded-open remainders: the
+publish-auth table). As-built 2026-11-27: the cell's **uv.lock lockfile
+half** ships — the root `uv.lock` joins the orchestrator's lockfile
+targets (`halyard_edit::LOCKFILE_TARGETS`), the adapter's
+`patch_lockfile` declines at uv's own documented posture (*"managed by
+uv and should not be edited manually"*, VERIFIED in
+`docs/research/pypi-uv-grammars.md` §8 — the npm family's
+package-lock/yarn/bun native-only shape), and the §9.2 rule-4 native
+refresh ships (`uv lock --offline`, the installed tool's documented
+refresh) with the caller-side verifier pinning the observed fidelity: a
+member bump moves exactly the member's `version` row, everything else
+refuses `E-LOCK-NATIVE`. The cell's recorded-open remainders: the
 corpus-lane replay on 2 real repos (token/network-bound, the M7 lane
-discipline), the uv.lock lockfile half (the trait's documented
-`NeedsNative`/`Unsupported` declines stand), and the custom-index/
-trusted-publishing config surface (the plan schema is frozen, ADR-0055;
-the argv stays bare — uv's own posture governs).)*
+discipline), and the custom-index/trusted-publishing config surface
+(the plan schema is frozen, ADR-0055; the argv stays bare — uv's own
+posture governs).)*
 
 *(As-built note, 2026-11-26 (ADR-0057): the M8 row's **Go modules**
 cell ships — the `halyard-eco-gomod` adapter (the §7.3 discovery
@@ -1336,10 +1345,23 @@ byte-preserving edit seam (read-back verified, the apply shell's
 manifest map routes `*.csproj`), the tag-target probe's explicit
 `nuget` arm, and the publish posture — rows carry `publishable = false`
 until a `dotnet` argv grammar exists; the planner's registry arm names
-`nuget.org` and the engine records the `publish_disabled` skip. The
-cell's recorded-open remainders: the `dotnet pack`/`dotnet nuget push`
-argv arm, the nuget.org probe arm, the non-`.csproj` project types,
-CPM version resolution, and the corpus-lane replay on 2 real repos.)*
+`nuget.org` and the engine records the `publish_disabled` skip.
+As-built 2026-11-27 (ADR-0059 continued): the cell's **publish half**
+ships — the `dotnet pack`/`dotnet nuget push` argv arm (the documented
+two-step flow the push reference states itself: *"It doesn't create a
+package. To create a package, use `dotnet pack`."* — VERIFIED in
+`docs/research/nuget-grammars.md` §11; bare pack, then the documented
+official-server push, the credential riding the documented
+`NUGET_API_KEY` env pair, the dry forecast running the packaging half
+only — the push has no documented dry form), the nuget.org
+flat-container probe (the VERIFIED `PackageBaseAddress` grammar:
+`GET {base}/{LOWER_ID}/index.json`, 404 ⇒ none) registered under the
+plan contract's `nuget.org` registry name, rows `publishable` at the
+documented packability gate (`<IsPackable>false</IsPackable>` keeps the
+row unpublishable), and the nuget.org row in the doctor's publish-auth
+table. The cell's recorded-open remainders: the non-`.csproj` project
+types, CPM version resolution, and the corpus-lane replay on 2 real
+repos.)*
 
 *(As-built note, 2026-11-27 (ADR-0060): the M8 row's **Dart/pub** cell
 ships — the `halyard-eco-dart` adapter (the §7.3 discovery subset at
@@ -1361,6 +1383,31 @@ cell's recorded-open remainders: the VERIFIED `dart pub publish` argv
 arm, the pub.dev probe arm, the `dart pub get` lockfile refresh, the
 glob superset beyond the single-`*` form, and the corpus-lane replay
 on 2 real repos.)*
+
+*(As-built note, 2026-11-27 (ADR-0061): the M8 row's **RubyGems** cell
+ships — the `halyard-eco-rubygems` adapter (the §7.3 discovery subset at
+the VERIFIED gemspec grammar, `docs/research/rubygems-grammars.md`: the
+specification-reference's *"Versions shall be represented by three
+non-negative integers"* strategy — two-component and four-segment
+spellings warned and never rewritten per ADR-0056's discipline; the
+deterministic-specs literal-assignment grammar — a computed or
+conditionally guarded `version` row is consumed unmodeled, never a
+slot; every gemspec in the committed tree is a standalone package row —
+the gem is the package, the manifest is the gemspec file; name-proven
+internal edges: a dependency **naming** another discovered gemspec
+drives the cascade, every RubyGems requirement — `~>` included — rides
+verbatim), the byte-preserving edit seam (read-back verified, the apply
+shell routes through the owning package's ecosystem), the tag-target
+probe's explicit `rubygems` arm, and the publish posture — rows carry
+`publishable = false` until the `gem push` argv arm lands (ADR-0061
+D5's documented posture: the credential surface is the local
+`~/.gem/credentials` file, no env-var grammar); the planner's registry
+arm names `rubygems.org` and the engine records the `publish_disabled`
+skip. This note landed 2026-11-27 (the drift the ADR-0062 session and
+the Docker session each recorded — the row belongs to the ADR-0061
+session's author); the cell's recorded-open remainders: the
+`gem build`/`gem push` argv arm, the rubygems.org probe arm, and the
+corpus-lane replay on 2 real repos.)*
 
 *(As-built note, 2026-11-27 (ADR-0062): the M8 row's **`generic`** cell
 ships — the config-declared escape hatch for repositories no manifest
