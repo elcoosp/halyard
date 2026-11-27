@@ -42,6 +42,13 @@ pub enum Ecosystem {
     /// discipline), and `dotnet` publishing carries no argv grammar yet
     /// (the row publishes as the engine's disabled shape).
     Nuget,
+    /// Dart/pub (`pubspec.yaml` manifests, M8 — ADR-0060): versions are
+    /// the pubspec's own `version` rows (the documented three-number
+    /// semver grammar; only semver-parseable spellings are canonical per
+    /// ADR-0056's discipline), and pub.dev publishing documents no token
+    /// env var — the row publishes as the engine's disabled shape until
+    /// a pub.dev auth grammar exists.
+    Dart,
     /// Adapter-defined ecosystem; the symbol resolves through the
     /// workspace [`Interner`].
     Custom(Sym),
@@ -49,8 +56,8 @@ pub enum Ecosystem {
 
 impl Ecosystem {
     /// Stable identifier used in plans and tag templates: `cargo`,
-    /// `npm`, `pypi`, `go`, `maven`, `nuget`, or the interner-resolved
-    /// custom name (`custom` for a foreign symbol).
+    /// `npm`, `pypi`, `go`, `maven`, `nuget`, `dart`, or the
+    /// interner-resolved custom name (`custom` for a foreign symbol).
     pub fn resolve<'a>(&self, interner: &'a Interner) -> &'a str {
         match self {
             Self::Cargo => "cargo",
@@ -59,6 +66,7 @@ impl Ecosystem {
             Self::Go => "go",
             Self::Maven => "maven",
             Self::Nuget => "nuget",
+            Self::Dart => "dart",
             Self::Custom(sym) => interner.get(*sym).unwrap_or("custom"),
         }
     }
