@@ -6,7 +6,8 @@
 //!    pruning `target/` / `node_modules/` / `.git/`), reads every manifest
 //!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`,
 //!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`, SDK-style
-//!    `.csproj`, `pubspec.yaml`) into a [`DiscoverCtx`]; no subprocess is
+//!    `.csproj`, `pubspec.yaml`) plus the config-declared `[[generic]]`
+//!    version files (M8 ADR-0062) into a [`DiscoverCtx`]; no subprocess is
 //!    ever spawned
 //!    (invariant I6).
 //! 2. [`discover_from_ctx`] (pure) dispatches to the registered
@@ -24,8 +25,8 @@ use std::path::Path;
 
 use halyard_core::PkgId;
 use halyard_core::discover::{
-    DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, ManifestFormat, RawDep,
-    RawPackage, RawVersionSource,
+    DiscoverCtx, DiscoverError, DiscoveryWarning, EcosystemAdapter, GenericFileSpec,
+    ManifestFormat, RawDep, RawPackage, RawVersionSource,
 };
 use halyard_core::graph::WorkspaceGraph;
 use halyard_core::link::{ExplicitLinkSpec, detect_links};
@@ -48,12 +49,17 @@ pub struct Discovery {
 }
 
 /// Orchestrator input beyond the committed tree: explicit `[[link]]`
-/// entries from the config layer (config itself is resolved by the M1.8
-/// loader and mapped by the caller).
+/// entries and the config-declared `generic` packages (M8 ADR-0062)
+/// from the config layer (config itself is resolved by the M1.8 loader
+/// and mapped by the caller).
 #[derive(Clone, Debug, Default)]
 pub struct DiscoverInput {
     /// `halyard.toml: [[link]]` entries, ecosystem-agnostic form.
     pub links: Vec<ExplicitLinkSpec>,
+    /// `halyard.toml: [[generic]]` entries, validated by the loader
+    /// (`E-CFG-GENERIC`): one entry is one config-declared package over
+    /// a regex-edited version file.
+    pub generic: Vec<GenericFileSpec>,
 }
 
 /// One registered adapter with its fixed ecosystem mapping (§6.1 merge
@@ -149,6 +155,16 @@ pub fn discover_from_ctx(
     for entry in adapters() {
         let rows = entry.adapter.discover(ctx)?;
         raw_rows.push((entry.ecosystem, rows));
+    }
+
+    // M8 (ADR-0062): the config-declared `generic` packages ride the
+    // same orchestrator — the adapter is constructed per-run from the
+    // `DiscoverInput` specs (discovery is config-driven, not
+    // tree-scanned) and joins after the fixed adapters (§6.1 merge
+    // order).
+    if !input.generic.is_empty() {
+        let generic = halyard_eco_generic::GenericAdapter::new(&input.generic);
+        raw_rows.push((Ecosystem::Generic, generic.discover(ctx)?));
     }
 
     // Register packages in adapter order, checking duplicates per
@@ -317,16 +333,35 @@ fn resolve_dep(workspace: &Workspace, ecosystem: Ecosystem, dep: &RawDep) -> Opt
 ///
 /// The repository root is `root` itself; when it carries no `.git`, the
 /// walk still works (git-less checkouts are valid for discovery) — the
-/// `gix::discover` refinement lands with the git engine (M2).
+/// `gix::discover` refinement lands with the git engine (M2). The
+/// config-declared `[[generic]]` version files (M8 ADR-0062) join the
+/// manifest walk: the walk cannot know them by shape, so the input's
+/// specs name the files to read.
 pub fn discover_repo(root: &Path, input: &DiscoverInput) -> Result<Discovery, DiscoverError> {
-    let ctx = collect_ctx(root)?;
+    let ctx = collect_ctx(root, &input.generic)?;
     discover_from_ctx(&ctx, input)
 }
 
-/// Walks `root` and reads every manifest-shaped file into a
+/// Walks `root` and reads every manifest-shaped file — plus the
+/// config-declared `[[generic]]` version files — into a
 /// [`DiscoverCtx`].
-pub fn collect_ctx(root: &Path) -> Result<DiscoverCtx, DiscoverError> {
+pub fn collect_ctx(
+    root: &Path,
+    generic_specs: &[GenericFileSpec],
+) -> Result<DiscoverCtx, DiscoverError> {
     let mut ctx = DiscoverCtx::new();
+    // The declared version files join the inventory first (the adapter
+    // refuses a declared-but-missing file; a non-normalized path would
+    // be ignored by `insert_file`, so the loader's validation is the
+    // authority — belt and braces, both refuse).
+    for spec in generic_specs {
+        let path = root.join(&spec.file);
+        let bytes = std::fs::read(&path).map_err(|e| DiscoverError::Io {
+            path: spec.file.clone(),
+            message: e.to_string(),
+        })?;
+        ctx.insert_file(&spec.file, bytes);
+    }
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
         .filter_entry(|entry| {
