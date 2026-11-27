@@ -34,6 +34,10 @@ pub mod pep508;
 // M8 step 2 (§13.4): the publish argv grammar (the shell spawns, the
 // adapter owns the tool grammar — the `refresh_command` convention).
 pub mod publish;
+// The §17 M8 cell's uv.lock lockfile half (ADR-0056): the native-only
+// seam at uv's documented management posture (the decline reason, the
+// `uv lock --offline` refresh argv, the refresh verifier).
+pub mod uvlock;
 pub use publish::uv_publish_args;
 
 /// The pypi-family adapter (§7.3 discovery + manifest-edit subset).
@@ -301,6 +305,64 @@ impl EcosystemAdapter for PyPiAdapter {
         patches: &[halyard_core::plan::PlanPatch],
     ) -> Result<halyard_core::edit::EditOutcome, halyard_core::edit::EditFailure> {
         edit::edit_versions(file, content, patches)
+    }
+
+    fn patch_lockfile(
+        &self,
+        file: &RelPath,
+        content: &[u8],
+        changes: &[halyard_core::lockfile::LockfileVersionChange],
+    ) -> Result<halyard_core::lockfile::LockfileOutcome, halyard_core::lockfile::LockfileFailure>
+    {
+        // Route by lockfile name: uv's own documented posture governs
+        // the root `uv.lock` — "managed by uv and should not be edited
+        // manually" (research note §3) — so there is no in-memory
+        // patcher; the half is the native refresh arm below (§9.2 rule
+        // 4, the package-lock/yarn/bun native-only shape). The decline
+        // is a report, never a mutation.
+        let _ = (content, changes);
+        if file.as_str() != uvlock::UV_LOCKFILE {
+            return Ok(halyard_core::lockfile::LockfileOutcome::NeedsNative {
+                reason: format!(
+                    "lockfile {file} is not a pypi-family lockfile halyard recognizes; \
+                     refresh it natively with its own tool"
+                ),
+            });
+        }
+        Ok(halyard_core::lockfile::LockfileOutcome::NeedsNative {
+            reason: uvlock::DECLINE_REASON.to_owned(),
+        })
+    }
+
+    fn refresh_lockfile_native(
+        &self,
+        ws_root: &std::path::Path,
+    ) -> Result<(), halyard_core::lockfile::NativeRefreshError> {
+        // Effect step (§9.2 rule 4): argv array only — no shell, no
+        // string interpolation of untrusted text (invariant I7). The
+        // caller verifies the effect (only member version rows moved,
+        // `uvlock::verify_native_refresh`).
+        let (program, args, command) = uvlock::refresh_command();
+        let output = std::process::Command::new(program)
+            .args(args)
+            .current_dir(ws_root)
+            .output()
+            .map_err(|source| halyard_core::lockfile::NativeRefreshError::Spawn {
+                command: command.to_owned(),
+                source: source.to_string(),
+            })?;
+        if !output.status.success() {
+            let message = if output.stderr.is_empty() {
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            } else {
+                String::from_utf8_lossy(&output.stderr).into_owned()
+            };
+            return Err(halyard_core::lockfile::NativeRefreshError::Failed {
+                command: command.to_owned(),
+                message,
+            });
+        }
+        Ok(())
     }
 }
 
