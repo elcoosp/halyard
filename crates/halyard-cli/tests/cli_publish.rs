@@ -1652,3 +1652,91 @@ fn publish_dry_records_disabled_for_a_dart_workspace() -> Result<(), BoxError> {
     );
     Ok(())
 }
+
+// M8 (ADR-0061): the rubygems lane — the publish posture. A rubygems
+// release carries a publish decision with the engine's disabled shape:
+// the row records `publish_disabled` (the documented flow pushes a
+// built `.gem` via `gem push` and its credential surface is the local
+// `~/.gem/credentials` file — no argv arm and no env token the engine
+// could carry yet), zero targets, no tool spawn.
+// ---------------------------------------------------------------------------
+
+/// A rubygems repository: one gem with a canonical `version` literal, a
+/// feat commit driving the plan row, publishing enabled in the config.
+fn build_rubygems_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    fx.commit_with(&CommitSpec::files(
+        vec![
+            (
+                "gems/app/app.gemspec".to_owned(),
+                concat!(
+                    "# frozen_string_literal: true\n",
+                    "Gem::Specification.new do |spec|\n",
+                    "  spec.name = 'app'\n",
+                    "  spec.version = '1.0.0' # the release row\n",
+                    "  spec.summary = 'the application'\n",
+                    "end\n",
+                )
+                .to_owned(),
+            ),
+            (
+                "halyard.toml".to_owned(),
+                "[publish]\nenabled = true\n".to_owned(),
+            ),
+        ],
+        "chore: scaffold rubygems repository",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "gems/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// The dry forecast for a rubygems repository: zero publish targets, the
+/// release recorded as a `publish_disabled` skip (the row's publish
+/// decision carries the engine's disabled shape — `registry` names the
+/// canonical rubygems.org, `enabled` is false until the argv arm lands),
+/// and a successful offline run.
+#[test]
+fn publish_dry_records_disabled_for_a_rubygems_repository() -> Result<(), BoxError> {
+    let fx = build_rubygems_workspace("rubygems-dry")?;
+    let (out, text) = halyard_env(
+        fx.root(),
+        &["publish", "--dry", "--format", "json"],
+        None,
+        None,
+    )?;
+    assert!(
+        out.status.success(),
+        "the rubygems forecast succeeded: {text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(
+        text.trim_start_matches(char::is_whitespace)
+            .trim_start_matches(|c: char| c != '{'),
+    )
+    .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
+    assert_eq!(
+        value.get("targets").and_then(serde_json::Value::as_u64),
+        Some(0),
+        "zero publish targets: {text}"
+    );
+    let skips = value
+        .get("not_targets")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("not_targets is an array")?;
+    let member = skips
+        .iter()
+        .find(|row| row.get("package").and_then(serde_json::Value::as_str) == Some("app"))
+        .ok_or("the rubygems release is recorded as a skip")?;
+    assert_eq!(
+        member.get("reason").and_then(serde_json::Value::as_str),
+        Some("publish_disabled"),
+        "the disabled-shape skip reason: {text}"
+    );
+    Ok(())
+}
