@@ -180,19 +180,25 @@ fn row(manifest_path: &str, file: &grammar::Dockerfile) -> Result<RawPackage, Di
         .iter()
         .filter(|pair| pair.key == VERSION_LABEL)
         .collect::<Vec<_>>();
-    if let [superseded, mid @ .., _last] = version_pairs.as_slice()
-        && !mid.is_empty()
-    {
-        warnings.push(DiscoveryWarning {
-            code: "superseded-version-label",
-            subject: name.clone(),
-            message: format!(
-                "an earlier {VERSION_LABEL} row carrying {:?} is superseded; the \
-                 most-recently-applied value overrides any previously-set value (the \
-                 documented LABEL override rule) — the last row is the edit site",
-                superseded.value
-            ),
-        });
+    // Every row before the last is superseded (the override rule is
+    // Docker's own semantics — modeled, not guessed): one warning per
+    // superseded row, the last row stays the edit site. (The prior
+    // `!mid.is_empty()` guard suppressed the warning for exactly the
+    // two-label case the contract pins — the middle binding of
+    // `[first, mid @ .., last]` is empty there.)
+    if let Some((_last, earlier)) = version_pairs.split_last() {
+        for row in earlier {
+            warnings.push(DiscoveryWarning {
+                code: "superseded-version-label",
+                subject: name.clone(),
+                message: format!(
+                    "an earlier {VERSION_LABEL} row carrying {:?} is superseded; the \
+                     most-recently-applied value overrides any previously-set value (the \
+                     documented LABEL override rule) — the last row is the edit site",
+                    row.value
+                ),
+            });
+        }
     }
     let last = version_value(&file.labels);
     let (version, site) = if let Some(pair) = last
