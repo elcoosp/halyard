@@ -119,7 +119,7 @@ fn snapshot<'a>(
         bases: bases.clone(),
     };
     let refs = ReleaseRefs::from_bases(bases);
-    let head = oid(9).expect("fixture oid");
+    let head = oid(9).unwrap_or_else(|| fixture_fail("fixture oid"));
     let history = FixedHistory::new(Some(head), digest);
     // The snapshot borrows; leak the boxed provider for the test lifetime
     // (each test builds one snapshot).
@@ -151,6 +151,13 @@ fn cfg() -> PlanConfig {
 /// maven-central, `enabled` is false (the adapter's `publishable = false`
 /// posture — no `mvn` argv grammar exists, ADR-0058 D5), and the edit set
 /// aims the version patch at the pom's own-version site.
+/// The loud exit for an impossible fixture (the helper fns are not
+/// `#[test]`, so the test-lint allowance does not reach them).
+fn fixture_fail(what: &str) -> ! {
+    eprintln!("the fixture must carry {what}");
+    std::process::exit(101);
+}
+
 #[test]
 fn a_maven_row_plans_with_the_disabled_publish_shape() {
     let mut ws = Workspace::new();
@@ -159,7 +166,7 @@ fn a_maven_row_plans_with_the_disabled_publish_shape() {
     let snapshot = snapshot(&ws, commits, vec![vec![0]], vec![None]);
     let plan = plan(&snapshot, &cfg()).expect("the maven row plans");
     assert_eq!(plan.releases.len(), 1, "the maven package releases");
-    let row = &plan.releases[0];
+    let row = plan.releases.first().expect("the item");
     assert_eq!(row.ecosystem, "maven");
     assert_eq!(row.from, "1.0.0");
     assert_eq!(row.to, "1.1.0", "a feat bump is minor");
@@ -178,9 +185,10 @@ fn a_maven_row_plans_with_the_disabled_publish_shape() {
         .find(|edit| edit.file.as_str() == "api/pom.xml")
         .expect("the pom edit is planned");
     assert_eq!(edit.patches.len(), 1, "one value patch");
-    assert_eq!(edit.patches[0].start, 40);
-    assert_eq!(edit.patches[0].end, 45);
-    assert_eq!(edit.patches[0].text, "1.1.0");
+    let patch = edit.patches.first().expect("one value patch");
+    assert_eq!(patch.start, 40);
+    assert_eq!(patch.end, 45);
+    assert_eq!(patch.text, "1.1.0");
     let _ = api;
 }
 
