@@ -562,6 +562,13 @@ fn release_row(
             // at discovery keeps `enabled` false — the registry name is
             // truthful the day the argv arm flips it.
             Ecosystem::Nuget => ("nuget.org".to_owned(), None, None),
+            // Dart rows ride the engine's disabled shape until a pub.dev
+            // publish auth grammar exists (ADR-0060 D5 — the documented
+            // pub environment surface carries no token variable):
+            // `publishable = false` at discovery keeps `enabled` false —
+            // the registry name is truthful the day the auth arm flips
+            // it.
+            Ecosystem::Dart => ("pub.dev".to_owned(), None, None),
             _ => (
                 cfg.publish_npm_registry.clone(),
                 cfg.publish_npm_access.clone(),
