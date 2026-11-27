@@ -6,7 +6,8 @@
 //!    pruning `target/` / `node_modules/` / `.git/`), reads every manifest
 //!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`,
 //!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`, SDK-style
-//!    `.csproj`, `pubspec.yaml`) plus the config-declared `[[generic]]`
+//!    `.csproj`, `pubspec.yaml`, `.gemspec`, `Dockerfile`) plus the
+//!    config-declared `[[generic]]`
 //!    version files (M8 ADR-0062) into a [`DiscoverCtx`]; no subprocess is
 //!    ever spawned
 //!    (invariant I6).
@@ -116,6 +117,12 @@ fn adapters() -> Vec<AdapterEntry> {
             ecosystem: Ecosystem::RubyGems,
             adapter: Box::new(halyard_eco_rubygems::RubyGemsAdapter::new()),
         },
+        // M8 (ADR-0063): the docker adapter joins the fixed dispatch
+        // order after rubygems (§6.1 merge order: cargo first).
+        AdapterEntry {
+            ecosystem: Ecosystem::Docker,
+            adapter: Box::new(halyard_eco_docker::DockerAdapter::new()),
+        },
     ]
 }
 
@@ -133,7 +140,10 @@ pub fn registered_adapters() -> Vec<&'static dyn EcosystemAdapter> {
     static NUGET: halyard_eco_nuget::NuGetAdapter = halyard_eco_nuget::NuGetAdapter;
     static DART: halyard_eco_dart::DartAdapter = halyard_eco_dart::DartAdapter;
     static RUBYGEMS: halyard_eco_rubygems::RubyGemsAdapter = halyard_eco_rubygems::RubyGemsAdapter;
-    vec![&CARGO, &NPM, &PYPI, &GO, &MAVEN, &NUGET, &DART, &RUBYGEMS]
+    static DOCKER: halyard_eco_docker::DockerAdapter = halyard_eco_docker::DockerAdapter;
+    vec![
+        &CARGO, &NPM, &PYPI, &GO, &MAVEN, &NUGET, &DART, &RUBYGEMS, &DOCKER,
+    ]
 }
 
 /// The pure orchestrator (§6.1 step 3): merge adapters' rows into a
@@ -407,7 +417,13 @@ pub fn collect_ctx(
             || rel.ends_with(".csproj")
             // M8 (ADR-0061): the rubygems adapter owns the `.gemspec`
             // grammar — every gemspec file joins the walk.
-            || rel.ends_with(".gemspec");
+            || rel.ends_with(".gemspec")
+            // M8 (ADR-0063): the docker adapter owns the `Dockerfile`
+            // grammar — the documented default build input joins the
+            // walk (root and nested; suffixed variants are the
+            // recorded-open superset).
+            || rel == "Dockerfile"
+            || rel.ends_with("/Dockerfile");
         if !is_manifest {
             continue;
         }
