@@ -1472,7 +1472,8 @@ fn publish_dry_records_disabled_for_a_maven_workspace() -> Result<(), BoxError> 
 }
 
 // ---------------------------------------------------------------------------
-// M8 (ADR-0059): the nuget lane — the publish posture. A nuget release
+// M8 (ADR-0059): the nuget lane — the publish posture, flipped by the
+// argv arm (the documented pack/push grammar; ADR-0059 continued). A nuget release
 // carries a publish decision with the engine's disabled shape: the row
 // records `publish_disabled` (no nuget publish grammar exists — no
 // `dotnet` argv arm, no registry probe, no auth arm), zero targets, no
@@ -1517,19 +1518,21 @@ fn build_nuget_workspace(label: &str) -> Result<GitFixture, BoxError> {
     Ok(fx)
 }
 
-/// The dry forecast for a nuget workspace: zero publish targets, the
-/// release recorded as a `publish_disabled` skip (the row's publish
-/// decision carries the engine's disabled shape — `registry` names the
-/// canonical nuget.org, `enabled` is false until the argv arm lands),
-/// and a successful offline run.
+/// The dry forecast for a nuget workspace (the §17 M8 `NuGet` cell's
+/// argv arm, ADR-0059 continued): the release forecasts as a nuget
+/// target (the disabled shape flipped the day the `dotnet` grammar
+/// landed), the spawn runs the documented packaging half through the
+/// PATH shim, and no `publish_disabled` skip remains.
 #[test]
-fn publish_dry_records_disabled_for_a_nuget_workspace() -> Result<(), BoxError> {
+fn publish_dry_forecasts_for_a_nuget_workspace() -> Result<(), BoxError> {
     let fx = build_nuget_workspace("nuget-dry")?;
+    let shim = write_dotnet_shim("nuget-dry-shim")?;
+    let log = fixture_dir("nuget-dry-log")?.join("argv.log");
     let (out, text) = halyard_env(
         fx.root(),
         &["publish", "--dry", "--format", "json"],
-        None,
-        None,
+        Some(&shim),
+        Some(&log),
     )?;
     assert!(out.status.success(), "the nuget forecast succeeded: {text}");
     let value: serde_json::Value = serde_json::from_str(
@@ -1539,23 +1542,51 @@ fn publish_dry_records_disabled_for_a_nuget_workspace() -> Result<(), BoxError> 
     .map_err(|e| format!("the report is JSON: {e}\n{text}"))?;
     assert_eq!(
         value.get("targets").and_then(serde_json::Value::as_u64),
-        Some(0),
-        "zero publish targets: {text}"
+        Some(1),
+        "the nuget target forecasts: {text}"
     );
-    let skips = value
-        .get("not_targets")
+    let rows = value
+        .get("rows")
         .and_then(serde_json::Value::as_array)
-        .ok_or("not_targets is an array")?;
-    let member = skips
+        .ok_or("rows is an array")?;
+    let row = rows
         .iter()
         .find(|row| row.get("package").and_then(serde_json::Value::as_str) == Some("Contoso.App"))
-        .ok_or("the nuget release is recorded as a skip")?;
+        .ok_or("the nuget release forecasts")?;
     assert_eq!(
-        member.get("reason").and_then(serde_json::Value::as_str),
-        Some("publish_disabled"),
-        "the disabled-shape skip reason: {text}"
+        row.pointer("/outcome/kind")
+            .and_then(serde_json::Value::as_str),
+        Some("forecast"),
+        "the forecast outcome: {row}"
+    );
+    // The spawn ran the documented packaging half (the push has no
+    // documented dry form — no flag is invented, ADR-0033).
+    let recorded = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(recorded.contains("pack"), "the pack argv ran: {recorded}");
+    assert!(
+        !recorded.contains("push"),
+        "the push never runs in a forecast: {recorded}"
     );
     Ok(())
+}
+
+/// A `dotnet` stand-in that records its argv and exits 0 (the packaged
+/// tool never runs; the argv is the assertion).
+fn write_dotnet_shim(label: &str) -> Result<std::path::PathBuf, BoxError> {
+    let dir = fixture_dir(label)?;
+    let script = dir.join("dotnet");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$HALYARD_SHIM_LOG\"\nexit 0\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms)?;
+    }
+    Ok(dir)
 }
 
 // ---------------------------------------------------------------------------
