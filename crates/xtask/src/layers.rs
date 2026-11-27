@@ -228,6 +228,13 @@ const RULES: &[LayerRule] = &[
         workspace: &["halyard-core"],
         external: Some(&["semver"]),
     },
+    // M8 (ADR-0060): the dart adapter owns the pubspec.yaml subset
+    // grammar over a hand-rolled scanner; no workspace deps beyond core.
+    LayerRule {
+        name: "halyard-eco-dart",
+        workspace: &["halyard-core"],
+        external: Some(&["semver"]),
+    },
     // M1.5/M1.6 orchestrator: walks the repo (`ignore`) and dispatches to
     // the adapters (§6.1/§6.2). `rayon` is deliberately absent — §6.2's
     // parallel parse uses scoped std threads until budgets demand more.
@@ -241,6 +248,7 @@ const RULES: &[LayerRule] = &[
             "halyard-eco-gomod",
             "halyard-eco-maven",
             "halyard-eco-nuget",
+            "halyard-eco-dart",
         ],
         external: Some(&["ignore"]),
     },
@@ -419,6 +427,7 @@ mod tests {
             "halyard-conventional",
             "halyard-discover",
             "halyard-eco-cargo",
+            "halyard-eco-dart",
             "halyard-eco-npm",
             "halyard-eco-pypi",
             "halyard-eco-gomod",
