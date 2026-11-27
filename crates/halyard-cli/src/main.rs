@@ -2180,11 +2180,33 @@ fn remote_origin_url() -> Result<Option<String>, CliError> {
 /// two-component spelling keeps the documented HEAD fallback). The
 /// `rubygems` arm pairs the gemspec's canonical semver the same way (M8
 /// ADR-0061: a `Gem::Version` spelling the plan contract cannot parse
-/// keeps the documented HEAD fallback).
-struct ShellProbe;
+/// keeps the documented HEAD fallback). The `generic` arm pairs the
+/// declared pattern's canonical capture per file (M8 ADR-0062: the probe
+/// is path-aware — a config-declared locator picks its pattern by the
+/// manifest path; a file with no declared pattern, or a capture the plan
+/// contract cannot parse, keeps the documented HEAD fallback).
+struct ShellProbe {
+    /// The resolved config's `[[generic]]` declarations (the locator
+    /// patterns, keyed by the declared file).
+    generic: Vec<halyard_core::discover::GenericFileSpec>,
+}
+
+impl ShellProbe {
+    /// The probe over the shell's resolved config (the generic specs).
+    fn new(generic: &[halyard_core::discover::GenericFileSpec]) -> Self {
+        Self {
+            generic: generic.to_vec(),
+        }
+    }
+}
 
 impl ManifestVersionProbe for ShellProbe {
-    fn manifest_version(&self, ecosystem: &str, manifest: &[u8]) -> Option<String> {
+    fn manifest_version(
+        &self,
+        ecosystem: &str,
+        manifest_path: &str,
+        manifest: &[u8],
+    ) -> Option<String> {
         match ecosystem {
             "cargo" => halyard_eco_cargo::manifest_version(manifest),
             "npm" => halyard_eco_npm::manifest_version(manifest),
@@ -2194,6 +2216,11 @@ impl ManifestVersionProbe for ShellProbe {
             "nuget" => halyard_eco_nuget::manifest_version(manifest),
             "dart" => halyard_eco_dart::manifest_version(manifest),
             "rubygems" => halyard_eco_rubygems::manifest_version(manifest),
+            "generic" => self
+                .generic
+                .iter()
+                .find(|spec| spec.file == manifest_path)
+                .and_then(|spec| halyard_eco_generic::capture_version(&spec.pattern, manifest)),
             _ => None,
         }
     }
@@ -2222,12 +2249,15 @@ impl ManifestVersionProbe for ShellProbe {
 /// push phase uses); the base branch is the resolved config override,
 /// defaulting to `HEAD` like the planner's own resolution.
 fn cmd_fetch(cli: &Cli, profiler: &mut Profiler) -> Result<ExitCode, CliError> {
+    // Config first (M8 ADR-0062): the config-declared `[[generic]]`
+    // version files are discovery input (the `DiscoverInput` channel).
+    let config = profiler.span("config", || resolve_config(cli))?;
+    let input = discover_input(&config);
     let discovery = profiler
         .span("discover", || {
-            discover_repo(std::path::Path::new("."), &DiscoverInput::default())
+            discover_repo(std::path::Path::new("."), &input)
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let config = profiler.span("config", || resolve_config(cli))?;
     let plan_config: PlanConfig = config.plan_config();
     let base = plan_config
         .base_branch
@@ -2859,9 +2889,14 @@ fn release_tag_phase(
     // versions are routed at their authoritative workspace manifest) and
     // the digest's release bases; every unverifiable target keeps the
     // documented HEAD fallback — including the blob-less clone case,
-    // where the walk degrades instead of guessing.
-    let resolver = GixTagTargetResolver::open(std::path::Path::new("."), Box::new(ShellProbe))
-        .map_err(|e| CliError::new(e.code(), e.to_string()))?;
+    // where the walk degrades instead of guessing. The probe carries the
+    // resolved config's `[[generic]]` declarations (M8 ADR-0062: the
+    // generic arm picks its pattern per file).
+    let resolver = GixTagTargetResolver::open(
+        std::path::Path::new("."),
+        Box::new(ShellProbe::new(&context.config.generic)),
+    )
+    .map_err(|e| CliError::new(e.code(), e.to_string()))?;
     let writer: Box<dyn halyard_git::tag::TagWriter> = if dry {
         Box::new(
             halyard_git::tag::PreviewTagWriter::open(std::path::Path::new("."))
@@ -4579,12 +4614,17 @@ fn context_with_base(
     profiler: &mut Profiler,
     base_override: Option<&str>,
 ) -> Result<Context, CliError> {
+    // Config first (M8 ADR-0062): the config-declared `[[generic]]`
+    // version files and `[[link]]` entries are discovery INPUT — the
+    // orchestrator cannot see them without the resolved config, so
+    // resolution precedes the walk (the `DiscoverInput` channel).
+    let mut config = profiler.span("config", || resolve_config(cli))?;
+    let input = discover_input(&config);
     let discovery = profiler
         .span("discover", || {
-            discover_repo(std::path::Path::new("."), &DiscoverInput::default())
+            discover_repo(std::path::Path::new("."), &input)
         })
         .map_err(|e| CliError::new(e.code(), e.to_string()))?;
-    let mut config = profiler.span("config", || resolve_config(cli))?;
     // §10.3 branch-bound channels (ADR-0025): the checked-out branch
     // picks the channel — a binding wins, the unbound default fills the
     // rest. Applied before the cache key is computed, so the §8.7
@@ -4696,6 +4736,29 @@ fn resolve_config(cli: &Cli) -> Result<ResolvedConfig, CliError> {
     resolve(&layers).map_err(|e| CliError::new(e.code(), e.to_string()))
 }
 
+/// The config→discovery channel (M8 ADR-0062): the resolved config's
+/// `[[generic]]` declarations become the orchestrator's spec set, and the
+/// `[[link]]` entries — resolved by the loader since M4.7 — reach
+/// `detect_links` the same way (the channel's first live consumers; the
+/// shell owns the config→core mapping).
+fn discover_input(config: &ResolvedConfig) -> DiscoverInput {
+    DiscoverInput {
+        links: config
+            .links
+            .iter()
+            .map(|link| halyard_core::ExplicitLinkSpec {
+                from: link.from.clone(),
+                to: link.to.clone(),
+                mode: link.mode.map(|mode| match mode {
+                    halyard_config::LinkMode::Cascade => halyard_core::LinkMode::Cascade,
+                    halyard_config::LinkMode::Lockstep => halyard_core::LinkMode::Lockstep,
+                }),
+            })
+            .collect(),
+        generic: config.generic.clone(),
+    }
+}
+
 /// Runs the full pure pipeline and returns the plan.
 fn compute_plan(cli: &Cli, profiler: &mut Profiler) -> Result<halyard_core::Plan, CliError> {
     let context = context(cli, profiler)?;
@@ -4784,7 +4847,19 @@ fn cmd_apply(cli: &Cli, profiler: &mut Profiler, dry: bool) -> Result<(), CliErr
         }
         return Ok(());
     }
-    let adapters = halyard_discover::registered_adapters();
+    // M8 (ADR-0062): the config-built generic adapter chains beside the
+    // static set — the routing resolves through the owning package's
+    // ecosystem (the declared version file IS the package's manifest
+    // row), so the shell owns the instance the config declarations
+    // construct.
+    let generic_adapter = halyard_eco_generic::GenericAdapter::new(&context.config.generic);
+    let adapters: Vec<&dyn halyard_core::EcosystemAdapter> =
+        halyard_discover::registered_adapters()
+            .into_iter()
+            .chain(std::iter::once(
+                &generic_adapter as &dyn halyard_core::EcosystemAdapter,
+            ))
+            .collect();
     let report = profiler
         .span("apply", || {
             halyard_edit::apply_plan(
