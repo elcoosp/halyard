@@ -294,3 +294,67 @@ fn apply_rewrites_the_pubspec_version_of_a_dart_workspace() -> Result<(), BoxErr
     );
     Ok(())
 }
+
+// M8 (ADR-0061): the rubygems lane — the semantic in-place gemspec
+// edit. The plan's own-version patch lands on the version literal's
+// inner bytes; the quotes, the comment and every other row never move
+// (I4).
+// ---------------------------------------------------------------------------
+
+/// A rubygems repository: one gem with a canonical `version` literal and
+/// a feat commit driving the gem's plan row (minor: 1.0.0 → 1.1.0).
+fn build_rubygems_workspace(label: &str) -> Result<GitFixture, BoxError> {
+    let dir = fixture_dir(label)?;
+    let mut fx = GitFixture::init_in(&dir)?;
+    let scaffold = vec![
+        (
+            "gems/app/app.gemspec".to_owned(),
+            concat!(
+                "# frozen_string_literal: true\n",
+                "Gem::Specification.new do |spec|\n",
+                "  spec.name = 'app'\n",
+                "  spec.version = '1.0.0' # the release row\n",
+                "  spec.summary = 'the application'\n",
+                "  spec.add_dependency 'json', '>= 2.0'\n",
+                "end\n",
+            )
+            .to_owned(),
+        ),
+        (
+            "gems/app/lib/app.rb".to_owned(),
+            "module App\nend\n".to_owned(),
+        ),
+    ];
+    fx.commit_with(&CommitSpec::files(
+        scaffold,
+        "chore: scaffold rubygems repository",
+    ))?;
+    fx.commit_with(&CommitSpec::files(
+        vec![(
+            "gems/app/README.md".to_owned(),
+            "the app changes\n".to_owned(),
+        )],
+        "feat: the app changes",
+    ))?;
+    Ok(fx)
+}
+
+/// `halyard apply` rewrites the gemspec's version in place: the literal's
+/// inner bytes swap 1.0.0 → 1.1.0 and every other byte of the gemspec is
+/// identical (I4) — the comment, the quotes, the requirement row.
+#[test]
+fn apply_rewrites_the_gemspec_version_of_a_rubygems_repository() -> Result<(), BoxError> {
+    let fx = build_rubygems_workspace("rubygems-apply")?;
+    let (ok, out) = halyard(fx.root(), &["apply"])?;
+    assert!(ok, "apply failed: {out}");
+    let app = std::fs::read_to_string(fx.root().join("gems/app/app.gemspec"))?;
+    assert!(
+        app.contains("spec.version = '1.1.0' # the release row"),
+        "the version moved: {app}"
+    );
+    assert!(
+        app.contains("spec.name = 'app'\n") && app.contains(">= 2.0"),
+        "the surrounding Ruby never moves: {app}"
+    );
+    Ok(())
+}
