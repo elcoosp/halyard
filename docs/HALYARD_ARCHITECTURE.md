@@ -285,6 +285,7 @@ halyard/
 │  ├─ halyard-eco-gomod/   EcosystemAdapter for Go modules (hand-rolled go.mod/go.work lexer, tag-only planning, subdir tags, M8)
 │  ├─ halyard-eco-maven/   EcosystemAdapter for Maven (hand-rolled pom.xml scanner, parent inheritance, semver-canonical versions, M8)
 │  ├─ halyard-eco-nuget/   EcosystemAdapter for NuGet (hand-rolled .csproj scanner, pack-slot versions, semver-canonical spellings, M8)
+│  ├─ halyard-eco-dart/    EcosystemAdapter for Dart/pub (hand-rolled pubspec.yaml scanner, pub workspaces, semver-canonical versions, M8)
 │  ├─ halyard-git/         gix integration: refs, painter walk, trie tree-diff, fetch planner
 │  ├─ halyard-cache/       persistent mmap per-commit cache (only crate permitted `unsafe`)
 │  ├─ halyard-changelog/   minijinja templates, Keep-a-Changelog/default styles, merge of change files
@@ -375,6 +376,34 @@ arm, and the publish posture: rows carry `publishable = false` until a
 is spawned. The `dotnet pack`/`dotnet nuget push` argv arm, the
 nuget.org probe, the non-`.csproj` project types and the corpus-lane
 replay stay the recorded-open remainders.)*
+
+*(As-built note, 2026-11-27 (ADR-0060): the workspace's 27th member is
+the M8 **Dart/pub** cell — the `halyard-eco-dart` adapter (the
+hand-rolled `pubspec.yaml` scanner, the VERIFIED grammar in
+`docs/research/dart-pub-grammars.md` from `dart.dev/tools/pub`), the
+pub-workspace discovery (the root's `workspace` entries walked
+recursively — nested workspaces per the documented *"Pub discovers auth
+and api through the workspace entry of the server package"* — members
+gated on `resolution: workspace`, the documented `packages/*` glob
+expanded over the committed tree, the stray-file refusal scoped to
+pubspecs **between** the root and a member), the three-number semver
+version strategy (ADR-0056's discipline — every pub spelling the plan
+contract's semver parses is canonical; two-component spellings are
+warned and never rewritten), the two-proven internal edges (a dep
+**naming** a member — *"they will automatically resolve to the one in
+the workspace, regardless of the source"* — and a `path:` dep whose
+resolved path names a member manifest), the byte-preserving edit seam
+(read-back verified; only the `version` value span is the slot), the
+`pubspec.yaml` routing in the apply manifest map, the tag-target
+probe's explicit `dart` arm, and the publish posture: rows carry
+`publishable = false` until a pub.dev auth grammar exists — the
+documented pub environment surface (`PUB_CACHE`, `PUB_HOSTED_URL`)
+carries **no token variable**, so there is no auth arm to wire; the
+planner's registry arm names `pub.dev`, the engine records the
+`publish_disabled` skip, no tool is spawned (the VERIFIED
+`dart pub publish` argv stays the recorded-open remainder alongside
+the pub.dev probe arm, the `dart pub get` lockfile refresh, the glob
+superset beyond the single-`*` form, and the corpus-lane replay).)*
 
 ### 7.2 Dependency rules (enforced by `cargo-deny` + a custom `xtask check-layers`)
 `core` depends on nothing but `semver`, `smallvec`, `bstr`, `blake3`, `serde`. `eco-*`, `git`, `forge`, `registry` depend on `core` only. `cli` depends on all. No crate depends on `cli`.
@@ -1241,6 +1270,42 @@ the `publish_disabled` skip. The cell's recorded-open remainders: the
 Groovy/Kotlin build code — an evaluated, VERIFIED grammar gates it),
 the corpus-lane replay on 2 real repos (token/network-bound, the M7
 lane discipline), and the `mvn deploy` publish argv arm.)*
+
+*(As-built note, 2026-11-26 (ADR-0059): the M8 row's **NuGet** cell
+ships — the `halyard-eco-nuget` adapter (the §7.3 discovery subset at
+the VERIFIED SDK-style `.csproj` grammar: the `Sdk` attribute gate, the
+documented identity chain `PackageId` → `$(AssemblyName)` → the
+manifest file stem, the pack-slot version strategy `PackageVersion` →
+`Version`, the path-proven `<ProjectReference>` internal edges), the
+byte-preserving edit seam (read-back verified, the apply shell's
+manifest map routes `*.csproj`), the tag-target probe's explicit
+`nuget` arm, and the publish posture — rows carry `publishable = false`
+until a `dotnet` argv grammar exists; the planner's registry arm names
+`nuget.org` and the engine records the `publish_disabled` skip. The
+cell's recorded-open remainders: the `dotnet pack`/`dotnet nuget push`
+argv arm, the nuget.org probe arm, the non-`.csproj` project types,
+CPM version resolution, and the corpus-lane replay on 2 real repos.)*
+
+*(As-built note, 2026-11-27 (ADR-0060): the M8 row's **Dart/pub** cell
+ships — the `halyard-eco-dart` adapter (the §7.3 discovery subset at
+the VERIFIED `pubspec.yaml` grammar: the pub-workspace discovery with
+recursive `workspace` entries, members gated on `resolution: workspace`,
+the documented `packages/*` single-glob form expanded over the
+committed tree, the stray-file refusal scoped to pubspecs between the
+root and a member, the three-number semver version strategy per
+ADR-0056's discipline, the two-proven internal edges — a dep **naming**
+a member resolves to the workspace copy regardless of its declared
+source, and a `path:` dep resolving to a member manifest), the
+byte-preserving edit seam (read-back verified, the apply shell's
+manifest map routes `pubspec.yaml`), the tag-target probe's explicit
+`dart` arm, and the publish posture — rows carry `publishable = false`
+until a pub.dev auth grammar exists (the documented pub environment
+surface carries no token variable); the planner's registry arm names
+`pub.dev` and the engine records the `publish_disabled` skip. The
+cell's recorded-open remainders: the VERIFIED `dart pub publish` argv
+arm, the pub.dev probe arm, the `dart pub get` lockfile refresh, the
+glob superset beyond the single-`*` form, and the corpus-lane replay
+on 2 real repos.)*
 
 ### YEAR 3 — Moat & platform
 
