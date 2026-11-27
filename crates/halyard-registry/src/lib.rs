@@ -21,6 +21,14 @@
 //!   step 2, ADR-0056): a JSON object whose `releases` maps version
 //!   strings to upload rows (verified live against pypi.org; the
 //!   per-version endpoint answers 404 for an unpublished version).
+//! * [`Nuget`] — the nuget.org flat container (the §17 M8 `NuGet` cell's
+//!   probe arm, ADR-0059): `GET {base}/{LOWER_ID}/index.json` — the
+//!   VERIFIED `PackageBaseAddress/3.0.0` grammar
+//!   (`docs/research/nuget-grammars.md` §11; *"If the package source has
+//!   no versions of the provided package ID, a 404 status code is
+//!   returned"*; *"The strings in the `versions` array are all
+//!   lowercased, normalized NuGet version strings"*), the sample base
+//!   `https://api.nuget.org/v3-flatcontainer/`.
 //!
 //! Status semantics, fail-closed (§15.4 "errors teach"): a `404` means
 //! *not published* (both registries 404 a missing package — verified
@@ -373,6 +381,123 @@ impl Registry for PyPi {
                 message: "the JSON API document carries no releases map".to_owned(),
             })?;
         Ok(releases.get(version).is_some())
+    }
+}
+
+/// The nuget.org flat-container client (the §17 M8 `NuGet` cell's
+/// probe arm, ADR-0059): one GET per probe over the VERIFIED
+/// `PackageBaseAddress/3.0.0` grammar (`docs/research/nuget-grammars.md`
+/// §11) — `GET {base}/{LOWER_ID}/index.json`, the version list the
+/// sample base `https://api.nuget.org/v3-flatcontainer/` answers
+/// (*"If the package source has no versions of the provided package ID,
+/// a 404 status code is returned"*; a 200 body is
+/// `{"versions": [...]}` — *"The strings in the `versions` array are
+/// all lowercased, normalized NuGet version strings"*). The contract
+/// mirrors [`PyPi`]: `404` ⇒ not published, a matching version row ⇒
+/// published, everything else fail-closed (`E-REG-*`).
+pub struct Nuget {
+    transport: Arc<dyn HttpTransport>,
+    registry_base: String,
+}
+
+impl Nuget {
+    /// A client over `transport` probing the real nuget.org flat
+    /// container.
+    #[must_use]
+    pub fn new(transport: Arc<dyn HttpTransport>) -> Self {
+        Self::with_registry_base(transport, "https://api.nuget.org/v3-flatcontainer")
+    }
+
+    /// A client probing a different flat-container base (contract
+    /// tests, private feeds — the reference's base URL rule: the value
+    /// "must be dynamically fetched from the service index"; the fixed
+    /// nuget.org base is the plan contract's documented sample).
+    #[must_use]
+    pub fn with_registry_base(transport: Arc<dyn HttpTransport>, registry_base: &str) -> Self {
+        Self {
+            transport,
+            registry_base: registry_base.trim_end_matches('/').to_owned(),
+        }
+    }
+
+    /// The flat-container URL of `name` (the documented `LOWER_ID`
+    /// rule: *"The package ID, lowercased using the rules implemented
+    /// by .NET's `System.String.ToLowerInvariant()`"* — the caller
+    /// passes the discovery identity; the URL rides the lowercased
+    /// form).
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError::Name`] when `name` is not a valid `NuGet`
+    /// package ID (empty, whitespace, or a character outside the ID
+    /// grammar) — the probe never sends an invalid name.
+    pub fn probe_url(&self, name: &str) -> Result<String, RegistryError> {
+        validate_nuget_id(name)?;
+        let base = self.registry_base.as_str();
+        Ok(format!("{base}/{}/index.json", name.to_lowercase()))
+    }
+}
+
+impl Registry for Nuget {
+    fn published(&self, name: &str, version: &str) -> Result<bool, RegistryError> {
+        let url = self.probe_url(name)?;
+        let response = self.transport.execute(HttpRequest {
+            method: "GET",
+            url,
+            headers: Vec::new(),
+            body: None,
+        })?;
+        if response.status == 404 {
+            return Ok(false);
+        }
+        if response.status != 200 {
+            return Err(RegistryError::Protocol {
+                message: format!(
+                    "the registry answered {} for {name} (expected 200 or 404)",
+                    response.status
+                ),
+            });
+        }
+        let document: serde_json::Value =
+            serde_json::from_str(&response.body).map_err(|e| RegistryError::Protocol {
+                message: format!("the flat-container document is not JSON: {e}"),
+            })?;
+        let versions = document
+            .get("versions")
+            .ok_or_else(|| RegistryError::Protocol {
+                message: "the flat-container document carries no versions array".to_owned(),
+            })?;
+        let versions: Vec<String> =
+            serde_json::from_value(versions.clone()).map_err(|e| RegistryError::Protocol {
+                message: format!("the versions field is not an array of strings: {e}"),
+            })?;
+        // The rows are lowercased normalized strings (the documented
+        // grammar); the plan contract's canonical `X.Y.Z` compares
+        // lowercased — build metadata never reaches a row (the csproj
+        // strategy refuses non-canonical spellings at discovery).
+        let wanted = version.to_lowercase();
+        Ok(versions.iter().any(|row| row == &wanted))
+    }
+}
+
+/// `NuGet` package-ID validation: ASCII letters/digits plus `.`, `-`,
+/// `_` — the characters the flat-container `LOWER_ID` path segment can
+/// carry; whitespace and empties never reach the wire.
+fn validate_nuget_id(name: &str) -> Result<(), RegistryError> {
+    let valid = !name.is_empty()
+        && !name.chars().any(char::is_whitespace)
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(RegistryError::Name {
+            message: format!(
+                "{name:?} is not a valid `NuGet` package ID (ASCII letters, digits, '.', '_' \
+                 and '-') — the probe never sends an invalid name"
+            ),
+        })
     }
 }
 
