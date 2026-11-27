@@ -42,6 +42,26 @@ pub struct DiscoverCtx {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct RelPathKey(BString);
 
+/// One `[[generic]]` declaration (M8 ADR-0062): a config-declared
+/// package whose version lives in `file` at the text the `pattern`'s
+/// named `version` capture group spans. Plain data — the loader
+/// validates the grammar (`E-CFG-GENERIC`: the pattern compiles and
+/// carries exactly one named `version` group; the file is a normalized
+/// repo-relative path; names and files are unique), the adapter turns
+/// each declaration into a [`RawPackage`] row.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GenericFileSpec {
+    /// The package name (the identity the plan, tags and reports use).
+    pub name: String,
+    /// The version file (normalized, repo-relative).
+    pub file: String,
+    /// The locator pattern: the `regex` crate's syntax, exactly one
+    /// named capture group `version` spanning the version text (the
+    /// VERIFIED prior-art grammar,
+    /// `docs/research/generic-version-files.md` §1.1).
+    pub pattern: String,
+}
+
 impl RelPathKey {
     fn new(path: &str) -> Option<Self> {
         crate::package::RelPath::new(path)
@@ -249,6 +269,10 @@ pub enum ManifestFormat {
     /// `*.gemspec` (the Ruby/`Gem::Specification` subset scanner,
     /// hand-written, M8 ADR-0061).
     Gemspec,
+    /// A config-declared plain-text version file (`[[generic]]`, M8
+    /// ADR-0062) — the file is user-defined text located by the
+    /// declared regex; the format any manifest error on it reports.
+    Text,
 }
 
 /// Discovery errors (§15.4 `E-DISC-*`). Every variant carries a stable
