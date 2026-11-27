@@ -606,3 +606,118 @@ fn apply_plan_writes_exactly_the_staged_payloads() -> Result<(), BoxError> {
     }
     Ok(())
 }
+
+/// The uv workspace fixture (the §17 M8 `PyPI` cell's uv grammar): a
+/// virtual root claiming the two members, no inter-member dependency —
+/// the release moves `app-a` only.
+const ROOT_PYPROJECT: &str = "[project]\nname = \"root\"\nversion = \"0.0.0\"\nrequires-python = \">=3.9\"\n\n[tool.uv.workspace]\nmembers = [\"app_a\", \"app_b\"]\n";
+const APP_A_PYPROJECT: &str = "[project]\nname = \"app-a\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+const APP_B_PYPROJECT: &str = "[project]\nname = \"app-b\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+
+/// The root lockfile uv wrote for the fixture (the observed uv 0.13.10
+/// shape): the `[manifest]` members, the root's virtual row, the two
+/// editable member rows.
+const UV_LOCK: &str = "version = 1\nrevision = 5\nrequires-python = \">=3.9\"\n\n[manifest]\nmembers = [\n    \"app-a\",\n    \"app-b\",\n    \"root\",\n]\n\n[[package]]\nname = \"app-a\"\nversion = \"0.1.0\"\nsource = { editable = \"app_a\" }\n\n[[package]]\nname = \"app-b\"\nversion = \"0.1.0\"\nsource = { editable = \"app_b\" }\n\n[[package]]\nname = \"root\"\nversion = \"0.0.0\"\nsource = { virtual = \".\" }\n";
+
+fn pypi_release(name: &str, from: &str, to: &str) -> PlanRelease {
+    PlanRelease {
+        package: name.to_owned(),
+        ecosystem: "pypi".to_owned(),
+        from: from.to_owned(),
+        to: to.to_owned(),
+        bump: halyard_core::plan::Bump::Patch,
+        tag: format!("{name}-v{to}"),
+        reasons: Vec::new(),
+        changelog: None,
+        publish: None,
+    }
+}
+
+fn discovered_uv() -> Result<(Workspace, StaticFiles), BoxError> {
+    let files: Vec<(&str, &str)> = vec![
+        ("pyproject.toml", ROOT_PYPROJECT),
+        ("app_a/pyproject.toml", APP_A_PYPROJECT),
+        ("app_b/pyproject.toml", APP_B_PYPROJECT),
+    ];
+    let mut ctx = DiscoverCtx::new();
+    for (path, body) in &files {
+        if !ctx.insert_file(path, body.as_bytes().to_vec()) {
+            return Err(format!("ctx rejected {path}").into());
+        }
+    }
+    let discovery = halyard_discover::discover_from_ctx(&ctx, &DiscoverInput::default())?;
+    Ok((discovery.workspace, files))
+}
+
+/// The plan for the uv fixture: one pypi release moving `app-a`, the
+/// own-version patch located through discovery's edit site.
+fn uv_plan_for(ws: &Workspace) -> Result<Plan, BoxError> {
+    let pkg = ws
+        .packages()
+        .iter()
+        .find(|p| ws.interner().get(p.name) == Some("app-a"))
+        .ok_or("app-a package present")?;
+    let site = pkg
+        .version_site
+        .as_ref()
+        .ok_or("own version site present")?;
+    let span = site.spans.first().copied().ok_or("version site span")?;
+    Ok(Plan {
+        schema: PLAN_SCHEMA_V1.to_owned(),
+        base_branch: "main".to_owned(),
+        head: "a".repeat(40),
+        plan_hash: "blake3:test".to_owned(),
+        releases: vec![pypi_release("app-a", "0.1.0", "0.2.0")],
+        edits: vec![PlanEdit {
+            file: "app_a/pyproject.toml".to_owned(),
+            patches: vec![PlanPatch {
+                start: span.start,
+                end: span.end,
+                text: "0.2.0".to_owned(),
+            }],
+        }],
+        order: Vec::new(),
+        skipped: Vec::new(),
+    })
+}
+
+/// The uv.lock lockfile half (the §17 M8 `PyPI` cell's recorded-open
+/// remainder, ADR-0056): a pypi release stages the root `uv.lock`
+/// through the adapter's `patch_lockfile` seam — the adapter declines
+/// at uv's own documented posture (the lockfile is managed by uv) and
+/// the decline is the report row the orchestrator's native refresh
+/// consumes; the lockfile's bytes stay untouched in the staged pass.
+#[test]
+fn apply_plan_stages_the_uv_lock_decline_for_pypi_releases() -> Result<(), BoxError> {
+    let (ws, files) = discovered_uv()?;
+    let plan = uv_plan_for(&ws)?;
+    let adapters = halyard_discover::registered_adapters();
+    let adapters: Vec<&dyn EcosystemAdapter> = adapters.clone();
+    let tmp = tempfile::tempdir()?;
+    let mut files = files;
+    files.push(("uv.lock", UV_LOCK));
+    write_files(tmp.path(), &files)?;
+
+    let report: ApplyReport = apply_plan(tmp.path(), &plan, &ws, &adapters)?;
+    let lock = report
+        .lockfiles
+        .iter()
+        .find(|lock| lock.file.as_str() == "uv.lock")
+        .ok_or("the uv.lock stage row is present")?;
+    let reason = lock
+        .native_reason
+        .as_ref()
+        .ok_or("the pypi adapter declines to the native refresh")?;
+    assert!(
+        reason.contains("uv lock"),
+        "the decline names the native refresh argv: {reason}"
+    );
+    // The decline is a report, not a mutation: the staged pass leaves
+    // the lockfile's bytes verbatim (the native refresh owns them).
+    let on_disk = std::fs::read_to_string(tmp.path().join("uv.lock"))?;
+    assert_eq!(on_disk, UV_LOCK);
+    // The manifest half still applied.
+    let manifest = std::fs::read_to_string(tmp.path().join("app_a/pyproject.toml"))?;
+    assert!(manifest.contains("version = \"0.2.0\""), "{manifest}");
+    Ok(())
+}
