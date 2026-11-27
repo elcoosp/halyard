@@ -12,6 +12,7 @@ members = [
     "crates/halyard-core",
     "crates/halyard-discover",
     "crates/halyard-eco-cargo",
+    "crates/halyard-eco-dart",
     "crates/halyard-eco-npm",
     "crates/halyard-eco-gomod",
     "crates/halyard-eco-maven",
@@ -86,6 +87,7 @@ halyard-conventional = { path = "crates/halyard-conventional" }
 halyard-core = { path = "crates/halyard-core", features = ["schema-gen"] }
 halyard-discover = { path = "crates/halyard-discover" }
 halyard-eco-cargo = { path = "crates/halyard-eco-cargo" }
+halyard-eco-dart = { path = "crates/halyard-eco-dart" }
 halyard-eco-npm = { path = "crates/halyard-eco-npm" }
 halyard-eco-gomod = { path = "crates/halyard-eco-gomod" }
 halyard-eco-maven = { path = "crates/halyard-eco-maven" }
