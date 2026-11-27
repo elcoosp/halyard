@@ -1,4 +1,5 @@
-//! The NuGet planning contract (M8, the §17 **NuGet** cell — ADR-0059):
+//! The `NuGet` planning contract (M8, the §17 **`NuGet`** cell —
+//! ADR-0059):
 //! a nuget package with a canonical `PackageVersion`/`Version` plans a
 //! normal release row whose publish decision carries the engine's
 //! **disabled shape** — `registry: "nuget.org"` (the ecosystem's
@@ -179,10 +180,12 @@ fn a_nuget_row_plans_with_the_disabled_publish_shape() -> Result<(), Box<dyn std
         .find(|edit| edit.file.as_str() == "src/lib/Lib.csproj")
         .expect("the csproj edit is planned");
     assert_eq!(edit.patches.len(), 1, "one value patch");
-    assert_eq!(edit.patches[0].start, 40);
-    assert_eq!(edit.patches[0].end, 45);
-    assert_eq!(edit.patches[0].text, "1.1.0");
+    let patch = edit.patches.first().expect("one value patch");
+    assert_eq!(patch.start, 40);
+    assert_eq!(patch.end, 45);
+    assert_eq!(patch.text, "1.1.0");
     let _ = lib;
+    Ok(())
 }
 
 /// The control: a publishable cargo package keeps its enabled shape — the
@@ -206,4 +209,5 @@ fn the_cargo_control_keeps_its_enabled_shape() -> Result<(), Box<dyn std::error:
         "the cargo control is untouched"
     );
     assert!(publish.enabled, "the enabled shape is preserved");
+    Ok(())
 }
