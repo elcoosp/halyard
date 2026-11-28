@@ -13,7 +13,7 @@
 //! push <that path> --source https://api.nuget.org/v3/index.json` (the
 //! documented official-server example). No flag is ever invented
 //! (ADR-0033): the credential rides the documented `NUGET_API_KEY`
-//! environment variable through the auth seam (*"Starting with NuGet
+//! environment variable through the auth seam (*"Starting with `NuGet`
 //! 7.6 (.NET SDK 10.0.300), you can set the `NUGET_API_KEY` environment
 //! variable instead of passing `--api-key` on the command line"*), the
 //! argv never carries it (invariant I7).
@@ -27,7 +27,7 @@ use halyard_eco_nuget::{dotnet_pack_args, dotnet_push_args};
 
 #[test]
 fn pack_argv_is_the_documented_bare_pack() {
-    // The quickstart's own command: "To build a NuGet package or
+    // The quickstart's own command: "To build a `NuGet` package or
     // *.nupkg* file from the project, run the dotnet pack command".
     assert_eq!(dotnet_pack_args(), vec!["pack".to_owned()]);
 }
