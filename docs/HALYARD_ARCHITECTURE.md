@@ -1374,6 +1374,48 @@ explicit `[[link]]` config surface in the meantime), the `gradle
 publish` / `gradle build` argv arm, the `gradle.properties` version
 site, and the corpus-lane replay on 2 real repos.)*
 
+*(As-built note, 2026-11-28 (ADR-0058 continued): the Gradle half's
+first two recorded-open remainders lift — the **settings-file
+governance** (the multi-project aggregator shape) and the
+**`project(":sub")` dependency edge** land at the VERIFIED grammar
+(`docs/research/gradle-grammars.md` §6/§7: the Settings API's
+*"The root project's name defaults to the name of the directory
+containing the settings file"*, the descriptor's writable `name`
+setter, `include`'s *"The last element of the supplied path is used as
+the project name"* with the root-project-relative directory conversion
+and the implicit-parent rule). The settings files join the discovery
+walk (never package manifests — no version slot); a settings file
+governs its directory subtree: the root build file is named by
+`rootProject.name` (last literal assignment wins, the descriptor
+setter's overwrite; a non-literal row warns and falls to the documented
+directory default), each include-proven member is named by its path's
+last element (implicit parents included), an unincluded build file
+keeps the standalone row with a warning (`unincluded-gradle-build`), a
+proven member without a build file warns on the root row
+(`include-without-manifest` — Gradle permits build-less projects), and
+an ambiguous settings pair (`settings.gradle` + `settings.gradle.kts`)
+declines all provenance (`ambiguous-settings` — fail-closed, nothing
+guessed). The dependency edge: only a top-level `dependencies { … }`
+block is the owner's (nested `allprojects`/`subprojects` blocks are
+consumed unmodeled; `evaluationDependsOn` is a build-order declaration,
+not a cascade edge), only the leading-`:` root-relative literal is the
+proven shape (relative paths and `$` templates warn
+`non-canonical-project-dep`), a proven path resolving to an
+include-proven member rides `ReqSpec::PathOnly` as an internal edge
+(the plan contract's no-version-constraint shape — nothing to rewrite;
+the graph, the `affected` closure and the plan's topological publish
+order consume it; the cascade policy stays the planner's own and
+`[[link]]` remains the forced-cascade surface), and a path nothing
+proves warns `unresolved-project-dep`. One full red→green cycle per
+slice; the grammar/discovery contract tests, the CLI e2e (the governed
+names end-to-end; the edge's differential — the plan's `order` puts the
+dependency before its dependent against the no-edge control),
+bench `settings_scan` / `gradle_deps`, examples `scan_settings` /
+`gradle_deps`. The Maven/Gradle cell's recorded-open remainders: the
+`mvn deploy` / `gradle publish` argv arms (no documented env-var auth
+grammar), the `gradle.properties` version site, and the corpus-lane
+replay on 2 real repos.)*
+
 *(As-built note, 2026-11-26 (ADR-0059): the M8 row's **NuGet** cell
 ships — the `halyard-eco-nuget` adapter (the §7.3 discovery subset at
 the VERIFIED SDK-style `.csproj` grammar: the `Sdk` attribute gate, the
