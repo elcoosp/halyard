@@ -74,8 +74,7 @@ fn uv_available() -> bool {
     Command::new("uv")
         .arg("--version")
         .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|out| out.status.success())
 }
 
 /// The hermetic half: without `uv` on the child's PATH the native
