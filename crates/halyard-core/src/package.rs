@@ -27,11 +27,16 @@ pub enum Ecosystem {
     /// for the module itself, versions are the repository's semantic
     /// version tags, and there is no registry publish step.
     Go,
-    /// Maven (`pom.xml` manifests, M8 — ADR-0058): the Maven/Gradle
-    /// cell's shipped half. Versions are manifest rows under Maven's own
-    /// `ComparableVersion` grammar — the adapter plans only the
+    /// Maven (`pom.xml` and Gradle `build.gradle`/`build.gradle.kts`
+    /// manifests, M8 — ADR-0058 and ADR-0058 continued): the Maven/Gradle
+    /// cell — the pom.xml half plus the Gradle literal-assignment half.
+    /// Versions are manifest rows under Maven's own `ComparableVersion`
+    /// grammar (the pom half) or the documented Gradle `version = '…'` /
+    /// `version = "…"` literal assignment (the Gradle half, the Project
+    /// API's writable `Object` property) — the adapter plans only the
     /// semver-parseable spellings (ADR-0056's fail-closed discipline;
-    /// Maven qualifier forms like `1.2.3-SNAPSHOT` parse as semver), and
+    /// Maven qualifier forms like `1.2.3-SNAPSHOT` parse as semver, and
+    /// a Gradle double-quoted template carrying `$` is non-literal), and
     /// Maven Central publishing carries no argv grammar yet (the row
     /// publishes as the engine's disabled shape).
     Maven,
