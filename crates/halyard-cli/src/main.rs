@@ -2215,7 +2215,20 @@ impl ManifestVersionProbe for ShellProbe {
             "npm" => halyard_eco_npm::manifest_version(manifest),
             "pypi" => halyard_eco_pypi::manifest_version(manifest),
             "go" => halyard_eco_gomod::manifest_version(manifest),
-            "maven" => halyard_eco_maven::manifest_version(manifest),
+            "maven" => {
+                // ADR-0058 continued: a Gradle build file routes to the
+                // Gradle literal-assignment probe; a pom.xml keeps the
+                // pom probe (the Maven/Gradle cell's two grammars, one
+                // ecosystem — the git engine never parses manifests
+                // itself).
+                if manifest_path.ends_with("build.gradle")
+                    || manifest_path.ends_with("build.gradle.kts")
+                {
+                    halyard_eco_maven::gradle_manifest_version(manifest)
+                } else {
+                    halyard_eco_maven::manifest_version(manifest)
+                }
+            }
             "nuget" => halyard_eco_nuget::manifest_version(manifest),
             "dart" => halyard_eco_dart::manifest_version(manifest),
             "rubygems" => halyard_eco_rubygems::manifest_version(manifest),
