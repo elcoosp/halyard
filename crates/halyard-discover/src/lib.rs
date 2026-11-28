@@ -415,12 +415,21 @@ pub fn collect_ctx(
             // M8 (ADR-0058 continued): the maven adapter's Gradle half
             // owns the `build.gradle` / `build.gradle.kts` literal-
             // assignment grammar — the documented build-file names join
-            // the walk (root and nested; a `settings.gradle`/
-            // `buildSrc`/`init.gradle` grammar is out of the subset).
+            // the walk (root and nested), and the sibling
+            // `settings.gradle` / `settings.gradle.kts` governance files
+            // join it too (the multi-project aggregator shape; a
+            // settings file is never a package manifest — it carries no
+            // version slot — but discovery reads its `rootProject.name`
+            // / `include` grammar for the governed names). `buildSrc`
+            // and `init.gradle` stay out of the subset.
             || rel == "build.gradle"
             || rel == "build.gradle.kts"
             || rel.ends_with("/build.gradle")
             || rel.ends_with("/build.gradle.kts")
+            || rel == "settings.gradle"
+            || rel == "settings.gradle.kts"
+            || rel.ends_with("/settings.gradle")
+            || rel.ends_with("/settings.gradle.kts")
             // M8 (ADR-0059): the nuget adapter owns the SDK-style
             // `.csproj` grammar — every project file joins the walk.
             || rel.ends_with(".csproj")
