@@ -4071,3 +4071,92 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   networked lane is available, (2) the M9 plugin-system milestone per
   plan order, or (3) the `settings.gradle` include grammar (the Gradle
   multi-project aggregator shape).
+
+| M8 Maven/Gradle — the Gradle half's settings governance + project edges (ADR-0058 continued) | done (the cell's first two recorded-open remainders lift; the `mvn deploy`/`gradle publish` argv arms, the `gradle.properties` version site and the corpus-lane replay stay recorded-open) | (tree left dirty; no commits) | **Reconciliation survey first** (plan ↔ code ↔ history): main was green at `ebd2648` (the Gradle-half session's HEAD, whose own next-start point named (1) the corpus-lane replay — network/token-bound, blocked here, (2) M9 per plan order, (3) the `settings.gradle` grammar). The earliest eligible seam items stay inside M8 (M8 < M9 per plan order): the Gradle half's first two recorded-open remainders — the `settings.gradle` `rootProject.name`/`include` grammar (the multi-project aggregator shape) and the `project(":sub")` dependency edge. Missing-in-code evidence: `grep -rn "rootProject\\|settings.gradle" crates/` returns only doc-comment mentions (`lib.rs` names it a recorded-open remainder; the discover walk's comment says out of the subset; `gradle_row` builds `deps: Vec::new()`); `git log --all --oneline --grep "settings.gradle\\|rootProject"` is empty; `git branch -a` carries no Gradle/settings work (the six remote feat branches are the older milestone lanes, none touching `halyard-eco-maven`). M1 = the settings-file governance; M2 = the project dependency edges — from the remainders list, not invented. **Grammar verification first:** `docs/research/gradle-grammars.md` §6/§7 VERIFIED live against docs.gradle.org (the Settings API's *"The root project's name defaults to the name of the directory containing the settings file"*, `rootProject` the read-only `ProjectDescriptor` property whose `name` setter the javadoc documents; `include` — *"Adds the given projects to the build"*, *"The last element of the supplied path is used as the project name"*, *"the supplied path is converted to a project directory relative to the root project directory"*, the implicit-parent rule, the `a:b` → `:a:b` example; the path rules governing the `project(':path')` argument the same way). **M1 implemented (no stubs), one full red→green cycle.** The red: 9/10 discovery-contract tests failing against the settings-blind adapter. The green: `halyard_eco_maven::settings` (the offset-preserving `rootProject.name = <literal>` + `include` scanner sharing the gradle lexer substrate, Groovy unparenthesized and Kotlin parenthesized call shapes, comments/sibling strings skipped in place, unclosed literals fail closed), the settings files join the discover walk (never package manifests — no version slot), `settings_governance` (per-directory subtree governance: the root named by the last literal name row — non-literal warns `non-canonical-name`, the documented directory default governs; members named by the include path's last element, implicit parents included; unincluded build files keep the standalone row + `unincluded-gradle-build`; proven members without build files warn `include-without-manifest` on the root row — Gradle permits build-less projects; an ambiguous settings pair declines all provenance + `ambiguous-settings`; non-literal include args warn `non-canonical-include`), `gradle_row` takes the governed name. 16 grammar tests + 10 discovery-contract tests + 3 CLI e2e (the governed names end-to-end, plan determinism I3, the edit aiming the root build file's literal). **M2 implemented (M1 green first), one full red→green cycle.** The red: 10/11 deps-contract tests failing (deps always empty). The green: the build-file grammar gains the top-level `dependencies { … }` capture (brace-depth + identifier-history state machine — nested `allprojects`/`subprojects` blocks and `evaluationDependsOn` consumed unmodeled, only the leading-`:` root-relative literal proven, relative/`$`-template shapes recognized + `non-canonical-project-dep`), the adapter resolves proven paths against the governance member set into internal `ReqSpec::PathOnly` edges (a `test*` configuration is the dev edge; the unresolvable warns `unresolved-project-dep` and stays external; the PathOnly edge carries no rewrite site — the cascade policy stays the planner's own, `[[link]]` the forced-cascade surface). 12 grammar tests + 11 deps-contract tests + 2 CLI e2e (the plan `order` differential: `library` before its dependent with the edge, discovery order without — the edge's landing proven against the no-edge control; the PathOnly edge rewrites nothing). Bench `settings_scan` (~297 ns scan / ~2.5 µs governed discovery) + bench `gradle_deps` (~2.6 µs) + examples `scan_settings` / `gradle_deps`. **Docs updated additively (the repo's own DoD):** `docs/research/gradle-grammars.md` §6 (the settings grammar) + §7 (the project edge) + D6–D8; the arch doc's ADR-0058 as-built note gains the continuation; the README's Gradle bullet + the `halyard-eco-maven` table row + the examples list. Micro-debt scanned: `todo!`/`unimplemented!` zero in the touched surfaces; the warning message's raw-struct `Debug` leak the example exposed fixed (the settings file path is the subject). **Honest state at cut-off:** the `mvn deploy`/`gradle publish` argv arms (no documented env-var auth grammar — fail-closed), the `gradle.properties` version site, the corpus-lane replays (network/token-bound), and M9 (the plugin system — the next plan-ordered milestone) stay the recorded-open remainders. **Next session start point:** (1) M9 — the plugin system (the plan's next milestone; the WASM host + WIT + Rust&JS conformance gate), (2) the corpus-lane replays when a networked lane exists, or (3) the M8 cell remainder triage (auth-gated argv arms stay gated). | 2026-11-28; session log below |
+
+### 2026-11-28 — The Gradle half's settings governance + project edges (ADR-0058 continued, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `ebd2648` (the
+  Gradle-half session's HEAD). Its own next-start point named (1) the
+  M8/M7 corpus-lane replay when a networked lane is available
+  (token-bound — blocked here, recorded), (2) the M9 plugin-system
+  milestone per plan order, (3) the `settings.gradle` include grammar.
+  The reconciliation survey ran plan ↔ code ↔ history first: M8 < M9
+  per plan order, and the Gradle half's first two recorded-open
+  remainders are code seams (the argv arms are auth-gated — no
+  documented env-var grammar, the fail-closed discipline refuses to
+  invent one; the corpus replays are network-bound) — so M1 = the
+  settings-file governance, M2 = the `project(":sub")` dependency
+  edges, both from the remainders list, not invented. Missing-in-code
+  evidence: `grep -rn "rootProject\|settings.gradle" crates/` returns
+  only the doc-comment mentions (the remainder notes in `lib.rs`, the
+  walk's out-of-the-subset comment); `gradle_row` builds `deps:
+  Vec::new()`; `git log --all --oneline --grep` for the grammar is
+  empty; the six remote `feat/*` branches are the older milestone
+  lanes (zero commits touching `halyard-eco-maven`).
+- **Grammar verification first** (the repo's VERIFY discipline): the
+  Settings API page + the `ProjectDescriptor` javadoc VERIFIED live —
+  the root name *"defaults to the name of the directory containing the
+  settings file"*, `rootProject` is the read-only descriptor property
+  whose `name` setter the javadoc documents, `include` adds projects
+  by `':'`-separated hierarchy paths with *"The last element of the
+  supplied path is used as the project name"*, the root-project-
+  relative directory conversion, and the implicit-parent rule; the
+  same path rules govern the `project(':path')` dependency argument.
+  The VERIFIED reference landed as `docs/research/gradle-grammars.md`
+  §6/§7 + decisions D6–D8.
+- **M1 implemented (no stubs), one full red→green cycle.** The red:
+  9/10 `settings_discovery_contract` tests failing against the
+  settings-blind adapter. The green: `halyard_eco_maven::settings`
+  (the offset-preserving scanner — the `rootProject.name = <literal>`
+  rows with the last-assignment-wins rule, `include` in both the
+  Groovy unparenthesized and the Kotlin parenthesized call shapes,
+  comments and sibling strings skipped in place, unclosed literals
+  failing closed), the settings files joining the discover walk
+  (never package manifests — no version slot), `settings_governance`
+  (per-directory subtree governance: governed roots named by
+  `rootProject.name`, include-proven members named by their path's
+  last element with the implicit parents, unincluded build files
+  keeping the standalone row + `unincluded-gradle-build`, proven
+  members without build files warning `include-without-manifest` on
+  the root row, ambiguous settings pairs declining all provenance +
+  `ambiguous-settings`, non-literal name/include shapes warned), and
+  `gradle_row` taking the governed name. 16 grammar tests + 10
+  discovery-contract tests + 3 CLI e2e + bench `settings_scan` +
+  example `scan_settings`.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red: 10/11 `gradle_deps_contract` tests failing (the rows' `deps`
+  were always empty). The green: the build-file grammar gains the
+  top-level `dependencies { … }` capture (the brace-depth +
+  identifier-history state machine; nested
+  `allprojects`/`subprojects` blocks and `evaluationDependsOn` calls
+  consumed unmodeled — the subset boundary; only the leading-`:`
+  root-relative literal proven), and the adapter resolves the proven
+  paths against the governance member set into internal
+  `ReqSpec::PathOnly` edges (a `test*` configuration the dev edge;
+  relative/templated shapes warn `non-canonical-project-dep`; a path
+  nothing proves warns `unresolved-project-dep` and stays external —
+  fail-closed). The edge carries no rewrite site (a project
+  dependency has no version constraint): the graph, the `affected`
+  closure and the plan's topological publish order consume it, the
+  cascade policy stays the planner's own, `[[link]]` remains the
+  forced-cascade surface. 12 grammar tests + 11 deps-contract tests +
+  2 CLI e2e (the `order` differential — the dependency before its
+  dependent with the edge, discovery order without) + bench
+  `gradle_deps` + example `gradle_deps`.
+- **Docs updated additively** (the repo's own DoD, not a milestone
+  substitute): the research note's §6/§7 + D6–D8, the arch doc's
+  ADR-0058 as-built continuation, the README's Gradle bullet + the
+  `halyard-eco-maven` table row + the examples list. Micro-debt: the
+  settings warning's raw-struct `Debug` leak the example exposed
+  fixed (the settings file path is the subject);
+  `todo!`/`unimplemented!` zero in the touched surfaces.
+- **Honest state at cut-off.** The `mvn deploy` / `gradle publish`
+  argv arms (no documented env-var auth grammar — fail-closed, not
+  invented), the `gradle.properties` version site, the corpus-lane
+  replays (network/token-bound), and M9 (the plugin system — the
+  plan's next milestone) stay the recorded-open remainders.
+- **Next session start point.** (1) M9 — the plugin system (the WASM
+  component-model host + the WIT seam + the Rust&JS conformance gate),
+  (2) the corpus-lane replays when a networked lane exists, or (3) the
+  M8 argv-arm triage (auth-gated, stays gated).
