@@ -13,7 +13,7 @@ use halyard_eco_nuget::{dotnet_pack_args, dotnet_push_args};
 fn bench_publish_args(c: &mut Criterion) {
     let mut group = c.benchmark_group("eco-nuget");
     group.bench_function("publish_args_pack", |b| {
-        b.iter(|| dotnet_pack_args());
+        b.iter(dotnet_pack_args);
     });
     group.bench_function("publish_args_push", |b| {
         b.iter(|| dotnet_push_args("nuget.org", "Contoso.App", "1.2.4"));
