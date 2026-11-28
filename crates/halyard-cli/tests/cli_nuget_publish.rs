@@ -115,8 +115,8 @@ fn halyard_env(
     command.output().map_err(Into::into)
 }
 
-fn read_log(log: &std::path::Path) -> Result<String, BoxError> {
-    Ok(std::fs::read_to_string(log).unwrap_or_default())
+fn read_log(log: &std::path::Path) -> String {
+    std::fs::read_to_string(log).unwrap_or_default()
 }
 
 /// The dry forecast: the nuget targets exist (the argv arm flips the
@@ -171,7 +171,7 @@ fn publish_dry_forecasts_nuget_rows_and_packs_only() -> Result<(), BoxError> {
         "no publish_disabled skip for the nuget target: {not_targets:?}"
     );
     // The shim captured the documented packaging half; no push argv.
-    let recorded = read_log(&log)?;
+    let recorded = read_log(&log);
     assert!(recorded.contains("pack"), "the pack argv ran: {recorded}");
     assert!(
         !recorded.contains("push"),
@@ -201,7 +201,7 @@ fn publish_live_spawns_the_documented_pack_then_push() -> Result<(), BoxError> {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(out.status.success(), "publish failed: {text}");
-    let recorded = read_log(&log)?;
+    let recorded = read_log(&log);
     // The pack step, then the push step with the documented source.
     assert!(recorded.contains("pack"), "pack ran: {recorded}");
     assert!(
