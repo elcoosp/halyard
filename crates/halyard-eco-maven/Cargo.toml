@@ -1,6 +1,6 @@
 [package]
 name = "halyard-eco-maven"
-description = "EcosystemAdapter for Maven: pom.xml discovery, parent inheritance, semver-canonical versions (M8)"
+description = "EcosystemAdapter for Maven/Gradle: pom.xml and build.gradle(.kts) discovery, parent inheritance, semver-canonical versions (M8)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,6 +22,18 @@ harness = false
 
 [[bench]]
 name = "pom_edit"
+harness = false
+
+# ADR-0058 continued (M1): the Gradle build-file discovery slice's scan
+# bench (the hand-rolled literal-assignment lexer over a build script).
+[[bench]]
+name = "gradle_scan"
+harness = false
+
+# ADR-0058 continued (M2): the Gradle build-file semantic edit seam's
+# bench (the re-scan + span-match + splice + read-back verify).
+[[bench]]
+name = "gradle_edit"
 harness = false
 
 [lints]
