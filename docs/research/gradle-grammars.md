@@ -132,7 +132,10 @@ fallback) — the scanner never guesses a name. The
 `settings.gradle`/`include` grammar, the `project(":sub")` dependency
 edge, and the multi-project aggregator shape stay the recorded-open
 remainders (the pom.xml cell's `<modules>` aggregator is Maven's own;
-Gradle's `include` grammar is its own research gate).
+Gradle's `include` grammar is its own research gate). *(Lifted
+2026-11-28: both remainders landed at the VERIFIED grammar — §6 is the
+settings gate's evaluation, §7 the project edge; the identity chain
+gains the settings provenance in front of the directory chain.)*
 
 ## 5. Decisions recorded
 
@@ -166,3 +169,125 @@ Gradle's `include` grammar is its own research gate).
   `Ecosystem::Maven` doc names the cell's shipped half, this note names
   the Gradle half), with a new `ManifestFormat::GradleBuild` variant
   naming the grammar in discovery errors.
+
+## 6. The settings-file grammar — the multi-project aggregator shape
+(VERIFIED 2026-11-28)
+
+The recorded-open remainder the Gradle half landed with ("the
+`settings.gradle` `rootProject.name` / `include` grammar — the
+multi-project aggregator shape") lifts here, VERIFIED against
+`https://docs.gradle.org/current/dsl/org.gradle.api.initialization.Settings.html`
+(fetched 2026-11-28) and the `org.gradle.api.initialization.ProjectDescriptor`
+javadoc (`https://docs.gradle.org/current/javadoc/org/gradle/api/initialization/ProjectDescriptor.html`):
+
+- `rootProject` is the Settings API's read-only property — *"The root
+  project of the build"* — typed `ProjectDescriptor`, whose `name` is a
+  writable property (the javadoc's `setName(String)`: *"Sets the name
+  of this project"*; `getName()`: *"Returns the name of this
+  project. Never returns null."*). The settings script delegates to the
+  Settings object (the DSL page's script-delegation rules), so the
+  `rootProject.name = '…'` row is the descriptor's name setter.
+- The documented default: *"The root project's name defaults to the
+  name of the directory containing the settings file."* — the fallback
+  halyard applies when no literal row applies. At the repository root
+  the committed tree cannot know the checkout directory's own name, so
+  the chain falls to the manifest path (the Dockerfile cell's chain);
+  a nested settings directory falls to its own directory name.
+- The last `rootProject.name = <literal>` assignment in document order
+  wins — the same property-setter overwrite the `version` row rides
+  (each assignment calls `setName`); no override *rule* exists.
+- `include` — the Settings API's *"Adds the given projects to the
+  build"* — carries the two documented overloads
+  (`include(String... projectPaths)` /
+  `include(Iterable<String> projectPaths)`), callable unparenthesized
+  (Groovy) or parenthesized (Kotlin and Groovy), comma-separated:
+  *"these path are not file paths, but instead specify the location of
+  the new project in the project hierarchy"*; *"the supplied paths
+  must use the `:` character as separator (and NOT `/`)"*; *"The last
+  element of the supplied path is used as the project name"*; *"The
+  supplied path is converted to a project directory relative to the
+  root project directory"*; and the page's own example — *"the path
+  `a:b` adds a project with path `:a:b`, name `b` and project
+  directory `$rootDir/a/b`"* — with *"It also adds the parent `:a`
+  project if it doesn't already exist"* (the implicit-parent rule the
+  discovery governance applies). A leading `:` is Gradle's own
+  normalization (the page's example writes the bare `a:b` form), so
+  both spellings parse.
+- A non-literal argument (a `$` template, a property reference) is
+  recognized but non-canonical: that member is not proven, the row
+  warns, nothing is guessed.
+- Both settings spellings in one directory (`settings.gradle` +
+  `settings.gradle.kts`) have no documented precedence — the
+  fail-closed discipline declines all provenance and warns
+  (`ambiguous-settings`).
+- The governance shape: a settings file governs its own directory
+  subtree — the root build file (named by `rootProject.name` when a
+  literal row applies) and the include-proven member directories (named
+  by the path's last element). A build file the include set does not
+  prove keeps the standalone row with a warning
+  (`unincluded-gradle-build`) — the per-file shape never silently
+  shrinks. A proven member without a build file is Gradle's
+  build-less-project shape: no row exists, and the root row warns
+  (`include-without-manifest`). Nested settings files (composite
+  builds) govern their own subtrees; the nearest settings directory
+  wins for the files it governs. The `includeBuild` /
+  `pluginManagement` / `dependencyResolutionManagement` surfaces are
+  different grammars — consumed unmodeled. A settings file is never a
+  package manifest (it carries no version slot).
+
+## 7. The project dependency edge — `project(':path')` (VERIFIED
+2026-11-28)
+
+The second recorded-open remainder (the `project(":sub")` dependency
+edge) lifts at the same page set: the Settings page's path rules
+(*"the supplied paths must use the `:` character as separator"*; *"The
+supplied path is converted to a project directory relative to the root
+project directory"*) govern the `project(':path')` argument the same
+way they govern `include`. The capture:
+
+- only the **top-level** `dependencies { … }` block is the owning
+  project's dependency statement; a block nested inside
+  `allprojects`/`subprojects` configures OTHER projects and is consumed
+  unmodeled (not the owner's edge, no warning — the subset boundary);
+- a `project(…)` call OUTSIDE a `dependencies` block
+  (`evaluationDependsOn(':lib')`) is a build-order declaration, not a
+  version-cascade dependency — unmodeled;
+- the captured shape is `<configuration> project(':path')` — the
+  configuration identifier before the call (`implementation`, `api`,
+  `testImplementation`, …); the Kotlin parenthesized form
+  `implementation(project(":path"))` is the same shape;
+- only the leading-`:` root-relative literal is the proven shape — a
+  path resolved relative to the owning project (`project('lib')`) and
+  a `$` template are recognized but non-canonical (warned, never an
+  edge — the fail-closed discipline);
+- the requirement rides `ReqSpec::PathOnly`: a project dependency
+  carries no version constraint — nothing to rewrite, no edit site;
+  the resolution matches the include-proven member by the row name the
+  include path's last element names, the orchestrator's
+  `resolve_dep` matches a same-ecosystem member by name, and the edge
+  joins the workspace graph (`halyard graph`, the `affected`
+  closure, the plan's topological publish order);
+- the cascade policy is the planner's own (a `PathOnly` edge never
+  mismatches — §10.4's `when-unsatisfied` yields no forced bump);
+  `[[link]]` remains the explicit forced-cascade/lockstep surface;
+- a `test*` configuration is the dev edge (the maven cell's
+  `<scope>test</scope>` mapping, §6.3's dev-does-not-cascade default).
+
+## 8. Decisions recorded (2026-11-28, the settings/edges session)
+
+- **D6** — the settings grammar is the multi-project aggregator shape:
+  the governed root named by `rootProject.name` (last literal
+  assignment wins), the include-proven members named by their path's
+  last element (implicit parents included), the unincluded build files
+  keeping the standalone rows (warned), the ambiguous settings pair
+  declining all provenance (warned). The identity chain of §4/D4 gains
+  the settings provenance in front of the directory chain.
+- **D7** — the dependency edge is the top-level-block-only,
+  leading-`:`-only, `PathOnly` shape of §7: internal when the path
+  resolves to an include-proven member, warned-external otherwise.
+- **D8** — the publish posture is unchanged (D5): no `gradle` argv
+  arm exists (the credential surface is `~/.gradle/gradle.properties`
+  + the `publishing` block, no documented env-var grammar), rows stay
+  `publishable = false`, and the `gradle.properties` version site, the
+  `mvn deploy` argv arm and the corpus-lane replay stay the Maven/Gradle
+  cell's recorded-open remainders.
