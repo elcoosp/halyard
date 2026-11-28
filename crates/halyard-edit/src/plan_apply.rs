@@ -31,7 +31,7 @@ use crate::error::EditError;
 
 /// The lockfile targets of the apply flow, as `(repo-relative path,
 /// ecosystem)` pairs: the root `Cargo.lock` (§9.2, M3.2), the root
-/// `pnpm-lock.yaml` (§9.3, M3.4) and the root `uv.lock` (the M8 PyPI
+/// `pnpm-lock.yaml` (§9.3, M3.4) and the root `uv.lock` (the M8 `PyPI`
 /// cell's lockfile half, ADR-0056). All live at the repository root,
 /// never inside a member directory. Other npm-family lockfiles
 /// (`package-lock.json`, `yarn.lock`, `bun.lock`) are native-only in v1
@@ -372,7 +372,12 @@ fn adapter_for<'a>(
                 "package.json" => Some("npm"),
                 "pyproject.toml" => Some("pypi"),
                 "go.mod" => Some("go"),
-                "pom.xml" => Some("maven"),
+                // M8 (ADR-0058 + continued): the maven adapter owns the
+                // pom.xml grammar and the Gradle `build.gradle(.kts)`
+                // literal-assignment grammar (the Maven/Gradle cell's
+                // two grammars, one ecosystem — the apply shell routes
+                // through the owning package's adapter).
+                "pom.xml" | "build.gradle" | "build.gradle.kts" => Some("maven"),
                 // M8 (ADR-0060): the dart adapter's semantic patch owns
                 // the pubspec version row.
                 "pubspec.yaml" => Some("dart"),
@@ -386,6 +391,15 @@ fn adapter_for<'a>(
                     // M8 (ADR-0059): every SDK-style project file
                     // routes to the nuget adapter's semantic patch.
                     file.as_str().ends_with(".csproj").then_some("nuget")
+                })
+                .or_else(|| {
+                    // M8 (ADR-0058 continued): every nested
+                    // `build.gradle` / `build.gradle.kts` routes to the
+                    // maven adapter's Gradle patch (the root-name match
+                    // above covers the repo-root build files).
+                    (file.as_str().ends_with("/build.gradle")
+                        || file.as_str().ends_with("/build.gradle.kts"))
+                    .then_some("maven")
                 })
                 .or_else(|| {
                     // M8 (ADR-0061): every gemspec file routes to the
