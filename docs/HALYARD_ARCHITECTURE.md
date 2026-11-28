@@ -1335,6 +1335,45 @@ Groovy/Kotlin build code — an evaluated, VERIFIED grammar gates it),
 the corpus-lane replay on 2 real repos (token/network-bound, the M7
 lane discipline), and the `mvn deploy` publish argv arm.)*
 
+*(As-built note, 2026-11-28 (ADR-0058 continued): the Maven/Gradle
+cell's **Gradle** half ships — the gate ADR-0058's Consequences named
+(*"a `build.gradle(.kts)` version is arbitrary Groovy/Kotlin build code
+… extracting one without an evaluated, VERIFIED grammar would guess"*)
+is lifted by `docs/research/gradle-grammars.md` (the Project API's
+writable `Object` `version` property — *"The version of this project.
+Gradle always uses the `toString()` value of the version. The version
+defaults to `unspecified`."*; the Building Java Projects guide's
+`version = '1.2.1'` / `version = "1.2.1"` pair). The `halyard-eco-maven`
+crate gains a `gradle` grammar module (the hand-rolled, offset-preserving
+literal-assignment scanner — `//` line and `/* */` block comments
+skipped in place, sibling string literals skipped, the documented bare
+`version = <string-literal>` assignment captured with its inner-byte
+span; a double-quoted value carrying `$` is a Groovy `GString` / Kotlin
+template — interpolation, non-literal; every other right-hand side — a
+property reference, `gradle.properties` lookup, version-catalog
+accessor, plugin convention, closure — recognized but non-canonical).
+The Gradle half rides `Ecosystem::Maven` (the Maven/Gradle cell's single
+ecosystem — both publish to Maven Central) with a new
+`ManifestFormat::GradleBuild` variant; every `build.gradle` /
+`build.gradle.kts` in the committed tree is a standalone Maven row (the
+per-file shape the Dockerfile and gemspec cells established), the last
+`version = …` assignment in document order wins (the Project setter's
+ordinary overwrite — no override *rule*, no superseded warning), only
+semver-parseable literals are canonical (the ADR-0056 fail-closed
+discipline), the byte-preserving edit seam (read-back re-scan verified,
+the apply shell routes `build.gradle` / `build.gradle.kts` → the maven
+adapter's Gradle patch), the tag-target probe's `maven` arm branches by
+manifest path, and the publish posture rides the Maven cell's disabled
+shape (`publishable = false`, `maven-central`, no `gradle` argv grammar
+— the credential surface is `~/.gradle/gradle.properties` + the
+`publishing` block, no documented env-var grammar). The Gradle half's
+recorded-open remainders: the `settings.gradle` `rootProject.name` /
+`include` grammar (the multi-project aggregator shape), the
+`project(":sub")` dependency edge (cross-package cascade rides the
+explicit `[[link]]` config surface in the meantime), the `gradle
+publish` / `gradle build` argv arm, the `gradle.properties` version
+site, and the corpus-lane replay on 2 real repos.)*
+
 *(As-built note, 2026-11-26 (ADR-0059): the M8 row's **NuGet** cell
 ships — the `halyard-eco-nuget` adapter (the §7.3 discovery subset at
 the VERIFIED SDK-style `.csproj` grammar: the `Sdk` attribute gate, the
