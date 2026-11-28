@@ -5,11 +5,11 @@
 //! 1. [`discover_repo`] walks the repository (respecting `.gitignore`,
 //!    pruning `target/` / `node_modules/` / `.git/`), reads every manifest
 //!    (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`,
-//!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`, SDK-style
-//!    `.csproj`, `pubspec.yaml`, `.gemspec`, `Dockerfile`) plus the
-//!    config-declared `[[generic]]`
-//!    version files (M8 ADR-0062) into a [`DiscoverCtx`]; no subprocess is
-//!    ever spawned
+//!    `pyproject.toml`, `go.mod`/`go.work`, `pom.xml`,
+//!    `build.gradle`/`build.gradle.kts`, SDK-style `.csproj`,
+//!    `pubspec.yaml`, `.gemspec`, `Dockerfile`) plus the config-declared
+//!    `[[generic]]` version files (M8 ADR-0062) into a [`DiscoverCtx`];
+//!    no subprocess is ever spawned
 //!    (invariant I6).
 //! 2. [`discover_from_ctx`] (pure) dispatches to the registered
 //!    [`EcosystemAdapter`]s in fixed order, merges the [`RawPackage`]
@@ -412,6 +412,15 @@ pub fn collect_ctx(
             || rel.ends_with("/go.mod")
             || rel.ends_with("/pom.xml")
             || rel.ends_with("/pubspec.yaml")
+            // M8 (ADR-0058 continued): the maven adapter's Gradle half
+            // owns the `build.gradle` / `build.gradle.kts` literal-
+            // assignment grammar — the documented build-file names join
+            // the walk (root and nested; a `settings.gradle`/
+            // `buildSrc`/`init.gradle` grammar is out of the subset).
+            || rel == "build.gradle"
+            || rel == "build.gradle.kts"
+            || rel.ends_with("/build.gradle")
+            || rel.ends_with("/build.gradle.kts")
             // M8 (ADR-0059): the nuget adapter owns the SDK-style
             // `.csproj` grammar — every project file joins the walk.
             || rel.ends_with(".csproj")
