@@ -272,6 +272,10 @@ pub enum ManifestFormat {
     /// A `Dockerfile` (the Dockerfile-reference subset scanner,
     /// hand-written, M8 ADR-0063).
     Dockerfile,
+    /// A `build.gradle` / `build.gradle.kts` (the Gradle build-file
+    /// literal-assignment subset scanner, hand-written, M8 ADR-0058
+    /// continued — the Maven/Gradle cell's Gradle half).
+    GradleBuild,
     /// A config-declared plain-text version file (`[[generic]]`, M8
     /// ADR-0062) — the file is user-defined text located by the
     /// declared regex; the format any manifest error on it reports.
