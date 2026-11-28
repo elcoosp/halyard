@@ -36,5 +36,19 @@ harness = false
 name = "gradle_edit"
 harness = false
 
+# ADR-0058 continued (M1, the multi-project aggregator shape): the
+# settings-file grammar's scan bench (the `rootProject.name` / `include`
+# captures) plus the governed discovery over its subtree.
+[[bench]]
+name = "settings_scan"
+harness = false
+
+# ADR-0058 continued (M2, the recorded-open `project(":sub")`
+# dependency edge): the dependencies-block capture plus the governed
+# discovery pass that resolves the proven paths into internal edges.
+[[bench]]
+name = "gradle_deps"
+harness = false
+
 [lints]
 workspace = true
