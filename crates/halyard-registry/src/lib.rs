@@ -27,7 +27,7 @@
 //!   (`docs/research/nuget-grammars.md` §11; *"If the package source has
 //!   no versions of the provided package ID, a 404 status code is
 //!   returned"*; *"The strings in the `versions` array are all
-//!   lowercased, normalized NuGet version strings"*), the sample base
+//!   lowercased, normalized `NuGet` version strings"*), the sample base
 //!   `https://api.nuget.org/v3-flatcontainer/`.
 //!
 //! Status semantics, fail-closed (§15.4 "errors teach"): a `404` means
@@ -392,7 +392,7 @@ impl Registry for PyPi {
 /// (*"If the package source has no versions of the provided package ID,
 /// a 404 status code is returned"*; a 200 body is
 /// `{"versions": [...]}` — *"The strings in the `versions` array are
-/// all lowercased, normalized NuGet version strings"*). The contract
+/// all lowercased, normalized `NuGet` version strings"*). The contract
 /// mirrors [`PyPi`]: `404` ⇒ not published, a matching version row ⇒
 /// published, everything else fail-closed (`E-REG-*`).
 pub struct Nuget {
