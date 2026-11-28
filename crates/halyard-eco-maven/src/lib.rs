@@ -43,6 +43,7 @@ use halyard_core::package::{DepKind, Ecosystem, ManifestSite, RelPath, ReqSpec};
 use semver::Version;
 
 pub mod edit;
+pub mod gradle;
 pub mod grammar;
 
 /// The maven-family adapter (§7.3 discovery + manifest-edit subset).
@@ -77,8 +78,14 @@ impl EcosystemAdapter for MavenAdapter {
     }
 
     fn discover(&self, ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError> {
+        // The Gradle half (ADR-0058 continued — `build.gradle(.kts)`
+        // literal assignments) rides the same Maven ecosystem as the
+        // pom.xml half: both publish to Maven Central, the Maven/Gradle
+        // cell's single registry. Collected first, appended after the
+        // pom rows so the merge order stays pom-then-gradle (§6.1).
+        let gradle = gradle_rows(ctx)?;
         let Some(bytes) = ctx.file("pom.xml") else {
-            return Ok(Vec::new());
+            return Ok(gradle);
         };
         let text = utf8(bytes, "pom.xml")?;
         let root = grammar::parse_pom(text, "pom.xml")?;
@@ -90,6 +97,7 @@ impl EcosystemAdapter for MavenAdapter {
         let root_version = version_of(&root, "pom.xml")?;
         if root.modules.is_empty() {
             packages.push(row(&root, "", "pom.xml", root_version, &[])?);
+            packages.extend(gradle);
             return Ok(packages);
         }
         packages.push(row(&root, "", "pom.xml", root_version.clone(), &[])?);
@@ -172,6 +180,7 @@ impl EcosystemAdapter for MavenAdapter {
                 &member_coordinates,
             )?);
         }
+        packages.extend(gradle);
         Ok(packages)
     }
 
@@ -181,8 +190,197 @@ impl EcosystemAdapter for MavenAdapter {
         content: &[u8],
         patches: &[halyard_core::plan::PlanPatch],
     ) -> Result<halyard_core::edit::EditOutcome, halyard_core::edit::EditFailure> {
-        edit::edit_versions(file, content, patches)
+        // ADR-0058 continued: a Gradle build file routes to the Gradle
+        // literal-assignment patch; a pom.xml keeps the pom patch (the
+        // Maven/Gradle cell's two grammars, one ecosystem).
+        if file.as_str().ends_with("build.gradle") || file.as_str().ends_with("build.gradle.kts") {
+            edit::edit_gradle_versions(file, content, patches)
+        } else {
+            edit::edit_versions(file, content, patches)
+        }
     }
+}
+
+/// The Gradle half of discovery (ADR-0058 continued — the Maven/Gradle
+/// cell's Gradle half): every `build.gradle` / `build.gradle.kts` in the
+/// committed tree is a standalone Maven row (the Maven/Gradle cell's
+/// single ecosystem — both publish to Maven Central; the per-file shape
+/// the Dockerfile and gemspec cells established). The version is the
+/// documented literal `version = '…'` / `version = "…"` assignment
+/// (Gradle's Project API: *"The version of this project. Gradle always
+/// uses the `toString()` value of the version. The version defaults to
+/// `unspecified`."*); the last assignment in document order wins (the
+/// Project setter's ordinary overwrite). Only semver-parseable literals
+/// are canonical; every other right-hand side is recognized-but-
+/// non-canonical — warned, unpublishable, no edit site, never rewritten.
+fn gradle_rows(ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError> {
+    // Every `build.gradle` / `build.gradle.kts` in the committed tree
+    // (sorted walk order, I3) is a candidate manifest — the documented
+    // build-file names (a `settings.gradle`/`buildSrc`/`init.gradle`
+    // grammar is out of the deterministic-specs subset).
+    let manifests: Vec<String> = ctx
+        .tree()
+        .filter(|path| {
+            **path == *"build.gradle"
+                || path.ends_with("/build.gradle")
+                || **path == *"build.gradle.kts"
+                || path.ends_with("/build.gradle.kts")
+        })
+        .map(std::borrow::ToOwned::to_owned)
+        .collect();
+    let mut packages = Vec::new();
+    for path in &manifests {
+        let Some(bytes) = ctx.file(path) else {
+            continue;
+        };
+        let text = std::str::from_utf8(bytes).map_err(|_| DiscoverError::Manifest {
+            file: path.clone(),
+            format: ManifestFormat::GradleBuild,
+            message: "manifest is not valid UTF-8".to_owned(),
+            span: None,
+        })?;
+        let file = gradle::parse_gradle_build(text).map_err(|error| DiscoverError::Manifest {
+            file: path.clone(),
+            format: ManifestFormat::GradleBuild,
+            message: error.to_string(),
+            span: None,
+        })?;
+        packages.push(gradle_row(path, &file)?);
+    }
+    Ok(packages)
+}
+
+/// Builds one raw package row from a parsed Gradle build file (§6.1
+/// merge row): the identity chain (the containing directory's name →
+/// the manifest path, the Dockerfile cell's chain; a
+/// `rootProject.name`/`include` grammar is the recorded-open
+/// remainder), the last-assignment-wins version strategy, and the
+/// engine's disabled publish shape (no `gradle` argv grammar — the
+/// credential surface is `~/.gradle/gradle.properties` + the
+/// `publishing` block, no documented env-var grammar).
+fn gradle_row(
+    manifest_path: &str,
+    file: &gradle::GradleBuild,
+) -> Result<RawPackage, DiscoverError> {
+    let manifest = RelPath::new(manifest_path).ok_or_else(|| DiscoverError::Manifest {
+        file: manifest_path.to_owned(),
+        format: ManifestFormat::GradleBuild,
+        message: "manifest path is not a normalized repo-relative path".to_owned(),
+        span: None,
+    })?;
+    let dir = gradle_dir_of(manifest_path);
+    let name = gradle_context_name(&dir)
+        .map_or_else(|| manifest_path.to_owned(), std::borrow::ToOwned::to_owned);
+    let mut warnings: Vec<DiscoveryWarning> = Vec::new();
+    // The last `version = …` assignment in document order wins (Gradle's
+    // Project-setter overwrite — the documented `toString()` value is the
+    // last assignment's; no override *rule*, no superseded warning).
+    let last = file.version_assignments.last();
+    let (version, site) = if let Some(gradle::VersionAssignment {
+        rhs: gradle::VersionRhs::Literal { value, span },
+    }) = last
+        && let Ok(parsed) = Version::parse(value)
+    {
+        (
+            Some(parsed),
+            Some(ManifestSite {
+                file: manifest.clone(),
+                spans: vec![*span],
+            }),
+        )
+    } else if let Some(gradle::VersionAssignment {
+        rhs: gradle::VersionRhs::Literal { value, .. },
+    }) = last
+    {
+        warnings.push(DiscoveryWarning {
+            code: "non-canonical-version",
+            subject: name.clone(),
+            message: format!(
+                "the version literal {value:?} is a spelling the plan contract cannot render \
+                     (semver is the plan contract's type); package treated as unpublishable and \
+                     never rewritten"
+            ),
+        });
+        (None, None)
+    } else if let Some(gradle::VersionAssignment {
+        rhs: gradle::VersionRhs::NonLiteral,
+    }) = last
+    {
+        warnings.push(DiscoveryWarning {
+            code: "non-canonical-version",
+            subject: name.clone(),
+            message: "the `version = …` row carries a non-literal right-hand side (a \
+                          computed value, property reference, or string template) the plan \
+                          contract cannot render; package treated as unpublishable and never \
+                          rewritten"
+                .to_owned(),
+        });
+        (None, None)
+    } else {
+        warnings.push(DiscoveryWarning {
+            code: "no-version",
+            subject: name.clone(),
+            message: "no `version = …` assignment in the build file; Gradle's documented \
+                          default is `unspecified` — the package is treated as unpublished"
+                .to_owned(),
+        });
+        (None, None)
+    };
+    Ok(RawPackage {
+        name,
+        ecosystem: Ecosystem::Maven,
+        root: dir,
+        manifest: manifest_path.to_owned(),
+        version,
+        version_source: RawVersionSource::Local,
+        // ADR-0058 D5 (continued): no Gradle publish argv arm exists
+        // (the credential surface is `~/.gradle/gradle.properties` + the
+        // `publishing` block, no documented env-var grammar) — the row
+        // versions and tags, and the publish engine records the Maven
+        // cell's disabled shape.
+        publishable: false,
+        deps: Vec::new(),
+        tag_template: None,
+        changelog: None,
+        version_site: site,
+        include: halyard_core::package::PathFilter::new(Vec::new(), Vec::new()),
+        facets: Facets::default(),
+        warnings,
+    })
+}
+
+/// The repo-relative directory of a Gradle build file
+/// (`build.gradle` → the root, `services/api/build.gradle` →
+/// `services/api`).
+fn gradle_dir_of(manifest_path: &str) -> String {
+    manifest_path
+        .rsplit_once('/')
+        .map_or(String::new(), |(dir, _)| dir.to_owned())
+}
+
+/// The repo-relative directory's own name (`services/api` → `api`, the
+/// root → `None`) — the identity chain's fallback when no
+/// `rootProject.name` grammar applies (a recorded-open remainder).
+fn gradle_context_name(dir: &str) -> Option<&str> {
+    dir.rsplit('/').next().filter(|name| !name.is_empty())
+}
+
+/// The release version the `build.gradle(.kts)` **bytes** carry — the
+/// semver-canonical pairing text when the last `version = …` assignment
+/// is a literal canonical spelling, `None` otherwise (non-literal or
+/// non-semver spellings never pair; the documented HEAD fallback
+/// governs). The probe input the tag-target pinpoint walk consumes for
+/// a Gradle build file (see `halyard_git::tag_target::ManifestVersionProbe`;
+/// the git engine never parses manifests itself).
+#[must_use]
+pub fn gradle_manifest_version(bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let file = gradle::parse_gradle_build(text).ok()?;
+    let last = file.version_assignments.last()?;
+    let gradle::VersionRhs::Literal { value, .. } = &last.rhs else {
+        return None;
+    };
+    Version::parse(value).ok().map(|_| value.clone())
 }
 
 /// The resolved version of one pom row: the value, its raw-string source
