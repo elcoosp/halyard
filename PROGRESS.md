@@ -3900,6 +3900,7 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   the cache warm.
 
 | M8 PyPI uv.lock half + M8 NuGet publish half (ADR-0056/ADR-0059 continued) | done (the cells' recorded-open lockfile/argv/probe/auth arms landed; corpus replays + the Gradle half + the other argv/probe arms stay recorded-open) | (tree left dirty; no commits) | **Reconciliation survey first** (plan ↔ code ↔ history): main was green at `824c3d5` (the Docker session's HEAD); the M8 row's open seam items were the PyPI cell's uv.lock lockfile half, the Go GOPROXY probe (zero consumers — Go rows carry `publish: None`, a probe would be dead scaffolding, left standing), the Maven cell's Gradle half (the plan's own VERIFIED-grammar gate, no note exists — left standing) and `mvn deploy` argv arm (settings.xml credential surface, no env-var grammar), the NuGet cell's argv/probe arms (ELIGIBLE, first after PyPI per row order), the Dart/RubyGems/Docker argv arms (auth-gated: no documented env vars), M7/M6/M5/M2 open items (network/hardware/audit/measurement-bound), and M9 per plan order (after the M8 cell remainders). M1 = the PyPI cell's uv.lock lockfile half; M2 = the NuGet cell's publish half. **M1 implemented (no stubs), one full red→green cycle:** the red was E0432 on `halyard_eco_pypi::uvlock` + the missing stage row + both CLI e2es (the plan line the first test pins is §17 M8's PyPI cell as-built *"the uv.lock lockfile half (the trait's documented `NeedsNative`/`Unsupported` declines stand)"*, quoted in the contract tests' module docs). The green: the root `uv.lock` joins `halyard_edit::LOCKFILE_TARGETS` (3 targets), `halyard_eco_pypi::uvlock` (the lockfile-aware decline at uv's documented posture — *"managed by uv and should not be edited manually"*, VERIFIED in `docs/research/pypi-uv-grammars.md` §8 from docs.astral.sh + the installed uv 0.13.10's `uv lock --help`; `refresh_command()` = `uv lock --offline` — *"Update the project's lockfile"* + *"Disable network access"*, the cargo/pnpm offline discipline; `verify_native_refresh` — the header + non-member rows byte-identical, member rows may move, proven empirically: a member bump rewrites exactly the member's `version` row), the adapter's `patch_lockfile`/`refresh_lockfile_native` impls, the CLI verify match's `pypi` arm. 8 contract tests + the staging test + the CLI e2e pair (the no-uv refusal via the restricted-PATH child = `E-LOCK-NATIVE` naming the argv — hermetic; the real-refresh e2e runs where uv exists — verified here end-to-end: decline reported, `uv lock --offline` ran, verifier moved=[app-a], every other byte of the lockfile survived) + bench `uvlock_verify` (120-row snapshot pair ≈685 µs) + example `patch_uvlock`. **M2 implemented (M1 green first), one full red→green cycle:** the red was E0432 on the nuget argv grammar + E0433 on the `Nuget` probe + the publishable flip + the auth arm + the router + both CLI shim e2es (the plan line the first test pins is §17 M8's NuGet cell as-built *"the `dotnet pack`/`dotnet nuget push` argv arm, the nuget.org probe arm"*). The green: `halyard_eco_nuget::publish` (the documented two-step flow the push reference states itself — *"It doesn't create a package. To create a package, use `dotnet pack`."* — bare pack, then `dotnet nuget push bin/Debug/<id>.<version>.nupkg --source https://api.nuget.org/v3/index.json`, VERIFIED in `docs/research/nuget-grammars.md` §11 from Microsoft Learn), the publish effect's multi-step spawn arm (dry = the packaging half only — the push has no documented dry form, ADR-0033: no flag invented), rows `publishable` at the documented packability gate (`<IsPackable>false</IsPackable>` unpublishable — §10 landed with the flip), the `halyard_registry::Nuget` flat-container probe (the VERIFIED `PackageBaseAddress` grammar, `GET {base}/{LOWER_ID}/index.json`, 404 ⇒ none) registered under `nuget.org` in the publish router, the auth seam's `NUGET_API_KEY` arm (the documented 7.6+ env var, the recency recorded honestly), the doctor's nuget.org row, the planner comment flipped. 3 argv tests + 5 probe tests + the flip test + the auth pin + the router pin + 2 CLI shim e2es (dry: forecast + pack-only captured; live: pack then push with the documented source, the token never in argv) + 1 flipped posture e2e in cli_publish + bench `publish_args` + example `publish_argv`. **Docs drift fixed additively (not a milestone substitute):** the arch doc's missing ADR-0061 RubyGems as-built note landed (the drift the ADR-0062 and Docker sessions each recorded) + the missing RubyGems PROGRESS status row. Micro-debt scanned: `todo!`/`unimplemented!` zero in the touched surfaces; allow/expect zero (the lint-hygiene grep stays empty); the pre-existing unused-workspace-dependency warnings (`halyard-cli`, `xtask`, …) left standing — not this session's surfaces. **Honest state at cut-off:** the corpus-lane replays (the M7/M8 cells' acceptance-row halves, network-bound), the Gradle half (the plan's own gate), the Go GOPROXY/nuget-CPM/non-csproj/other argv arms, M7's corpus-lane e2e + the live attested+signed release run, the M2.6 dhat re-audit stay the recorded-open remainders. **Next session start point:** (1) the M8/M7 corpus-lane replay when a networked lane is available, (2) the M9 plugin-system milestone per plan order, (3) the Maven cell's Gradle half through its own research session (the plan's VERIFIED-grammar gate). | 2026-11-27; session log below |
+| M8 Maven/Gradle cell — the Gradle half (ADR-0058 continued) | done (row partial: the `settings.gradle` `rootProject.name`/`include` grammar + the `project(":sub")` dep edge + the `gradle publish`/`gradle build` argv arm + the `gradle.properties` version site + corpus replay recorded-open) | (tree left dirty; no commits) | **Reconciliation survey first** (plan ↔ code ↔ history): main was green at `b2b4623` (the rubygems-drift row's HEAD); the latest session's next-start point named (1) the M8/M7 corpus-lane replay (network-bound), (2) the M9 plugin-system milestone per plan order, (3) the Maven cell's Gradle half through its own research session (the plan's VERIFIED-grammar gate). The Gradle half is the earliest eligible code-seam item (M8 < M9 per plan order; the M8 row's other remainders are auth-gated argv arms / network-bound replays / the zero-consumer Go GOPROXY probe; the M2.6/M6/M7 open items are hardware/corpus/audit/network-bound). Missing-in-code evidence: `grep -rni "gradle" crates/ --include="*.rs"` returns only the `Maven/Gradle` cell-name mentions in docs/comments (no `build.gradle` parsing, no `ManifestFormat::GradleBuild`, no `halyard_eco_maven::gradle`); `git log --all --oneline -S "gradle" -i` carries only docs/ADR commits mentioning the cell name; `git branch -a` carries no Gradle work. The Gradle half rides `Ecosystem::Maven` (the Maven/Gradle cell's single ecosystem — both publish to Maven Central; the `Ecosystem::Maven` doc named "the Maven/Gradle cell's shipped half", this row names the Gradle half), so no new ecosystem variant / planner registry arm / workspace member / dispatch entry — the wire-up is the orchestrator's manifest allowlist + the maven adapter's discover arm + the edit routing + the tag-target probe branch + a new `ManifestFormat::GradleBuild`. **M1 = the Gradle discovery + planning slice; M2 = the Gradle edit seam** — from the table, not invented, the docker cell's M1=discover/M2=edit split. **Grammar verification first:** `docs/research/gradle-grammars.md` VERIFIED live (the Project API's writable `Object` `version` property — *"The version of this project. Gradle always uses the `toString()` value of the version. The version defaults to `unspecified`."*; the Building Java Projects guide's `version = '1.2.1'` Groovy / `version = "1.2.1"` Kotlin pair, both direct top-level string assignments). **M1 implemented (no stubs), one full red→green cycle:** the red was E0599 on `ManifestFormat::GradleBuild` + E0433 on `DiscoverError` (the first failing test pins §17 M8's `Maven/Gradle` cell + ADR-0058's Consequences *"the Gradle half stays recorded-open … extracting one without an evaluated, VERIFIED grammar would guess"*, quoted in the contract tests' module docs). The green: `halyard_eco_maven::gradle` (the hand-rolled, offset-preserving literal-assignment scanner — `//` line + `/* */` block comments skipped in place, sibling string literals skipped, the documented bare `version = <string-literal>` assignment captured with its inner-byte span; a double-quoted value carrying `$` is a Groovy `GString` / Kotlin template → non-literal; every other RHS — property ref, `gradle.properties` lookup, catalog accessor, plugin, closure — recognized but non-canonical; the `project.version` qualified form and the method-call `version '…'` form are out of the subset), the maven adapter's `discover()` gains the Gradle arm (every `build.gradle`/`build.gradle.kts` in the tree = a standalone Maven row; the last assignment wins; only semver literals canonical, the ADR-0056 fail-closed discipline), `ManifestFormat::GradleBuild` in core, the orchestrator's manifest allowlist + the init no-manifests message + the discover doc comment name the build files, the `Ecosystem::Maven` doc names the Gradle half, the CLI tag-target probe's `maven` arm branches by manifest path, `pub fn gradle_manifest_version`. 11 grammar inline tests + 9 discovery-contract tests + 3 CLI e2e (plan + immutable + duplicate) + bench `gradle_scan` (~516 ns) + example `scan_gradle`. **M2 implemented (M1 green first), one full red→green cycle:** the red was the 8 edit-contract tests failing against the pom-only `edit_versions` (build.gradle parsed as pom → `E-EDIT-VERIFY`/`E-EDIT-PATCHES`). The green: `edit::edit_gradle_versions` (the patch span must equal the LAST literal's inner-byte span, right-to-left-safe in-place swap, read-back re-scan verify pins the text never the offset, idempotent I1, no-slot + non-UTF-8 refusals), the maven adapter's `edit_versions` branches by file, the apply shell's manifest map routes `build.gradle`/`build.gradle.kts` → `maven`. 8 edit-contract tests + 2 CLI e2e (`apply` rewrites the literal in place, every other byte identical; `publish --dry` records the `publish_disabled` skip with `maven-central` named) + bench `gradle_edit` (~593 ns) + example `bump_gradle`. **Docs drift fixed additively (not a milestone substitute):** the arch doc's ADR-0058 as-built note gains the Gradle-half continuation; the README's `Maven supported (M8)` bullet + the `halyard-eco-maven` table row name the Gradle half. Micro-debt scanned: `todo!`/`unimplemented!` zero in the touched surfaces; `allow`/`expect` zero (the lint-hygiene grep stays empty); the pre-existing unused-workspace-dependency warnings (`halyard-cli`, `xtask`, `url`, …) left standing — not this session's surfaces. **Honest state at cut-off:** the `settings.gradle` `rootProject.name`/`include` grammar (the multi-project aggregator shape), the `project(":sub")` dependency edge (cross-package cascade rides the explicit `[[link]]` config surface in the meantime), the `gradle publish`/`gradle build` argv arm (the credential surface is `~/.gradle/gradle.properties` + the `publishing` block, no documented env-var grammar), the `gradle.properties` version site, and the corpus-lane replay on 2 real repos stay the recorded-open remainders. **Next session start point:** (1) the M8/M7 corpus-lane replay when a networked lane is available, (2) the M9 plugin-system milestone per plan order, or (3) the `settings.gradle` include grammar (the Gradle multi-project aggregator shape). | 2026-11-28; session log below |
 
 ### 2026-11-27 — The M8 PyPI uv.lock half + the M8 NuGet publish half (ADR-0056/ADR-0059 continued, tree left dirty, no commits)
 
@@ -3978,3 +3979,95 @@ Status values: `not started` / `partial` / `done` / `blocked`.
   a networked lane is available, (2) the M9 plugin-system milestone
   per plan order, or (3) the Maven cell's Gradle half through its own
   research session (the plan's VERIFIED-grammar gate).
+
+### 2026-11-28 — The M8 Maven/Gradle cell's Gradle half (ADR-0058 continued, tree left dirty, no commits)
+
+- **Inventory at session start.** Main was green at `b2b4623` (the
+  rubygems-drift row's HEAD — whose own next-start point named the
+  corpus-lane replay, M9 per plan order, or the Gradle half through its
+  own research session). The reconciliation survey ran plan ↔ code ↔
+  history first: the earliest eligible code-seam item was the Maven
+  cell's Gradle half (M8 < M9 per plan order; the M8 row's other
+  remainders are auth-gated argv arms / network-bound replays / the
+  zero-consumer Go GOPROXY probe; the M2.6/M6/M7 open items are
+  hardware/corpus/audit/network-bound). Missing-in-code evidence:
+  `grep -rni "gradle" crates/ --include="*.rs"` returns only the
+  `Maven/Gradle` cell-name mentions in docs/comments; no `build.gradle`
+  parsing, no `ManifestFormat::GradleBuild`, no `halyard_eco_maven::gradle`;
+  `git log --all --oneline -S "gradle" -i` carries only docs/ADR commits
+  mentioning the cell name; `git branch -a` carries no Gradle work. The
+  Gradle half rides `Ecosystem::Maven` (the Maven/Gradle cell's single
+  ecosystem — both publish to Maven Central), so the wire-up is lean:
+  no new ecosystem variant, no new planner registry arm, no new
+  workspace member, no new dispatch entry. M1 = the Gradle discovery +
+  planning slice; M2 = the Gradle edit seam — from the table, not
+  invented, the docker cell's M1=discover/M2=edit split.
+- **Grammar verification first.** `docs/research/gradle-grammars.md`
+  VERIFIED live: the Project API's `version` is a writable `Object`
+  property (*"The version of this project. Gradle always uses the
+  `toString()` value of the version. The version defaults to
+  `unspecified`."*); the Building Java Projects guide's canonical
+  top-level assignment pair is `version = '1.2.1'` (Groovy) /
+  `version = "1.2.1"` (Kotlin). The deterministic-specs subset: a
+  literal string on the right of `=` (single-quoted Groovy literal, or
+  double-quoted with no `$` — a `$` is GString/Kotlin-template
+  interpolation, non-literal); every other RHS (property ref,
+  `gradle.properties` lookup, catalog accessor, plugin, closure) is
+  recognized but non-canonical. The last assignment wins (the Project
+  setter's ordinary overwrite — no override *rule*, no superseded
+  warning).
+- **M1 implemented (no stubs), one full red→green cycle.** The red was
+  E0599 on `ManifestFormat::GradleBuild` + E0433 on `DiscoverError` (the
+  first failing test pins §17 M8's `Maven/Gradle` cell + ADR-0058's
+  Consequences *"the Gradle half stays recorded-open … extracting one
+  without an evaluated, VERIFIED grammar would guess"*, quoted in the
+  contract tests' module docs). The green: `halyard_eco_maven::gradle`
+  (the hand-rolled, offset-preserving literal-assignment scanner — `//`
+  line + `/* */` block comments skipped in place, sibling string
+  literals skipped, the documented bare `version = <string-literal>`
+  assignment captured with its inner-byte span; the `project.version`
+  qualified form and the method-call `version '…'` form are out of the
+  subset), the maven adapter's `discover()` gains the Gradle arm (every
+  `build.gradle`/`build.gradle.kts` = a standalone Maven row; the last
+  assignment wins; only semver literals canonical, the ADR-0056
+  fail-closed discipline), `ManifestFormat::GradleBuild` in core, the
+  orchestrator's manifest allowlist + the init no-manifests message +
+  the discover doc comment name the build files, the `Ecosystem::Maven`
+  doc names the Gradle half, the CLI tag-target probe's `maven` arm
+  branches by manifest path, `pub fn gradle_manifest_version`. 11
+  grammar inline tests + 9 discovery-contract tests + 3 CLI e2e (plan +
+  immutable + duplicate) + bench `gradle_scan` (~516 ns) + example
+  `scan_gradle`.
+- **M2 implemented (M1 green first), one full red→green cycle.** The
+  red was the 8 edit-contract tests failing against the pom-only
+  `edit_versions` (build.gradle parsed as pom →
+  `E-EDIT-VERIFY`/`E-EDIT-PATCHES`). The green: `edit::edit_gradle_versions`
+  (the patch span must equal the LAST literal's inner-byte span,
+  right-to-left-safe in-place swap, read-back re-scan verify pins the
+  text never the offset, idempotent I1, no-slot + non-UTF-8 refusals),
+  the maven adapter's `edit_versions` branches by file, the apply
+  shell's manifest map routes `build.gradle`/`build.gradle.kts` →
+  `maven`. 8 edit-contract tests + 2 CLI e2e (`apply` rewrites the
+  literal in place, every other byte identical; `publish --dry` records
+  the `publish_disabled` skip with `maven-central` named) + bench
+  `gradle_edit` (~593 ns) + example `bump_gradle`.
+- **Docs drift fixed additively (not a milestone substitute):** the
+  arch doc's ADR-0058 as-built note gains the Gradle-half continuation;
+  the README's `Maven supported (M8)` bullet + the `halyard-eco-maven`
+  table row name the Gradle half.
+- **Micro-debt scanned:** `todo!`/`unimplemented!` zero in the touched
+  surfaces; `allow`/`expect` zero (the lint-hygiene grep stays empty);
+  the pre-existing unused-workspace-dependency warnings (`halyard-cli`,
+  `xtask`, `url`, …) left standing — not this session's surfaces.
+- **Honest state at cut-off.** The `settings.gradle`
+  `rootProject.name`/`include` grammar (the multi-project aggregator
+  shape), the `project(":sub")` dependency edge (cross-package cascade
+  rides the explicit `[[link]]` config surface in the meantime), the
+  `gradle publish`/`gradle build` argv arm (the credential surface is
+  `~/.gradle/gradle.properties` + the `publishing` block, no documented
+  env-var grammar), the `gradle.properties` version site, and the
+  corpus-lane replay on 2 real repos stay the recorded-open remainders.
+- **Next session start point.** (1) the M8/M7 corpus-lane replay when a
+  networked lane is available, (2) the M9 plugin-system milestone per
+  plan order, or (3) the `settings.gradle` include grammar (the Gradle
+  multi-project aggregator shape).
