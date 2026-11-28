@@ -19,9 +19,10 @@
 //! verbatim.
 
 use halyard_core::edit::{EditFailure, EditOutcome};
-use halyard_core::package::RelPath;
+use halyard_core::package::{RelPath, Span};
 use halyard_core::plan::PlanPatch;
 
+use crate::gradle;
 use crate::grammar;
 
 /// The semantic patch: validate every patch span against the pom's
@@ -126,6 +127,138 @@ pub fn edit_versions(
         applied,
         skipped,
     })
+}
+
+/// The Gradle build-file semantic patch (ADR-0058 continued — the
+/// Maven/Gradle cell's Gradle half's release half): validate every patch
+/// span against the LAST literal `version = …` assignment's inner-byte
+/// span (the site the discovery row emitted — Gradle's Project setter
+/// overwrites on each assignment, so the last literal in document order
+/// is the row's source), swap the inner bytes right-to-left, and verify
+/// by re-scan before returning. A build file with no canonical literal
+/// (absent, non-literal, or non-semver — the fail-closed discipline)
+/// has no slot: a patch aimed at its manifest refuses.
+pub fn edit_gradle_versions(
+    file: &RelPath,
+    content: &[u8],
+    patches: &[PlanPatch],
+) -> Result<EditOutcome, EditFailure> {
+    // The sibling adapters' posture for a legitimate empty pass (nothing
+    // to apply, nothing changed).
+    if patches.is_empty() {
+        return Ok(EditOutcome {
+            content: content.to_vec(),
+            applied: 0,
+            skipped: 0,
+        });
+    }
+    let file_string = file.to_string();
+    let text = std::str::from_utf8(content).map_err(|_| EditFailure::Parse {
+        file: file_string.clone(),
+        message: "the Gradle build file is not valid UTF-8".to_owned(),
+    })?;
+    let parsed = gradle::parse_gradle_build(text).map_err(|error| EditFailure::Parse {
+        file: file_string.clone(),
+        message: error.to_string(),
+    })?;
+    // The editable slot: the LAST literal assignment's inner-byte span
+    // (Gradle's last-assignment-wins rule; a build file whose last
+    // assignment is non-literal carries no slot — discovery emitted no
+    // site, and a patch aimed at its manifest has nothing to match).
+    let slot = gradle_version_slot(&parsed);
+    for patch in patches {
+        let matches = slot.is_some_and(|span| span.start == patch.start && span.end == patch.end);
+        if !matches {
+            return Err(EditFailure::SpanMismatch {
+                file: file_string.clone(),
+                start: patch.start,
+                end: patch.end,
+            });
+        }
+    }
+    // Validate the spans are in bounds before any byte moves (the
+    // manifest drifted check — a patch beyond the file cannot match a
+    // slot, but stay defensive about the splice bounds).
+    let mut out = content.to_vec();
+    let mut applied = 0usize;
+    let mut skipped = 0usize;
+    let mut ordered: Vec<&PlanPatch> = patches.iter().collect();
+    ordered.sort_by_key(|patch| patch.start);
+    for patch in ordered.into_iter().rev() {
+        let start = patch.start as usize;
+        let end = patch.end as usize;
+        if end > out.len() || start > end {
+            return Err(EditFailure::SpanMismatch {
+                file: file_string.clone(),
+                start: patch.start,
+                end: patch.end,
+            });
+        }
+        let carried = out
+            .get(start..end)
+            .is_some_and(|current| current == patch.text.as_bytes());
+        if carried {
+            // The idempotent re-run (I1): the value already carries the
+            // target — matched, nothing to rewrite.
+            skipped += 1;
+            continue;
+        }
+        out.splice(start..end, patch.text.as_bytes().iter().copied());
+        applied += 1;
+    }
+    // The read-back verify (§9.1): the re-scanned build file's LAST
+    // literal assignment carries the target the patch aimed at — the
+    // verify pins the text, never the offset (a length-changing swap
+    // moves the span) — never a guessed half-application.
+    let bumped = std::str::from_utf8(&out).map_err(|_| EditFailure::Parse {
+        file: file_string.clone(),
+        message: "the patched build file is not valid UTF-8".to_owned(),
+    })?;
+    let reparsed = gradle::parse_gradle_build(bumped).map_err(|error| EditFailure::Parse {
+        file: file_string.clone(),
+        message: format!("read-back re-parse failed: {error}"),
+    })?;
+    for patch in patches {
+        let carries = gradle_last_literal_value(&reparsed).is_some_and(|value| value == patch.text);
+        if !carries {
+            return Err(EditFailure::Parse {
+                file: file_string.clone(),
+                message: format!(
+                    "read-back verify: the build file's last `version = …` literal carries \
+                     {:?} after the patch, expected {:?} — nothing was mutated",
+                    gradle_last_literal_value(&reparsed),
+                    patch.text
+                ),
+            });
+        }
+    }
+    Ok(EditOutcome {
+        content: out,
+        applied,
+        skipped,
+    })
+}
+
+/// The LAST literal `version = …` assignment's inner-byte span (Gradle's
+/// last-assignment-wins rule); `None` when the build file carries no
+/// literal assignment or its last assignment is non-literal (no slot).
+fn gradle_version_slot(parsed: &gradle::GradleBuild) -> Option<Span> {
+    let last = parsed.version_assignments.last()?;
+    match &last.rhs {
+        gradle::VersionRhs::Literal { span, .. } => Some(*span),
+        gradle::VersionRhs::NonLiteral => None,
+    }
+}
+
+/// The LAST literal assignment's current value (the verify message's
+/// subject); `None` when the build file carries no literal assignment or
+/// its last assignment is non-literal.
+fn gradle_last_literal_value(parsed: &gradle::GradleBuild) -> Option<&str> {
+    let last = parsed.version_assignments.last()?;
+    match &last.rhs {
+        gradle::VersionRhs::Literal { value, .. } => Some(value.as_str()),
+        gradle::VersionRhs::NonLiteral => None,
+    }
 }
 
 #[cfg(test)]
