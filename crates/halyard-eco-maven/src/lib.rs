@@ -45,6 +45,7 @@ use semver::Version;
 pub mod edit;
 pub mod gradle;
 pub mod grammar;
+pub mod settings;
 
 /// The maven-family adapter (§7.3 discovery + manifest-edit subset).
 #[derive(Clone, Copy, Debug, Default)]
@@ -203,21 +204,29 @@ impl EcosystemAdapter for MavenAdapter {
 
 /// The Gradle half of discovery (ADR-0058 continued — the Maven/Gradle
 /// cell's Gradle half): every `build.gradle` / `build.gradle.kts` in the
-/// committed tree is a standalone Maven row (the Maven/Gradle cell's
-/// single ecosystem — both publish to Maven Central; the per-file shape
-/// the Dockerfile and gemspec cells established). The version is the
-/// documented literal `version = '…'` / `version = "…"` assignment
-/// (Gradle's Project API: *"The version of this project. Gradle always
-/// uses the `toString()` value of the version. The version defaults to
-/// `unspecified`."*); the last assignment in document order wins (the
-/// Project setter's ordinary overwrite). Only semver-parseable literals
-/// are canonical; every other right-hand side is recognized-but-
-/// non-canonical — warned, unpublishable, no edit site, never rewritten.
+/// committed tree is a Maven row (the Maven/Gradle cell's single
+/// ecosystem — both publish to Maven Central; the per-file shape the
+/// Dockerfile and gemspec cells established), and a sibling
+/// `settings.gradle` / `settings.gradle.kts` (the `settings` module's
+/// VERIFIED grammar) governs its directory subtree with the
+/// multi-project aggregator shape: the root build file is named by
+/// `rootProject.name`, each include-proven member is named by the
+/// include path's last element, and an unincluded build file keeps the
+/// standalone row (warned — the per-file shape never silently shrinks).
+/// The version is the documented literal `version = '…'` /
+/// `version = "…"` assignment (Gradle's Project API: *"The version of
+/// this project. Gradle always uses the `toString()` value of the
+/// version. The version defaults to `unspecified`."*); the last
+/// assignment in document order wins (the Project setter's ordinary
+/// overwrite). Only semver-parseable literals are canonical; every
+/// other right-hand side is recognized-but-non-canonical — warned,
+/// unpublishable, no edit site, never rewritten.
 fn gradle_rows(ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError> {
     // Every `build.gradle` / `build.gradle.kts` in the committed tree
     // (sorted walk order, I3) is a candidate manifest — the documented
-    // build-file names (a `settings.gradle`/`buildSrc`/`init.gradle`
-    // grammar is out of the deterministic-specs subset).
+    // build-file names. The settings files join the walk as the
+    // governance source (`settings_governance`); they are never package
+    // manifests themselves (a settings file carries no version slot).
     let manifests: Vec<String> = ctx
         .tree()
         .filter(|path| {
@@ -228,39 +237,347 @@ fn gradle_rows(ctx: &DiscoverCtx) -> Result<Vec<RawPackage>, DiscoverError> {
         })
         .map(std::borrow::ToOwned::to_owned)
         .collect();
+    let governance = settings_governance(ctx)?;
     let mut packages = Vec::new();
+    let mut parsed = Vec::new();
     for path in &manifests {
-        let Some(bytes) = ctx.file(path) else {
+        let Some((row, file)) = gradle_manifest_row(ctx, path, &governance)? else {
             continue;
         };
-        let text = std::str::from_utf8(bytes).map_err(|_| DiscoverError::Manifest {
-            file: path.clone(),
-            format: ManifestFormat::GradleBuild,
-            message: "manifest is not valid UTF-8".to_owned(),
-            span: None,
-        })?;
-        let file = gradle::parse_gradle_build(text).map_err(|error| DiscoverError::Manifest {
-            file: path.clone(),
-            format: ManifestFormat::GradleBuild,
-            message: error.to_string(),
-            span: None,
-        })?;
-        packages.push(gradle_row(path, &file)?);
+        parsed.push(file);
+        packages.push(row);
     }
+    attach_settings_warnings(&governance, &manifests, &mut packages);
+    resolve_project_edges(&governance, &parsed, &mut packages)?;
     Ok(packages)
 }
 
+/// One build file's row: the parse, the settings-governed name, and the
+/// version capture. `None` when the tree's bytes are unavailable (the
+/// manifest filter and the context inventory disagree — impossible on
+/// the orchestrator's own walk, tolerated deterministically).
+fn gradle_manifest_row(
+    ctx: &DiscoverCtx,
+    path: &str,
+    governance: &[GradleSettings],
+) -> Result<Option<(RawPackage, gradle::GradleBuild)>, DiscoverError> {
+    let Some(bytes) = ctx.file(path) else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(bytes).map_err(|_| DiscoverError::Manifest {
+        file: path.to_owned(),
+        format: ManifestFormat::GradleBuild,
+        message: "manifest is not valid UTF-8".to_owned(),
+        span: None,
+    })?;
+    let file = gradle::parse_gradle_build(text).map_err(|error| DiscoverError::Manifest {
+        file: path.to_owned(),
+        format: ManifestFormat::GradleBuild,
+        message: error.to_string(),
+        span: None,
+    })?;
+    let owner_dir = gradle_dir_of(path);
+    // The nearest settings file whose directory contains the build
+    // file governs its name (the multi-project aggregator shape); an
+    // ambiguous settings pair declines provenance (fail-closed).
+    let governing = governing_settings(governance, &owner_dir);
+    let mut warnings: Vec<DiscoveryWarning> = Vec::new();
+    let name = match governing {
+        Some((_, settings)) if settings.ambiguous => dir_chain_name(&owner_dir, path),
+        Some((_, settings)) => {
+            let rel = relative_to(&settings.dir, &owner_dir);
+            if owner_dir == settings.dir {
+                // The governed root: the settings file's own project
+                // (the documented directory default when no literal
+                // name row applies — at the repository root the
+                // committed tree cannot know the checkout directory's
+                // name, so the manifest path remains).
+                settings
+                    .root_name
+                    .clone()
+                    .unwrap_or_else(|| dir_chain_name(&owner_dir, path))
+            } else if let Some(member) = settings.members.get(&rel) {
+                member.clone()
+            } else {
+                warnings.push(DiscoveryWarning {
+                    code: "unincluded-gradle-build",
+                    subject: dir_chain_name(&owner_dir, path),
+                    message: format!(
+                        "the build file rides outside {}'s include set — the per-file \
+                         row keeps the standalone shape",
+                        settings.file
+                    ),
+                });
+                dir_chain_name(&owner_dir, path)
+            }
+        }
+        None => dir_chain_name(&owner_dir, path),
+    };
+    Ok(Some((gradle_row(path, &file, name, warnings)?, file)))
+}
+
+/// The nearest settings entry governing `dir` (its directory is an
+/// ancestor-or-self; the most specific wins) with its index into the
+/// governance list, `None` when no settings file governs.
+fn governing_settings<'a>(
+    governance: &'a [GradleSettings],
+    dir: &str,
+) -> Option<(usize, &'a GradleSettings)> {
+    governance
+        .iter()
+        .enumerate()
+        .filter(|(_, settings)| settings.governs(dir))
+        .max_by_key(|(_, settings)| settings.dir.len())
+}
+
+/// The settings-level observations (a non-literal name row, a
+/// non-literal include argument, a proven member without a build file,
+/// an ambiguous settings pair) warn on the settings tree's root row —
+/// the settings file's own project — when it exists; a tree with no
+/// root build file has no warning carrier and stays silent
+/// (deterministic; the rows themselves are unaffected).
+fn attach_settings_warnings(
+    governance: &[GradleSettings],
+    manifests: &[String],
+    packages: &mut [RawPackage],
+) {
+    for settings in governance {
+        let mut extra: Vec<DiscoveryWarning> = Vec::new();
+        if settings.ambiguous {
+            extra.push(DiscoveryWarning {
+                code: "ambiguous-settings",
+                subject: settings.file.clone(),
+                message: "both settings.gradle and settings.gradle.kts exist in this \
+                          directory — the provenance source is ambiguous and is declined \
+                          (fail-closed: no name or member is guessed)"
+                    .to_owned(),
+            });
+        }
+        if settings.root_name_nonliteral {
+            extra.push(DiscoveryWarning {
+                code: "non-canonical-name",
+                subject: settings.file.clone(),
+                message: "the rootProject.name row carries a non-literal right-hand side \
+                          (a computed value or string template) — the documented \
+                          directory default governs the root package's name"
+                    .to_owned(),
+            });
+        }
+        if settings.nonliteral_include {
+            extra.push(DiscoveryWarning {
+                code: "non-canonical-include",
+                subject: settings.file.clone(),
+                message: "an include argument carries a non-literal shape (a `$` template \
+                          or property reference) — that member is not proven by the \
+                          grammar and keeps the standalone shape"
+                    .to_owned(),
+            });
+        }
+        for (rel, name) in &settings.members {
+            if !settings_has_build_file(manifests, &settings.dir, rel) {
+                extra.push(DiscoveryWarning {
+                    code: "include-without-manifest",
+                    subject: name.clone(),
+                    message: format!(
+                        "the include-proven member {rel:?} carries no build file in the \
+                         committed tree — Gradle permits build-less projects, so there is \
+                         no package row to plan"
+                    ),
+                });
+            }
+        }
+        if extra.is_empty() {
+            continue;
+        }
+        // The carrier: the settings directory's own build file, in the
+        // sorted manifests order (I3 — `build.gradle` sorts before
+        // `build.gradle.kts`).
+        let Some(root_manifest) = manifests
+            .iter()
+            .find(|manifest| gradle_dir_of(manifest) == settings.dir)
+        else {
+            continue;
+        };
+        if let Some(row) = packages
+            .iter_mut()
+            .find(|row| &row.manifest == root_manifest)
+        {
+            row.warnings.extend(extra);
+        }
+    }
+}
+
+/// The proven `project(':…')` edges (ADR-0058 continued — the
+/// recorded-open dependency-edge remainder): the governing settings
+/// build's proven members resolve the path; a row the subset cannot
+/// prove (a relative path, a `$` template, a member nothing includes,
+/// an ambiguous settings pair, no settings at all) warns and stays
+/// external — nothing is guessed. The requirement rides
+/// `ReqSpec::PathOnly` (a project dependency carries no version
+/// constraint — nothing to rewrite), so the edge's spans are empty and
+/// the cascade policy stays the planner's own.
+fn resolve_project_edges(
+    governance: &[GradleSettings],
+    parsed: &[gradle::GradleBuild],
+    packages: &mut [RawPackage],
+) -> Result<(), DiscoverError> {
+    // The governed row names per settings entry (the resolution map):
+    // the root's dir and every proven member's dir → the row's name.
+    let targets: Vec<std::collections::BTreeMap<String, String>> = governance
+        .iter()
+        .map(|settings| {
+            if settings.ambiguous {
+                // Provenance declined: no governed target exists.
+                return std::collections::BTreeMap::new();
+            }
+            packages
+                .iter()
+                .filter(|row| {
+                    settings.governs(&row.root)
+                        && (row.root == settings.dir
+                            || settings
+                                .members
+                                .contains_key(&relative_to(&settings.dir, &row.root)))
+                })
+                .map(|row| (row.root.clone(), row.name.clone()))
+                .collect()
+        })
+        .collect();
+    for (row_idx, row) in packages.iter_mut().enumerate() {
+        let Some(file) = parsed.get(row_idx) else {
+            continue;
+        };
+        if file.project_deps.is_empty() {
+            continue;
+        }
+        let owner_dir = gradle_dir_of(&row.manifest);
+        let manifest = RelPath::new(&row.manifest).ok_or_else(|| DiscoverError::Manifest {
+            file: row.manifest.clone(),
+            format: ManifestFormat::GradleBuild,
+            message: "manifest path is not a normalized repo-relative path".to_owned(),
+            span: None,
+        })?;
+        for dep in &file.project_deps {
+            if !dep.proven {
+                row.warnings.push(DiscoveryWarning {
+                    code: "non-canonical-project-dep",
+                    subject: row.name.clone(),
+                    message: format!(
+                        "the project row {:?} is a shape the subset does not resolve (a \
+                         relative path or a `$` template) — recognized, consumed unmodeled, \
+                         never an edge",
+                        dep.path
+                    ),
+                });
+                continue;
+            }
+            let resolved =
+                governing_settings(governance, &owner_dir).and_then(|(gov_idx, settings)| {
+                    if settings.ambiguous {
+                        return None;
+                    }
+                    let target_dir = project_target_dir(&settings.dir, &dep.path);
+                    targets
+                        .get(gov_idx)
+                        .and_then(|map| map.get(&target_dir))
+                        .cloned()
+                });
+            match resolved {
+                Some(target) => row.deps.push(RawDep {
+                    name: target,
+                    kind: if dep.configuration.starts_with("test") {
+                        DepKind::Dev
+                    } else {
+                        DepKind::Normal
+                    },
+                    req: ReqSpec::PathOnly,
+                    site: ManifestSite {
+                        file: manifest.clone(),
+                        spans: Vec::new(),
+                    },
+                    raw: halyard_core::BString::from(dep.path.as_str()),
+                    internal: true,
+                }),
+                None => row.warnings.push(DiscoveryWarning {
+                    code: "unresolved-project-dep",
+                    subject: row.name.clone(),
+                    message: format!(
+                        "the project row {:?} names no include-proven member of the owning \
+                         settings build — the edge stays external (fail-closed, nothing is \
+                         guessed)",
+                        dep.path
+                    ),
+                }),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The target directory one proven `project(':…')` path names: the
+/// `':'`-separated hierarchy resolved **relative to the settings
+/// directory** (the documented root-project-relative conversion; a
+/// bare `:` names the root project itself).
+fn project_target_dir(settings_dir: &str, path: &str) -> String {
+    let segments: Vec<&str> = path
+        .split(':')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.is_empty() {
+        return settings_dir.to_owned();
+    }
+    let rel = segments.join("/");
+    if settings_dir.is_empty() {
+        rel
+    } else {
+        format!("{settings_dir}/{rel}")
+    }
+}
+
+/// The identity chain without provenance: the containing directory's
+/// own name (`services/api` → `api`), the manifest path at the
+/// repository root (the Dockerfile cell's chain — the committed tree
+/// cannot know the checkout directory's own name).
+fn dir_chain_name(dir: &str, manifest_path: &str) -> String {
+    gradle_context_name(dir)
+        .map_or_else(|| manifest_path.to_owned(), std::borrow::ToOwned::to_owned)
+}
+
+/// The path of `dir` relative to `base` (both repo-relative; `base` is
+/// an ancestor-or-self of `dir`).
+fn relative_to(base: &str, dir: &str) -> String {
+    if base.is_empty() {
+        return dir.to_owned();
+    }
+    dir.get(base.len() + 1..).unwrap_or_default().to_owned()
+}
+
+/// Whether the settings tree's member directory carries a build file
+/// (`rel` is relative to the settings directory).
+fn settings_has_build_file(manifests: &[String], settings_dir: &str, rel: &str) -> bool {
+    let member_dir = if settings_dir.is_empty() {
+        rel.to_owned()
+    } else {
+        format!("{settings_dir}/{rel}")
+    };
+    manifests
+        .iter()
+        .any(|manifest| gradle_dir_of(manifest) == member_dir)
+}
+
 /// Builds one raw package row from a parsed Gradle build file (§6.1
-/// merge row): the identity chain (the containing directory's name →
-/// the manifest path, the Dockerfile cell's chain; a
-/// `rootProject.name`/`include` grammar is the recorded-open
-/// remainder), the last-assignment-wins version strategy, and the
-/// engine's disabled publish shape (no `gradle` argv grammar — the
-/// credential surface is `~/.gradle/gradle.properties` + the
-/// `publishing` block, no documented env-var grammar).
+/// merge row): the settings-governed name (the `gradle_rows` resolution
+/// — `rootProject.name` for a governed root, the include path's last
+/// element for a proven member, the directory chain otherwise), the
+/// last-assignment-wins version strategy, and the engine's disabled
+/// publish shape (no `gradle` argv grammar — the credential surface is
+/// `~/.gradle/gradle.properties` + the `publishing` block, no
+/// documented env-var grammar).
 fn gradle_row(
     manifest_path: &str,
     file: &gradle::GradleBuild,
+    name: String,
+    mut warnings: Vec<DiscoveryWarning>,
 ) -> Result<RawPackage, DiscoverError> {
     let manifest = RelPath::new(manifest_path).ok_or_else(|| DiscoverError::Manifest {
         file: manifest_path.to_owned(),
@@ -269,9 +586,6 @@ fn gradle_row(
         span: None,
     })?;
     let dir = gradle_dir_of(manifest_path);
-    let name = gradle_context_name(&dir)
-        .map_or_else(|| manifest_path.to_owned(), std::borrow::ToOwned::to_owned);
-    let mut warnings: Vec<DiscoveryWarning> = Vec::new();
     // The last `version = …` assignment in document order wins (Gradle's
     // Project-setter overwrite — the documented `toString()` value is the
     // last assignment's; no override *rule*, no superseded warning).
@@ -360,9 +674,155 @@ fn gradle_dir_of(manifest_path: &str) -> String {
 
 /// The repo-relative directory's own name (`services/api` → `api`, the
 /// root → `None`) — the identity chain's fallback when no
-/// `rootProject.name` grammar applies (a recorded-open remainder).
+/// `rootProject.name` governance applies (the `settings` module's
+/// grammar provides the provenance when a settings file governs).
 fn gradle_context_name(dir: &str) -> Option<&str> {
     dir.rsplit('/').next().filter(|name| !name.is_empty())
+}
+
+/// One settings file's governance over its directory subtree (the
+/// multi-project aggregator shape, ADR-0058 continued — the
+/// `settings.gradle` `rootProject.name` / `include` grammar at the
+/// VERIFIED Settings API).
+#[derive(Clone, Debug, Default)]
+struct GradleSettings {
+    /// The settings file's own path (the warnings' subject — the
+    /// discovery warnings name a manifest path).
+    file: String,
+    /// The settings file's directory (the governed tree's root project;
+    /// `""` at the repository root).
+    dir: String,
+    /// The root project's name proven by the last literal
+    /// `rootProject.name` assignment (`None` when the last row is
+    /// non-literal or no row exists — the documented directory default
+    /// governs then).
+    root_name: Option<String>,
+    /// Whether the LAST `rootProject.name` row was non-literal (the
+    /// setter was called with a computed value — warned, unmodeled).
+    root_name_nonliteral: bool,
+    /// The include-proven members: the directory **relative to the
+    /// settings directory** → the project name (the include path's last
+    /// element; the implicit parents *"added if they don't already
+    /// exist"* ride the same rule). First provenance wins (a duplicate
+    /// include adds the same project once).
+    members: std::collections::BTreeMap<String, String>,
+    /// Whether any include argument was non-literal (recognized but
+    /// non-canonical — that member is unproven).
+    nonliteral_include: bool,
+    /// Both settings spellings exist in this directory: the provenance
+    /// source is ambiguous and is declined (fail-closed).
+    ambiguous: bool,
+}
+
+impl GradleSettings {
+    /// Whether this settings file governs `dir` (its own directory or
+    /// any descendant — the root project and its members).
+    fn governs(&self, dir: &str) -> bool {
+        self.dir.is_empty()
+            || dir == self.dir
+            || dir
+                .strip_prefix(&format!("{}/", self.dir))
+                .is_some_and(|rest| !rest.is_empty())
+    }
+}
+
+/// Parses the committed tree's settings files into the governance list
+/// (sorted by directory, I3). Both spellings in one directory are the
+/// ambiguous case: provenance declined, the ambiguity warns.
+fn settings_governance(ctx: &DiscoverCtx) -> Result<Vec<GradleSettings>, DiscoverError> {
+    let mut by_dir: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for path in ctx.tree().filter(|path| {
+        **path == *"settings.gradle"
+            || **path == *"settings.gradle.kts"
+            || path.ends_with("/settings.gradle")
+            || path.ends_with("/settings.gradle.kts")
+    }) {
+        by_dir
+            .entry(gradle_dir_of(path))
+            .or_default()
+            .push((*path).to_owned());
+    }
+    let mut out = Vec::new();
+    for (dir, paths) in by_dir {
+        let Some(settings_path) = paths.first() else {
+            continue;
+        };
+        if paths.len() > 1 {
+            out.push(GradleSettings {
+                file: settings_path.clone(),
+                dir,
+                ambiguous: true,
+                ..GradleSettings::default()
+            });
+            continue;
+        }
+        let Some(bytes) = ctx.file(settings_path) else {
+            continue;
+        };
+        let text = std::str::from_utf8(bytes).map_err(|_| DiscoverError::Manifest {
+            file: settings_path.clone(),
+            format: ManifestFormat::GradleBuild,
+            message: "the settings file is not valid UTF-8".to_owned(),
+            span: None,
+        })?;
+        let parsed = settings::parse_settings(text).map_err(|error| DiscoverError::Manifest {
+            file: settings_path.clone(),
+            format: ManifestFormat::GradleBuild,
+            message: error.to_string(),
+            span: None,
+        })?;
+        let mut gov = GradleSettings {
+            file: settings_path.clone(),
+            dir,
+            ..GradleSettings::default()
+        };
+        // The last `rootProject.name` assignment in document order wins
+        // (the ProjectDescriptor setter's ordinary overwrite — the
+        // version row's own rule).
+        for assignment in &parsed.root_names {
+            match &assignment.rhs {
+                settings::NameRhs::Literal { value, .. } => {
+                    gov.root_name = Some(value.clone());
+                    gov.root_name_nonliteral = false;
+                }
+                settings::NameRhs::NonLiteral => {
+                    gov.root_name = None;
+                    gov.root_name_nonliteral = true;
+                }
+            }
+        }
+        for call in &parsed.includes {
+            for arg in &call.args {
+                match &arg.shape {
+                    settings::IncludeShape::Path { path: include, .. } => {
+                        // The documented path grammar: `':'`-separated,
+                        // the last element the project name, the
+                        // directory relative to the root project
+                        // directory, the implicit parents included.
+                        // The documented path grammar: `':'`-separated
+                        // segments, the LAST element the project name
+                        // and every prefix the implicit parent (the
+                        // Settings API's own `a:b` example adds `:a`
+                        // *"if it doesn't already exist"*). A bare `":"
+                        // names the root project itself — no segment,
+                        // no member directory to prove.
+                        let mut rel_parts: Vec<&str> = Vec::new();
+                        for segment in include.split(':').filter(|s| !s.is_empty()) {
+                            rel_parts.push(segment);
+                            let rel = rel_parts.join("/");
+                            gov.members.entry(rel).or_insert_with(|| segment.to_owned());
+                        }
+                    }
+                    settings::IncludeShape::NonLiteral => {
+                        gov.nonliteral_include = true;
+                    }
+                }
+            }
+        }
+        out.push(gov);
+    }
+    Ok(out)
 }
 
 /// The release version the `build.gradle(.kts)` **bytes** carry — the
